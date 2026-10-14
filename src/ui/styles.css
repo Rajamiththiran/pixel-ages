@@ -271,3 +271,10 @@ select {
 .people-table select { background: var(--bg); border: 1px solid var(--line); border-radius: 3px; }
 .msg-err { color: #f08a8a; }
 .msg-warn { color: var(--warn); }
+.kv { display: grid; grid-template-columns: 112px 1fr; gap: 2px 8px; font-size: 11.5px; margin: 4px 0 4px; }
+.kv .k { color: var(--muted); }
+.kv .v { word-break: break-word; }
+.log-list { font-size: 11.5px; }
+.log-row { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; border-bottom: 1px solid #2c2935; }
+.log-row .swatch-dot { flex: none; width: 8px; height: 8px; }
+.log-year { color: var(--muted); flex: none; width: 72px; }

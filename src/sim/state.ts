@@ -9,6 +9,8 @@ import { createRng, type RngState } from '../shared/rng';
 import { computeAreas, computeWallSegments } from './world/regions';
 import { initClimate, updateRainNow } from './world/climate';
 import { initPlantFood } from './world/plants';
+import { createPool, type PersonPool } from './people/persons';
+import { createFounders } from './people/founders';
 
 export interface WallSegment {
   id: number;
@@ -22,6 +24,60 @@ export interface ActiveEvent {
   event: PlannedEvent;
   areaRoot: number;              // region root id (or -1 for whole map)
   endYear: number;
+}
+
+export interface Lineage {
+  id: number;                    // = founder group id
+  name: string;
+  colorIndex: number;
+  extinctYear: number | null;
+  splitCounter: number;          // for naming "Desert 2", "Desert 3"…
+}
+
+export interface Group {
+  id: number;
+  name: string;
+  lineageId: number;
+  mode: number;                  // Mode id
+  homeX: number;
+  homeY: number;
+  foundedYear: number;
+  known: Uint8Array;             // bitset, ceil(width*height / 8) bytes
+  knownCount: number;
+  knownVersion: number;          // +1 whenever known tiles change (fog updates)
+  frontier: number[];            // tile indices, kept sorted ascending
+  discoveries: number;           // bitmask (bit = discovery id) — step 4
+  inactive: number;              // bitmask: owned but missing resource — step 4
+  era: number;                   // 0–6
+  belowLimitYears: Uint8Array;   // per discovery, years under forget limit — step 4
+  foodStock: number;             // FU
+  fedHistory: Float32Array;      // last 12 months of group average fed ratio (ring buffer)
+  fedIndex: number;              // next write position in fedHistory
+  herd: number;                  // step 4
+  farmTiles: number[];           // step 4
+  hasHunted: boolean;
+  huts: number;
+  houses: number;                // step 4
+  buildProgress: number;         // worker-months toward the next building
+  hungryMonths: number;          // consecutive months over the migrate threshold
+  crowdedMonths: number;         // consecutive months over the split threshold
+  wantsSplit: boolean;           // split triggered this month (scouts go farther, DECISIONS 3.6)
+  wallTarget: { segmentId: number; tile: number } | null; // step 5
+  teachBonus: number;            // this year's teaching multiplier
+  teacherMonths: number;         // teachers summed over this year's months
+  carers: number;                // this month's carers
+  cannotReproduceLogged: boolean;
+  village: null;                 // VillageData in step 5
+  members: number[];             // pool slots, ascending by person id
+  // Signals computed at the start of each month (§11.5), used by the brain and inspector.
+  need: number;                  // FU per month
+  hunger: number;                // H, 0–100
+  plantAvail: number;            // PA
+  preyAvail: number;             // YA
+  sustainable: number;           // sustainable yield of the range, FU/month
+  crowding: number;
+  lowestFed: number;             // lowest fed ratio in the group last month
+  fedYearSum: number;            // for yearly stats
 }
 
 export interface SimState {
@@ -55,8 +111,14 @@ export interface SimState {
   climate: Float32Array;         // cellsX × cellsY drift values
   driftMult: Float32Array;       // per tile, interpolated from `climate` once a year
 
+  groups: Group[];               // always sorted by id
+  nextGroupId: number;
+  lineages: Lineage[];           // sorted by id
+  persons: PersonPool;           // band-mode people only
+
   activeEvents: ActiveEvent[];
   log: LogEntry[];
+  logDropped: number;            // entries dropped from the front of `log` (cap §21.3)
   stats: YearStats[];
 }
 
@@ -113,13 +175,19 @@ export function createState(setup: RunSetup): SimState {
     farmIdleYears: new Uint8Array(n),
     climate: new Float32Array(CONFIG.climate.cellsX * CONFIG.climate.cellsY),
     driftMult: new Float32Array(n),
+    groups: [],
+    nextGroupId: 1,
+    lineages: [],
+    persons: createPool(),
     activeEvents: [],
     log: [],
+    logDropped: 0,
     stats: [],
   };
   initClimate(s);
   updateRainNow(s);
   // Plants start full, as if the painted world had been growing for a long time.
   initPlantFood(s);
+  createFounders(s);
   return s;
 }

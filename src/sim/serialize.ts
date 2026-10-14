@@ -1,6 +1,20 @@
 // SimState copies (keyframes) and the state hash used by determinism tests (§16.3).
 
-import type { SimState } from './state';
+import type { Group, SimState } from './state';
+import { POOL_ARRAYS, clonePool } from './people/persons';
+
+export function cloneGroup(g: Group): Group {
+  return {
+    ...g,
+    known: g.known.slice(),
+    frontier: g.frontier.slice(),
+    belowLimitYears: g.belowLimitYears.slice(),
+    fedHistory: g.fedHistory.slice(),
+    farmTiles: g.farmTiles.slice(),
+    wallTarget: g.wallTarget ? { ...g.wallTarget } : null,
+    members: g.members.slice(),
+  };
+}
 
 /**
  * Deep copy for keyframes. Typed arrays and the RNG are copied; the setup is shared
@@ -32,19 +46,26 @@ export function cloneState(s: SimState): SimState {
     farmIdleYears: s.farmIdleYears.slice(),
     climate: s.climate.slice(),
     driftMult: s.driftMult.slice(),
+    groups: s.groups.map(cloneGroup),
+    lineages: s.lineages.map((l) => ({ ...l })),
+    persons: clonePool(s.persons),
     activeEvents: s.activeEvents.map((e) => ({ ...e })),
     log: [],
+    logDropped: 0,
     stats: [],
   };
 }
 
 /** Typed arrays that make up the state, in a fixed order. */
 function stateArrays(s: SimState): ArrayBufferView[] {
-  return [
+  const out: ArrayBufferView[] = [
     s.rng, s.ground, s.plantType, s.plantDensity, s.plantFood, s.resourceType, s.resourceAmount,
     s.baseRain, s.rainNow, s.animal[0], s.animal[1], s.animal[2], s.animal[3], s.wall, s.crossing,
     s.regionId, s.regionParent, s.dryYears, s.wetYears, s.farmIdleYears, s.climate, s.driftMult,
   ];
+  for (const k of POOL_ARRAYS) out.push(s.persons[k]);
+  for (const g of s.groups) out.push(g.known, g.belowLimitYears, g.fedHistory);
+  return out;
 }
 
 /** Approximate memory of one copy of the state, for the keyframe memory cap. */
@@ -65,7 +86,14 @@ export function hashState(s: SimState): string {
     const bytes = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
     for (let k = 0; k < bytes.length; k++) mix(bytes[k]!);
   }
-  const json = JSON.stringify({ year: s.year, month: s.month, walls: s.wallSegments, events: s.activeEvents });
+  const groups = s.groups.map((g) => ({
+    ...g, known: undefined, belowLimitYears: undefined, fedHistory: undefined,
+  }));
+  const json = JSON.stringify({
+    year: s.year, month: s.month, walls: s.wallSegments, events: s.activeEvents,
+    groups, lineages: s.lineages, nextGroupId: s.nextGroupId,
+    persons: { nextId: s.persons.nextId, free: s.persons.free, capacity: s.persons.capacity },
+  });
   for (let k = 0; k < json.length; k++) mix(json.charCodeAt(k) & 255);
   return (h >>> 0).toString(16).padStart(8, '0');
 }

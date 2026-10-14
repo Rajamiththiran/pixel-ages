@@ -21,4 +21,14 @@ Code style: TypeScript `strict`, small pure functions, short comments that expla
 
 ## Progress
 
-- Step 1 (map and brushes): built, waiting for owner approval.
+- Step 1 (map and brushes): approved.
+- Step 2 (living world): approved.
+- Step 3 (people, band mode): built, waiting for owner approval.
+
+## Notes
+
+- Gap decisions are logged in [DECISIONS.md](DECISIONS.md).
+- The owner does all git commits and pushes. Never commit or push.
+- This machine's global `~/.npmrc` sets `os=linux`; install with `npm install --os=win32 --cpu=x64`.
+- The full test suite takes a few minutes (multi-century simulation tests). Long scenario runs: `LONG=1 npm test` (bash) or `$env:LONG=1; npm test` (PowerShell).
+- Number tuning goes in [TUNING.md](TUNING.md).

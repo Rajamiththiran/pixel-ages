@@ -135,3 +135,31 @@ export function drawBrushPreview(ctx: CanvasRenderingContext2D, x: number, y: nu
   ctx.arc((x + 0.5) * TILE, (y + 0.5) * TILE, (size / 2) * TILE, 0, Math.PI * 2);
   ctx.stroke();
 }
+
+/** Fog (§18.7): the selected group's unknown tiles darkened. One pixel per tile, scaled up. */
+export class FogOverlay {
+  readonly canvas: HTMLCanvasElement;
+
+  constructor(width: number, height: number) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = width;
+    this.canvas.height = height;
+  }
+
+  setKnown(known: Uint8Array | null): void {
+    const c = this.canvas.getContext('2d')!;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const img = c.createImageData(w, h);
+    const alpha = Math.round(255 * R.fogAlpha);
+    for (let i = 0; i < w * h; i++) {
+      const isKnown = known !== null && ((known[i >> 3]! >> (i & 7)) & 1) === 1;
+      img.data[i * 4 + 3] = isKnown ? 0 : alpha;
+    }
+    c.putImageData(img, 0, 0);
+  }
+
+  draw(ctx: CanvasRenderingContext2D): void {
+    ctx.drawImage(this.canvas, 0, 0, this.canvas.width * TILE, this.canvas.height * TILE);
+  }
+}

@@ -26,8 +26,8 @@ export function recordKeyframe(tl: Timeline, s: SimState): void {
 /** Over the cap: keep year 0 and every other keyframe, so the interval doubles. */
 function enforceMemoryCap(tl: Timeline): void {
   const cap = CONFIG.timeline.memoryCapMB * 1024 * 1024;
-  const per = stateBytes(tl.keyframes[0]!);
-  while (tl.keyframes.length * per > cap && tl.keyframes.length > 2) {
+  const total = (): number => tl.keyframes.reduce((n, k) => n + stateBytes(k), 0);
+  while (total() > cap && tl.keyframes.length > 2) {
     tl.interval *= 2;
     tl.keyframes = tl.keyframes.filter((k) => k.year === 0 || k.year % tl.interval === 0);
   }

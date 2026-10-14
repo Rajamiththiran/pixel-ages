@@ -5,10 +5,11 @@ import { CONFIG } from '../config';
 import type { FounderGroup, MapData } from '../shared/types';
 import type { AreaResult } from '../sim/world/regions';
 import { TerrainLayer } from './terrain';
-import { AreaOverlay, RainOverlay, drawBrushPreview, drawHoverTile } from './overlays';
-import { WildAnimals, paintedDensities } from './decor';
-import { collectFounders, drawGroupLabels } from './people';
+import { AreaOverlay, FogOverlay, RainOverlay, drawBrushPreview, drawHoverTile } from './overlays';
+import { BuildingLayer, WildAnimals, paintedDensities } from './decor';
+import { PeopleLayer, collectFounders, drawGroupLabels, type GroupLabel } from './people';
 import { Camera } from './camera';
+import { SpriteLayer } from './blit';
 import type { Season } from '../shared/ids';
 
 export interface SetupView {
@@ -19,10 +20,17 @@ export interface SetupView {
   showAreas: boolean;
   brushSize: number | null;      // null = no brush preview
   hoverArea: number;             // region to highlight, -1 for none
+  // Run mode only:
+  running: boolean;
+  runGroups: GroupLabel[];       // group names above homes
+  showFog: boolean;
+  selectedPerson: number | null;
 }
 
 // Reused draw list so the frame loop doesn't allocate per sprite.
 interface DrawItem { img: HTMLCanvasElement; x: number; y: number }
+// Sort key = y × stride + index; must exceed the most sprites in one frame (6,000 people + 400 animals + buildings).
+const SORT_STRIDE = 16384;
 
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
@@ -31,8 +39,13 @@ export class Renderer {
   readonly camera: Camera;
   private readonly rain: RainOverlay;
   private readonly animals = new WildAnimals();
+  readonly people = new PeopleLayer();
+  readonly buildings = new BuildingLayer();
+  readonly fog: FogOverlay;
   private items: DrawItem[] = [];
   private itemCount = 0;
+  private sortKeys = new Float64Array(1024);
+  private readonly sprites: SpriteLayer;
   private lastMs = 0;
   private frames = 0;
   private fpsWindowStart = 0;
@@ -47,6 +60,8 @@ export class Renderer {
     this.terrain = new TerrainLayer(view.map);
     this.areas = new AreaOverlay(view.map.width, view.map.height);
     this.rain = new RainOverlay(view.map.width, view.map.height);
+    this.fog = new FogOverlay(view.map.width, view.map.height);
+    this.sprites = new SpriteLayer(canvas.width, canvas.height);
     this.camera = new Camera(canvas.width, canvas.height);
     this.rebuildAnimals();
   }
@@ -130,21 +145,35 @@ export class Renderer {
     this.itemCount = 0;
     this.animals.update(now, dt);
     this.animals.collect(now, this.push);
-    collectFounders(v.founders, this.push);
+    if (v.running) {
+      this.people.animate(now, dt);
+      this.people.collect(now, this.push);
+      this.buildings.collect(this.push);
+    } else {
+      collectFounders(v.founders, this.push);
+    }
+    // Sort by a numeric key (whole-pixel y, then push order) in a reused typed array: native
+    // numeric sort, no allocation, and ties keep a stable order so sprites don't flicker.
     const list = this.items;
     const n = this.itemCount;
-    // Insertion sort on a mostly-sorted small list; avoids allocating a sorted copy.
-    for (let a = 1; a < n; a++) {
-      const it = list[a]!;
-      let b = a - 1;
-      while (b >= 0 && list[b]!.y > it.y) { list[b + 1] = list[b]!; b--; }
-      list[b + 1] = it;
-    }
+    if (this.sortKeys.length < n) this.sortKeys = new Float64Array(n * 2);
+    const keys = this.sortKeys.subarray(0, n);
+    for (let k = 0; k < n; k++) keys[k] = Math.round(list[k]!.y) * SORT_STRIDE + k;
+    keys.sort();
+    const layer = this.sprites;
+    layer.begin();
     for (let k = 0; k < n; k++) {
-      const it = list[k]!;
-      ctx.drawImage(it.img, Math.round(it.x) - (it.img.width >> 1), Math.round(it.y) - it.img.height);
+      const it = list[keys[k]! % SORT_STRIDE]!;
+      layer.blit(it.img, Math.round(it.x) - (it.img.width >> 1), Math.round(it.y) - it.img.height);
     }
-    drawGroupLabels(ctx, v.founders);
+    ctx.drawImage(layer.end(), 0, 0);
+    if (v.showFog) this.fog.draw(ctx);
+    if (v.running) {
+      drawGroupLabels(ctx, v.runGroups);
+      this.drawSelectedPerson(ctx, v.selectedPerson);
+    } else {
+      drawGroupLabels(ctx, v.founders.map((f) => ({ name: f.name, x: f.x, y: f.y, colorIndex: f.colorIndex })));
+    }
 
     if (v.showRain) this.rain.draw(ctx, v.map.rain, v.map);
     if (v.hover) {
@@ -152,6 +181,20 @@ export class Renderer {
       if (v.brushSize !== null) drawBrushPreview(ctx, v.hover.x, v.hover.y, v.brushSize);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /** Small white corner brackets around the selected person. */
+  private drawSelectedPerson(ctx: CanvasRenderingContext2D, id: number | null): void {
+    if (id === null) return;
+    const p = this.people.position(id);
+    if (!p) return;
+    const x = Math.round(p.x) - 4;
+    const y = Math.round(p.y) - 9;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x, y, 2, 1); ctx.fillRect(x, y, 1, 2);                 // top-left
+    ctx.fillRect(x + 7, y, 2, 1); ctx.fillRect(x + 8, y, 1, 2);         // top-right
+    ctx.fillRect(x, y + 10, 2, 1); ctx.fillRect(x, y + 9, 1, 2);        // bottom-left
+    ctx.fillRect(x + 7, y + 10, 2, 1); ctx.fillRect(x + 8, y + 9, 1, 2); // bottom-right
   }
 
   private countFps(now: number): void {

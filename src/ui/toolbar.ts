@@ -66,7 +66,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
   },
 ];
 
-export type ViewMode = 'normal' | 'rain';
+export type ViewMode = 'normal' | 'rain' | 'fog';
 
 export interface RunToolbarApi {
   refresh(mode: ViewMode, zoomed: boolean): void;
@@ -82,7 +82,7 @@ export function buildRunToolbar(
   const views = h('div', { class: 'tb-view' });
   const normal = h('button', { text: 'Normal', title: 'Normal view', onclick: () => onView('normal') });
   const rain = h('button', { text: 'Rain', title: 'Show rain right now', onclick: () => onView('rain') });
-  const fog = h('button', { text: 'Fog', title: 'Explored tiles of the selected group (build step 3)', disabled: true });
+  const fog = h('button', { text: 'Fog', title: 'Darken what the selected group has not explored (click a group first)', onclick: () => onView('fog') });
   const territory = h('button', { text: 'Territory', title: 'Range of the selected lineage (build step 6)', disabled: true });
   views.append(normal, rain, fog, territory);
   root.append(views);
@@ -94,6 +94,7 @@ export function buildRunToolbar(
     refresh(mode, zoomed) {
       normal.classList.toggle('selected', mode === 'normal');
       rain.classList.toggle('selected', mode === 'rain');
+      fog.classList.toggle('selected', mode === 'fog');
       zoom.classList.toggle('selected', zoomed);
     },
   };

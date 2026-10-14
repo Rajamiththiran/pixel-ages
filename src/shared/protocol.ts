@@ -12,7 +12,8 @@ export type ToWorker =
   | { type: 'step' }
   | { type: 'viewYear'; year: number }
   | { type: 'backToNow' }
-  | { type: 'inspect'; x: number; y: number }          // tile coordinates
+  // tile coordinates; the main thread also says which person or group (if any) was clicked
+  | { type: 'inspect'; x: number; y: number; personId: number | null; groupId: number | null }
   | { type: 'select'; groupId: number | null }
   | { type: 'stop' };
 
