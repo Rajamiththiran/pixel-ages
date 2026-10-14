@@ -142,3 +142,59 @@ export function paintedDensities(map: MapData): Float32Array[] {
     return out;
   });
 }
+
+export interface BuildingGroup { id: number; homeX: number; homeY: number; huts: number }
+
+/**
+ * Huts around each home (§18.5): candidate tiles sorted by (distance², dy, dx); each hut takes
+ * the next candidate that is dry, wall-free land and not already used. Recomputed only when
+ * a group's home or hut count changes.
+ */
+export class BuildingLayer {
+  private key = '';
+  private huts: Array<{ x: number; y: number }> = [];
+  private hutImg: HTMLCanvasElement | null = null;
+
+  update(map: MapData, groups: readonly BuildingGroup[]): void {
+    const key = groups.map((g) => `${g.id}:${g.homeX},${g.homeY},${g.huts}`).join('|');
+    if (key === this.key) return;
+    this.key = key;
+    this.huts = [];
+    const used = new Set<number>();
+    for (const g of groups) used.add(g.homeY * map.width + g.homeX); // the home tile stays open
+    const r = CONFIG.people.range.forage;
+    const candidates: Array<[number, number, number]> = [];
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) candidates.push([dx * dx + dy * dy, dy, dx]);
+    candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    for (const g of groups) {
+      let placed = 0;
+      const want = Math.min(g.huts, R.maxHutsDrawnBand);
+      for (const [, dy, dx] of candidates) {
+        if (placed >= want) break;
+        const x = g.homeX + dx;
+        const y = g.homeY + dy;
+        if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue;
+        const i = y * map.width + x;
+        if (used.has(i) || map.ground[i] === Ground.Water || map.wall[i] !== WallType.None) continue;
+        used.add(i);
+        this.huts.push({ x, y });
+        placed++;
+      }
+    }
+  }
+
+  collect(push: (img: HTMLCanvasElement, x: number, y: number) => void): void {
+    this.hutImg ??= getSprite('hut');
+    for (const h of this.huts) push(this.hutImg, (h.x + 0.5) * TILE, (h.y + 1) * TILE);
+  }
+
+  /** True if a hut stands on tile (x, y). */
+  hutAt(x: number, y: number): boolean {
+    return this.huts.some((h) => h.x === x && h.y === y);
+  }
+
+  clear(): void {
+    this.key = '';
+    this.huts = [];
+  }
+}

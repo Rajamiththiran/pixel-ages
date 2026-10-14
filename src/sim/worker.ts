@@ -9,6 +9,7 @@ import { tick } from './tick';
 import { cloneState } from './serialize';
 import { createTimeline, keyframeAtOrBefore, recordKeyframe, type Timeline } from './timeline';
 import { areaName, computeAreas } from './world/regions';
+import { groupViews, inspect, packPeople } from './view';
 
 const T = CONFIG.time;
 
@@ -34,6 +35,9 @@ const speedSamples: Array<{ t: number; ticks: number }> = [];
 let lastSent = new Uint8Array(0);
 let needFull = true;
 let lastAnimalYear = -1;
+let selectedGroup: number | null = null;
+let lastKnownVersion = -1;              // fog: known version of the selected group last sent
+let sentLog = 0;                        // live log entries already sent (absolute count)
 
 const post = (msg: FromWorker, transfer: Transferable[] = []): void => {
   (self as unknown as Worker).postMessage(msg, transfer);
@@ -54,6 +58,8 @@ function handle(msg: ToWorker): void {
       timeline = createTimeline(live);
       view = null;
       rebuildTarget = null;
+      selectedGroup = null;
+      sentLog = 0;
       const m = msg.setup.map;
       const areas = computeAreas(m.wall, m.width, m.height);
       post({
@@ -81,9 +87,17 @@ function handle(msg: ToWorker): void {
       needFull = true;
       sendFrame();
       return;
-    case 'inspect':
+    case 'inspect': {
+      const s = view ?? live;
+      if (!s) return;
+      post({ type: 'inspectResult', result: inspect(s, msg.x, msg.y, msg.personId, msg.groupId) });
+      return;
+    }
     case 'select':
-      return; // inspector and group selection arrive in step 3
+      selectedGroup = msg.groupId;
+      lastKnownVersion = -1;
+      sendFrame();
+      return;
     case 'stop':
       if (loopTimer !== null) clearTimeout(loopTimer);
       self.close();
@@ -199,10 +213,18 @@ function sendFrame(): void {
     playing,
     speed,
     yearsPerSecond: yearsPerSecond(),
-    people: new Float32Array(0),
-    groups: [],
+    people: packPeople(s),
+    groups: groupViews(s),
   };
-  const transfer: Transferable[] = [];
+  const transfer: Transferable[] = [frame.people.buffer];
+
+  // Fog for the selected group: its known bitset, whenever it changes.
+  const sel = selectedGroup !== null ? s.groups.find((g) => g.id === selectedGroup) : undefined;
+  if (sel && (sel.knownVersion !== lastKnownVersion || needFull)) {
+    lastKnownVersion = sel.knownVersion;
+    frame.selectedKnown = sel.known.slice();
+    transfer.push(frame.selectedKnown.buffer);
+  }
 
   if (needFull || lastSent.length !== n * TILE_BYTES) {
     needFull = false;
@@ -228,6 +250,14 @@ function sendFrame(): void {
     transfer.push(dens.buffer);
   }
   post({ type: 'frame', frame }, transfer);
+
+  // New live log entries. A replayed past makes the same entries again, so only live ones go out.
+  const total = live.logDropped + live.log.length;
+  if (total > sentLog) {
+    const from = Math.max(0, sentLog - live.logDropped);
+    post({ type: 'log', entries: live.log.slice(from) });
+    sentLog = total;
+  }
 }
 
 const scratchTile = new Uint8Array(TILE_BYTES);

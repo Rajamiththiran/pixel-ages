@@ -1,0 +1,81 @@
+// The brain (§11.6): every person aged 15+ scores each allowed action from the group's needs
+// and their own traits, adds a small seeded nudge, and takes the highest score.
+
+import { CONFIG } from '../../config';
+import { Action } from '../../shared/ids';
+import { Discovery } from '../../shared/discoveries';
+import { float } from '../../shared/rng';
+import type { Group, SimState } from '../state';
+import { hasActive } from './explore';
+import { strengthNow } from './inheritance';
+
+const B = CONFIG.people.brain;
+const A = CONFIG.people.ages;
+
+/** Group-wide facts the brain needs this month. */
+export interface BandContext {
+  range: number[];               // known passable tiles in forage range
+  frontierInRange: number[];     // frontier tiles within explore range
+  kidsRatio: number;             // children / adults
+  children: number;
+  avgCoop: number;               // adults' average actual cooperation
+  familiesWithoutShelter: number;
+  hungriest: number;             // 100 × (1 − lowest fed ratio last month)
+  adults: number;
+  chosen: Int32Array;            // people who already picked each action this month, by Action id
+}
+
+/** Diminishing returns for support jobs: the more already do it, the less the next one adds. */
+const crowdFactor = (ctx: BandContext, action: number): number =>
+  Math.max(0, 1 - (B.supportFalloff * ctx.chosen[action]!) / Math.max(1, ctx.adults));
+
+/** The action person `slot` takes this month (§11.6). Ties go to the lowest action id. */
+export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: number): number {
+  const p = s.persons;
+  const age = p.ageMonths[slot]! / 12;
+  if (age < A.adult) return Action.Child;
+  const elder = age >= A.elder;
+  const H = g.hunger;
+  const int = p.actInt[slot]!;
+  const coop = p.actCoop[slot]!;
+  const str = strengthNow(p, slot);
+  const health = p.health[slot]!;
+  const stoneTools = hasActive(g, Discovery.stoneTools);
+  const spear = hasActive(g, Discovery.spear);
+
+  let best: number = Action.Gather;
+  let bestScore = -1;
+  const consider = (action: number, score: number): void => {
+    const total = Math.max(0, score) + float(s.rng) * B.nudge;
+    if (total > bestScore) { bestScore = total; best = action; }
+  };
+
+  // In id order: Gather 1, Hunt 2, (Farm 3, Herd 4 — step 4), Explore 5, Care 6, Build 7,
+  // (Wall 8 — step 5), Rest 9, Teach 10. Elders (60+) only Gather, Care, Rest, Teach.
+  consider(Action.Gather, B.gatherBase + H * g.plantAvail);
+  if (!elder && age <= A.hunterMaxAge) {
+    consider(Action.Hunt, (B.huntBase + H) * g.preyAvail * (str / 100)
+      * (stoneTools ? 1 : B.huntNoToolsMult) * (spear ? B.huntSpearMult : 1));
+  }
+  if (!elder && age <= A.explorerMaxAge && ctx.frontierInRange.length > 0) {
+    consider(Action.Explore, (B.exploreBase + (int - 100) / B.exploreIntDivisor
+      + B.exploreCrowdWeight * Math.max(0, g.crowding - B.exploreCrowdStart)
+      + B.exploreHungerWeight * H * (1 - g.plantAvail)) * crowdFactor(ctx, Action.Explore));
+  }
+  if (ctx.children > 0) {
+    consider(Action.Care, (B.careKidsWeight * ctx.kidsRatio + B.careHungerWeight * ctx.hungriest) * (coop / 100)
+      * crowdFactor(ctx, Action.Care));
+  }
+  if (!elder && ctx.familiesWithoutShelter > 0) {
+    consider(Action.Build, (B.buildBase + B.buildPerFamily * ctx.familiesWithoutShelter) * crowdFactor(ctx, Action.Build));
+  }
+  if (health < CONFIG.people.health.restBelow) {
+    consider(Action.Rest, B.restWeight * (CONFIG.people.health.restBelow - health));
+  }
+  if (age >= CONFIG.people.teach.minAge && int >= CONFIG.people.teach.minInt) {
+    consider(Action.Teach, (B.teachBase + (int - 100) / B.teachIntDivisor + B.teachKidsWeight * ctx.kidsRatio)
+      * crowdFactor(ctx, Action.Teach));
+  }
+  ctx.chosen[best] = ctx.chosen[best]! + 1;
+  return best;
+}

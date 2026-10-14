@@ -38,3 +38,6 @@ export const RESOURCE_NAMES = ['None', 'Stone', 'Clay', 'Copper', 'Iron'] as con
 export const WALL_NAMES = ['None', 'River', 'Mountain', 'Sea'] as const;
 export const SPECIES_NAMES = ['Prey', 'Predator', 'Herd', 'Riding'] as const;
 export const SEASON_NAMES = ['Spring', 'Summer', 'Autumn', 'Winter'] as const;
+export const ACTION_NAMES = [
+  'None', 'Gather', 'Hunt', 'Farm', 'Herd', 'Explore', 'Care', 'Build', 'Wall work', 'Rest', 'Teach', 'Child',
+] as const;

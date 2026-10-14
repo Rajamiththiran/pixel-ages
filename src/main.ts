@@ -8,7 +8,8 @@ import {
   GROUND_NAMES, PLANT_NAMES, RESOURCE_NAMES, WALL_NAMES, SPECIES_NAMES,
   type Season,
 } from './shared/ids';
-import type { FounderGroup, MapData, RunSetup } from './shared/types';
+import type { FounderGroup, LogEntry, MapData, RunSetup } from './shared/types';
+import type { GroupView } from './shared/protocol';
 import { decodeMap, decodeRun, encodeMap, encodeRun } from './shared/save';
 import { areaName } from './sim/world/regions';
 import { Editor } from './editor/editor';
@@ -18,7 +19,7 @@ import { Renderer, type SetupView } from './render/renderer';
 import { GROUP_COLORS } from './render/palette';
 import { buildLayout, showToast } from './ui/layout';
 import { buildRunToolbar, buildToolbar, type RunToolbarApi, type ToolbarApi, type ViewMode } from './ui/toolbar';
-import { buildRunPanel, buildSetupPanel, type SetupPanelActions, type SetupPanelApi, type SetupState } from './ui/setupPanel';
+import { buildRunPanel, buildSetupPanel, type RunPanelApi, type SetupPanelActions, type SetupPanelApi, type SetupState } from './ui/setupPanel';
 import { buildBottomBar, yearLabel } from './ui/runControls';
 import { openPeopleDialog } from './ui/peopleDialog';
 import * as storage from './ui/storage';
@@ -63,6 +64,10 @@ const view: SetupView = {
   showAreas: true,
   brushSize: editor.brushSize,
   hoverArea: -1,
+  running: false,
+  runGroups: [],
+  showFog: false,
+  selectedPerson: null,
 };
 
 const renderer = new Renderer(ui.canvas, view);
@@ -276,10 +281,58 @@ const bottom = buildBottomBar(ui.bottom, {
 renderer.onFps = (fps) => bottom.setFps(fps);
 bottom.setSetupMode(SETUP_HINT);
 
+// Selection and inspector (§21.1).
+let runPanel: RunPanelApi | null = null;
+const runLog: LogEntry[] = [];
+let lineageColours = new Map<number, number>();
+let selection: { x: number; y: number; personId: number | null; groupId: number | null } | null = null;
+let selectedGroup: number | null = null;
+let inspectTimer: ReturnType<typeof setInterval> | null = null;
+
 function setRunView(m: ViewMode): void {
   runView = m;
   view.showRain = m === 'rain';
+  view.showFog = m === 'fog' && selectedGroup !== null;
   runToolbar?.refresh(runView, renderer.camera.zoom > 1);
+  if (m === 'fog' && selectedGroup === null) showToast(ui.toast, 'Click a group (its home or one of its people) to see its fog.');
+}
+
+function selectGroup(id: number | null): void {
+  if (id === selectedGroup) return;
+  selectedGroup = id;
+  session?.send({ type: 'select', groupId: id });
+  if (id === null) renderer.fog.setKnown(null);
+  view.showFog = runView === 'fog' && id !== null;
+}
+
+function requestInspect(): void {
+  if (session && selection) session.send({ type: 'inspect', ...selection });
+}
+
+/** Run-mode click: a person within 3 px, else a group whose home or hut is on the tile, plus the tile. */
+function inspectAt(tx: number, ty: number, mx: number, my: number): void {
+  const personId = renderer.people.pick(mx, my);
+  const groups = session?.lastFrame?.groups ?? [];
+  let group = groups.find((g) => g.homeX === tx && g.homeY === ty) ?? null;
+  if (!group && renderer.buildings.hutAt(tx, ty)) {
+    // A hut belongs to the nearest home.
+    group = groups.reduce<GroupView | null>((best, g) => {
+      const d = (g.homeX - tx) ** 2 + (g.homeY - ty) ** 2;
+      return !best || d < (best.homeX - tx) ** 2 + (best.homeY - ty) ** 2 ? g : best;
+    }, null);
+  }
+  selection = { x: tx, y: ty, personId, groupId: group?.id ?? null };
+  view.selectedPerson = personId;
+  if (group) selectGroup(group.id);
+  requestInspect();
+  runPanel?.show('Inspect');
+}
+
+function clearSelection(): void {
+  selection = null;
+  view.selectedPerson = null;
+  selectGroup(null);
+  runPanel?.setInspect(null);
 }
 
 function startRun(): void {
@@ -295,6 +348,14 @@ function startRun(): void {
   setMoving(null);
   mode = 'run';
   runAnimals = null;
+  runLog.length = 0;
+  lineageColours = new Map(runSetup.founders.map((f) => [f.id, f.colorIndex]));
+  selection = null;
+  selectedGroup = null;
+  view.selectedPerson = null;
+  renderer.people.clear();
+  renderer.buildings.clear();
+  renderer.fog.setKnown(null);
   session = new RunSession(runSetup, {
     started: () => {},
     terrainChanged: (tiles) => (tiles === 'all' ? renderer.markAllTiles() : renderer.markTiles(tiles)),
@@ -306,25 +367,41 @@ function startRun(): void {
       if (view.hover && ui.tooltip.style.display === 'block') ui.tooltip.textContent = tileInfo(view.hover.x, view.hover.y);
       renderer.setSeason(CONFIG.seasonOfMonth[f.month] as Season);
       setBanner(f.isPast ? `Viewing the past — ${yearLabel(f.year, f.month)}` : null);
+      renderer.people.update(f.people, f.speed === 8, performance.now());
+      renderer.buildings.update(session!.map, f.groups);
+      view.runGroups = f.groups.map((g) => ({ name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup }));
+      if (f.selectedKnown) renderer.fog.setKnown(f.selectedKnown);
     },
     progress: (label) => setBanner(label),
     error: (message) => {
       console.error(message);
       showToast(ui.toast, 'The simulation hit an error — see the browser console.');
     },
+    log: (entries) => {
+      runLog.push(...entries);
+      // Trim in place: the log panel holds this same array.
+      if (runLog.length > CONFIG.log.maxEntries) runLog.splice(0, runLog.length - CONFIG.log.maxEntries);
+      runPanel?.logChanged();
+    },
+    inspect: (result) => runPanel?.setInspect(result),
   });
   renderer.setMap(session.map);
   renderer.setCrossing(session.crossing);
   renderer.terrainBudgetMs = CONFIG.render.terrainBudgetMs;
-  // People are simulated from build step 3; until then the run shows the living world only.
+  // During a run, people come from the simulation, not from the setup.
   view.founders = NO_FOUNDERS;
+  view.running = true;
+  view.runGroups = [];
   view.showAreas = false;
   view.brushSize = null;
   view.hoverArea = -1;
   ui.canvas.classList.remove('place');
   runToolbar = buildRunToolbar(ui.toolbar, setRunView, () => toggleZoom(), () => stopRun());
-  setRunView(runView);
-  buildRunPanel(ui.tabs, ui.tabBody);
+  setRunView(runView === 'fog' ? 'normal' : runView);
+  runPanel = buildRunPanel(ui.tabs, ui.tabBody, runLog,
+    (lineageId) => GROUP_COLORS[(lineageColours.get(lineageId ?? -1) ?? 0) % GROUP_COLORS.length]!,
+    (groupId) => { selectGroup(groupId); setRunView('fog'); });
+  inspectTimer = setInterval(requestInspect, CONFIG.ui.inspectRefreshMs);
   bottom.setRunMode();
 }
 
@@ -335,6 +412,16 @@ function stopRun(): void {
   session = null;
   runToolbar = null;
   runAnimals = null;
+  runPanel = null;
+  if (inspectTimer !== null) clearInterval(inspectTimer);
+  inspectTimer = null;
+  selection = null;
+  selectedGroup = null;
+  view.running = false;
+  view.showFog = false;
+  view.selectedPerson = null;
+  renderer.people.clear();
+  renderer.buildings.clear();
   mode = 'setup';
   setBanner(null);
   renderer.setCrossing(null);
@@ -386,9 +473,15 @@ ui.canvas.addEventListener('mousedown', (e) => {
     if (renderer.camera.zoom > 1) panning = { x: e.clientX, y: e.clientY };
     return;
   }
-  if (e.button !== 0 || mode !== 'setup') return;
+  if (e.button !== 0) return;
   const t = tileAt(e);
   if (!t) return;
+  if (mode === 'run') {
+    const p = canvasPoint(e);
+    const m = renderer.camera.toMap(p.x, p.y);
+    inspectAt(t.x, t.y, m.x, m.y);
+    return;
+  }
   if (movingGroupId !== null) {
     if (!canPlaceAt(t.x, t.y)) { showToast(ui.toast, "People can't be placed on Water or walls."); return; }
     const g = setup.founders.find((f) => f.id === movingGroupId);
@@ -515,7 +608,13 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === '1') session.send({ type: 'speed', value: 1 });
     else if (e.key === '8') session.send({ type: 'speed', value: 8 });
     else if (e.key === '.') session.send({ type: 'step' });
-    else if (e.key === 'Escape' && f?.isPast) session.send({ type: 'backToNow' });
+    else if (e.key === 'Escape') {
+      if (selection || selectedGroup !== null) clearSelection();
+      else if (f?.isPast) session.send({ type: 'backToNow' });
+    }
+    else if (key === 'i') runPanel?.show('Inspect');
+    else if (key === 'g') runPanel?.show('Graphs');
+    else if (key === 'l') runPanel?.show('Log');
     return;
   }
 

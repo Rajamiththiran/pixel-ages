@@ -2,7 +2,8 @@
 
 import { CONFIG } from '../config';
 import { Sex } from '../shared/ids';
-import type { ClimateDrift, FounderGroup, PlannedEvent } from '../shared/types';
+import type { ClimateDrift, FounderGroup, LogEntry, PlannedEvent } from '../shared/types';
+import type { InspectResult } from '../shared/protocol';
 import { GROUP_COLORS } from '../render/palette';
 import { h } from './layout';
 import { listPresets } from './storage';
@@ -192,30 +193,84 @@ export function buildSetupPanel(
 type RunTab = 'Inspect' | 'Graphs' | 'Log';
 const RUN_TABS: RunTab[] = ['Inspect', 'Graphs', 'Log'];
 
-/** Right panel during a run (§20.3). The full inspector, graphs and log arrive in steps 3–6. */
-export function buildRunPanel(tabsEl: HTMLElement, bodyEl: HTMLElement): { show(t: RunTab): void } {
+export interface RunPanelApi {
+  show(t: RunTab): void;
+  setInspect(r: InspectResult | null): void;
+  logChanged(): void;
+}
+
+/** Right panel during a run (§20.3): Inspect, Graphs (step 6) and a basic Log. */
+export function buildRunPanel(
+  tabsEl: HTMLElement, bodyEl: HTMLElement,
+  log: readonly LogEntry[], colourOf: (lineageId: number | null) => string,
+  onFollow: (groupId: number) => void,
+): RunPanelApi {
+  let current: RunTab = 'Inspect';
+  let inspected: InspectResult | null = null;
   tabsEl.replaceChildren();
   const buttons = RUN_TABS.map((t) => {
     const b = h('button', { text: t, onclick: () => show(t) });
     tabsEl.append(b);
     return b;
   });
+
+  const card = (title: string, rows: Record<string, unknown>, extra?: Node): HTMLElement => {
+    const list = h('div', { class: 'kv' });
+    for (const [k, v] of Object.entries(rows)) {
+      if (k.startsWith('_')) continue;
+      list.append(h('span', { class: 'k', text: k }), h('span', { class: 'v', text: String(v) }));
+    }
+    return h('div', { class: 'group-card' }, h('div', { class: 'title', text: title }), list, extra ?? null);
+  };
+
+  function renderInspect(): Node[] {
+    if (!inspected) {
+      return [
+        h('h3', { text: 'Inspect' }),
+        h('p', { class: 'hint', text: 'Click a person, a home or any tile on the map.' }),
+        h('p', { class: 'hint', text: 'Pick Fog in the toolbar (or Follow on a group) to see what a group has explored.' }),
+      ];
+    }
+    const out: Node[] = [];
+    if (inspected.person) out.push(card('Person', inspected.person));
+    if (inspected.group) {
+      const gid = inspected.group._groupId as number;
+      out.push(card('Group', inspected.group, h('div', { class: 'row' },
+        h('button', { text: 'Follow', title: 'Show this group\'s explored land (fog)', onclick: () => onFollow(gid) }))));
+    }
+    out.push(card('Tile', inspected.tile));
+    return out;
+  }
+
+  function renderLog(): Node[] {
+    const rows = log.slice(-CONFIG.ui.logRowsShown).reverse();
+    const list = h('div', { class: 'log-list' });
+    for (const e of rows) {
+      const dot = h('span', { class: 'swatch-dot' });
+      dot.style.background = colourOf(e.lineageId);
+      list.append(h('div', { class: 'log-row' },
+        h('span', { class: 'log-year', text: `Year ${e.year.toLocaleString('en-US')}` }), dot, h('span', { text: e.text })));
+    }
+    const out: Node[] = [h('h3', { text: `Event log (${log.length.toLocaleString('en-US')})` })];
+    if (log.length === 0) out.push(h('p', { class: 'hint', text: 'Nothing has happened yet: splits, moves and extinctions appear here.' }));
+    out.push(list);
+    return out;
+  }
+
   function show(t: RunTab): void {
+    current = t;
     buttons.forEach((b, k) => b.classList.toggle('active', RUN_TABS[k] === t));
     bodyEl.replaceChildren(...(
-      t === 'Inspect' ? [
-        h('h3', { text: 'Inspect' }),
-        h('p', { class: 'hint', text: 'Hover any tile to see its rain, plants and animals right now.' }),
-        h('p', { class: 'hint', text: 'Clicking for full tile, group and person cards comes with people in build step 3.' }),
-      ] : t === 'Graphs' ? [
-        h('h3', { text: 'Graphs' }),
-        h('p', { class: 'hint', text: 'Population, traits, eras and food per lineage arrive in build step 6.' }),
-      ] : [
-        h('h3', { text: 'Event log' }),
-        h('p', { class: 'hint', text: 'The log fills up once people live in the world (build step 3).' }),
-      ]
+      t === 'Inspect' ? renderInspect()
+        : t === 'Log' ? renderLog()
+          : [h('h3', { text: 'Graphs' }), h('p', { class: 'hint', text: 'Population, traits, eras and food per lineage arrive in build step 6.' })]
     ));
   }
+
   show('Inspect');
-  return { show };
+  return {
+    show,
+    setInspect(r) { inspected = r; if (current === 'Inspect') show('Inspect'); },
+    logChanged() { if (current === 'Log') show('Log'); },
+  };
 }

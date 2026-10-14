@@ -64,7 +64,9 @@ export const CONFIG = {
     founderKnownRadius: 3,
     ages: { adult: 15, elder: 60, maxAge: 100, explorerMaxAge: 45, hunterMaxAge: 59 },
     foodNeed: { child: 0.6, adult: 1.0, elder: 0.8 },
-    birth: { minAge: 16, maxAge: 40, monthlyChance: 0.05, hungryMonthlyChance: 0.025, nursingMonths: 24, hungryAboveH: 60 },
+    // Tuned in step 3 (TUNING.md pass 1): 5% → 7% a month and 24 → 18 months nursing, so the
+    // birth interval is ~2.7 years (real forager range: Agta ~2.6, Ache ~3.2, !Kung ~4).
+    birth: { minAge: 16, maxAge: 40, monthlyChance: 0.07, hungryMonthlyChance: 0.035, nursingMonths: 18, hungryAboveH: 60 },
     // annual 6%, 1%, 1.5%, 3%, 6%, 15% → monthly = 1 − (1 − annual)^(1/12), precomputed
     deathMonthly: [
       { upToAge: 5, p: 0.00514 },
@@ -96,6 +98,8 @@ export const CONFIG = {
       gatherCap: 2.0, stoneToolsGatherMult: 1.2,
       huntBaseSuccess: 0.5, huntNoToolsMult: 0.5, huntSpearMult: 1.5, huntCoopDivisor: 200,
       huntMaxSuccess: 0.95, huntYield: 3.0, huntDepletion: 0.01,
+      huntStrengthBase: 0.5,     // success = 0.5 × (0.5 + strength/100) × … (§11.5)
+      gatherMaxTiles: 4,         // a gatherer visits at most this many tiles a month to fill their cap (DECISIONS 3.1)
       farmerCap: 2.0, farmersPerTile: 10, farmMinRain: 30, irrigationDistance: 2,
       farmSeason: [0.4, 0.93, 2.67, 0], ironFarmMult: 1.2,
       herdPerHerder: 20, herdYieldPerAnimal: 0.08, herdGrowth: 0.015, herdCapturePerHerder: 2, herdCapacityPerTile: 5,
@@ -120,12 +124,25 @@ export const CONFIG = {
       wallWeight: 70,
       restWeight: 1.5,
       teachBase: 20, teachIntDivisor: 2, teachKidsWeight: 20,
+      // Support jobs (Explore, Care, Build, Teach) lose score as more of the band already does
+      // them this month: score × max(0, 1 − falloff × share). At falloff 2, at most about half
+      // the adults take any one support job (DECISIONS 3.5).
+      supportFalloff: 2,
     },
     groupSize: { bandMax: 60, toVillageAt: 150, toBandBelow: 100 },
     split: { crowdingAbove: 1.1, months: 12, bandChance: 0.10, villageChance: 0.05, coopBase: 1.2, bandShare: 0.4, villageShare: 0.3, minDistanceR: 2 },
     migrate: { hungerAbove: 60, months: 3, plantAvailBelow: 0.4, farmerHungerAbove: 80, farmerMonths: 12, logMinDistance: 10, distancePenalty: 0.5, sampleStep: 2 },
     village: { sampleSize: 64, revealsPerExplorer: 0.2, birthIntervalMonths: 44, fertileShare: 25 / 35, traitHazardDivisor: 250 },
     sustainable: { plantShare: 0.1, preyValue: 0.3 },   // plantShare = regenRate × 0.5
+    // Added in step 3:
+    founderFoodMonths: 2,        // founders arrive carrying this many months of food
+    crowdingMax: 10,             // crowding when the range can sustain nothing at all
+    splitNameStart: 2,           // first split of "Desert" is "Desert 2"
+    childMonths: 180,            // months of childhood used for cn / ca (§11.4)
+    // Age window for pairing (DECISIONS 3.2): the man may be up to 20 years older or 5 years
+    // younger. Without it, older widows pair for life with young men and young women find nobody.
+    pairMaxOlderMan: 20,
+    pairMaxOlderWoman: 5,
   },
 
   discoveries: {
@@ -193,6 +210,9 @@ export const CONFIG = {
     herdPerSprite: 10, maxHerdDrawn: 12,
     waterShimmerMs: 500, riverFlowMs: 300,
     fogAlpha: 0.6, rainOverlayAlpha: 0.6, areaHoverAlpha: 0.2,
+    idleStepPx: 2,               // §18.6: idle people make a tiny random step of at most this many px
+    childOffsetPx: [-3, 1],      // §18.6: children walk at mother's position + this offset
+    pickRadiusPx: 3,             // §21.1: clicking within 3 px of a person selects them
     zoom: 2,                     // §18.8: Z toggles 2× zoom
     terrainBudgetMs: 6,          // max terrain redraw work per frame; the rest waits for the next frame
     panStepPx: 24,               // arrow keys / WASD pan this many map pixels per press
@@ -260,6 +280,8 @@ export const CONFIG = {
     rightPanelPx: 320,
     bottomBarPx: 80,
     hoverInfoRefreshMs: 50,
+    inspectRefreshMs: 250,       // §21.1: inspector refreshes about 4 times per second
+    logRowsShown: 500,           // basic log tab: newest rows rendered (virtualised list in step 6)
     toastMs: 2500,
     peopleDialog: {
       men: 2, women: 2, minCount: 0, maxCount: 20,
