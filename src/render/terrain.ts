@@ -262,8 +262,12 @@ export class TerrainLayer {
     }
   }
 
-  /** Redraws dirty tiles and uploads only their bounding box. */
-  flush(): void {
+  /**
+   * Redraws dirty tiles and uploads only their bounding box. With `budgetMs`, stops after
+   * that much work and leaves the rest for the next frame, so a big change (a whole year
+   * of plant growth at 8×) never freezes the screen.
+   */
+  flush(budgetMs = Infinity): void {
     if (this.depthDirty) {
       this.depthDirty = false;
       // Depth shading blends between tile centres, so a changed depth also changes neighbours.
@@ -276,7 +280,12 @@ export class TerrainLayer {
     if (this.dirtyList.length === 0) return;
     const w = this.map.width;
     let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
-    for (const i of this.dirtyList) {
+    const t0 = performance.now();
+    let k = 0;
+    for (; k < this.dirtyList.length; k++) {
+      // Check the clock every 64 tiles; reading it per tile would cost more than it saves.
+      if ((k & 63) === 63 && performance.now() - t0 > budgetMs) break;
+      const i = this.dirtyList[k]!;
       drawTilePixels(this.map, i, this.img.data, this.canvas.width, this.time, this.depth, this.crossing);
       this.dirty[i] = 0;
       const x = i % w;
@@ -286,7 +295,7 @@ export class TerrainLayer {
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     }
-    this.dirtyList = [];
+    this.dirtyList = k === this.dirtyList.length ? [] : this.dirtyList.slice(k);
     this.ctx.putImageData(
       this.img, 0, 0,
       minX * TILE, minY * TILE, (maxX - minX + 1) * TILE, (maxY - minY + 1) * TILE,

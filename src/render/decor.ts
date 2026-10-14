@@ -1,4 +1,4 @@
-﻿// Decorative wild animals (Â§18.5). Visual only: Math.random is fine here because
+﻿// Decorative wild animals (§18.5). Visual only: Math.random is fine here because
 // nothing in this file feeds back into the simulation.
 
 import { CONFIG } from '../config';
@@ -35,7 +35,7 @@ export class WildAnimals {
 
   /**
    * Rebuilds the animal list from densities (0..1 per tile, per species).
-   * Per 4Ã—4-tile block and species: floor(sum / 4 + random), max 2 per block, max 400 total.
+   * Per 4×4-tile block and species: floor(sum / 4 + random), max 2 per block, max 400 total.
    */
   rebuild(map: MapData, density: Float32Array[]): void {
     this.map = map;
@@ -134,7 +134,7 @@ function animalSprite(species: number, frame: 1 | 2, flip: boolean): HTMLCanvasE
   return (spriteTable[k] ??= getSprite(`${SPRITE_BASE[species]}_${frame}`, {}, flip));
 }
 
-/** Painted densities (0â€“255) â†’ 0..1, the same conversion the simulation uses (Â§10.4). */
+/** Painted densities (0–255) → 0..1, the same conversion the simulation uses (§10.4). */
 export function paintedDensities(map: MapData): Float32Array[] {
   return map.animals.map((layer) => {
     const out = new Float32Array(layer.length);

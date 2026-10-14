@@ -45,6 +45,40 @@ export type PlannedEvent =
 
 export type ClimateDrift = 'off' | 'slow' | 'strong';
 
+export interface LogEntry {
+  year: number;
+  month: number;
+  type: LogType;
+  groupId: number | null;
+  otherId: number | null;
+  lineageId: number | null;
+  text: string;                  // ready to display
+  x: number | null;
+  y: number | null;
+}
+
+export type LogType =
+  | 'discovery' | 'lostDiscovery' | 'eraUp' | 'eraDown' | 'ranOut'
+  | 'split' | 'migrate' | 'becameVillage' | 'becameBand'
+  | 'firstContact' | 'tradeStart' | 'war' | 'conquered' | 'absorbed'
+  | 'breach' | 'event' | 'groupExtinct' | 'lineageExtinct' | 'cannotReproduce' | 'perf';
+
+export interface YearStats {
+  year: number;
+  perLineage: Array<{
+    lineageId: number;
+    population: number;
+    groups: number;
+    bestEra: number;
+    avgEra: number;
+    intActual: number;  intPotential: number;
+    coopActual: number; coopPotential: number;
+    strActual: number;  strPotential: number;
+    fed: number;                 // average fed ratio this year
+    discoveries: number;         // union bitmask across the lineage
+  }>;
+}
+
 export interface RunSetup {
   version: 1;
   name: string;

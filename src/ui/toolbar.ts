@@ -66,7 +66,40 @@ export const TOOL_GROUPS: ToolGroup[] = [
   },
 ];
 
-export const sameTool = (a: Tool, b: Tool): boolean => JSON.stringify(a) === JSON.stringify(b);
+export type ViewMode = 'normal' | 'rain';
+
+export interface RunToolbarApi {
+  refresh(mode: ViewMode, zoomed: boolean): void;
+}
+
+/** Run-mode toolbar (§20.3): view modes, zoom, stop. Fog and Territory need groups (steps 3 and 6). */
+export function buildRunToolbar(
+  root: HTMLElement,
+  onView: (m: ViewMode) => void, onZoom: () => void, onStop: () => void,
+): RunToolbarApi {
+  root.replaceChildren();
+  root.append(h('div', { class: 'tb-group-label', text: 'View' }));
+  const views = h('div', { class: 'tb-view' });
+  const normal = h('button', { text: 'Normal', title: 'Normal view', onclick: () => onView('normal') });
+  const rain = h('button', { text: 'Rain', title: 'Show rain right now', onclick: () => onView('rain') });
+  const fog = h('button', { text: 'Fog', title: 'Explored tiles of the selected group (build step 3)', disabled: true });
+  const territory = h('button', { text: 'Territory', title: 'Range of the selected lineage (build step 6)', disabled: true });
+  views.append(normal, rain, fog, territory);
+  root.append(views);
+  root.append(h('div', { class: 'tb-group-label', text: 'Zoom' }));
+  const zoom = h('button', { class: 'tb-opt', text: 'Zoom 2×', title: 'Zoom 2× on the cursor (Z). Pan with right-drag or arrows/WASD', onclick: onZoom });
+  root.append(h('div', { class: 'tb-view' }, zoom));
+  root.append(h('button', { class: 'tb-stop', text: 'Stop run', title: 'Stop and return to setup', onclick: onStop }));
+  return {
+    refresh(mode, zoomed) {
+      normal.classList.toggle('selected', mode === 'normal');
+      rain.classList.toggle('selected', mode === 'rain');
+      zoom.classList.toggle('selected', zoomed);
+    },
+  };
+}
+
+export const sameTool =(a: Tool, b: Tool): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 export interface ToolbarApi {
   refresh(): void;
@@ -76,6 +109,7 @@ export function buildToolbar(
   root: HTMLElement, editor: Editor,
   onOptionsChange: () => void, onUndo: () => void, onRedo: () => void,
 ): ToolbarApi {
+  root.replaceChildren();
   const toolButtons: Array<[HTMLButtonElement, Tool]> = [];
 
   for (const g of TOOL_GROUPS) {

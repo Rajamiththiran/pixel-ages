@@ -1,5 +1,6 @@
 // Right panel in setup mode (§20.2): Groups, Events, Run, Maps tabs.
 
+import { CONFIG } from '../config';
 import { Sex } from '../shared/ids';
 import type { ClimateDrift, FounderGroup, PlannedEvent } from '../shared/types';
 import { GROUP_COLORS } from '../render/palette';
@@ -26,6 +27,7 @@ export interface SetupPanelActions {
   importMap(): void;
   exportRun(): void;
   importRun(): void;
+  startRun(): void;
 }
 
 type TabName = 'Groups' | 'Events' | 'Run' | 'Maps';
@@ -42,6 +44,7 @@ export function buildSetupPanel(
 ): SetupPanelApi {
   let current: TabName = 'Groups';
   let status = { text: '', kind: '' as 'ok' | 'err' | '' };
+  tabsEl.replaceChildren();
   const tabButtons = TABS.map((t) => {
     const b = h('button', { text: t, onclick: () => show(t) });
     tabsEl.append(b);
@@ -101,10 +104,39 @@ export function buildSetupPanel(
   function renderRun(): Node[] {
     const name = h('input', { type: 'text', value: state.name, maxlength: 60 });
     name.addEventListener('input', () => { state.name = name.value; });
+
+    const seed = h('input', { type: 'number', min: 0, max: CONFIG.editor.maxSeed, step: 1, value: state.seed });
+    seed.style.width = '120px';
+    seed.addEventListener('change', () => {
+      const v = Math.floor(Number(seed.value));
+      state.seed = Number.isFinite(v) ? Math.min(CONFIG.editor.maxSeed, Math.max(0, v)) : 0;
+      seed.value = String(state.seed);
+    });
+    const dice = h('button', {
+      text: '🎲', title: 'Random seed',
+      onclick: () => {
+        state.seed = Math.floor(Math.random() * (CONFIG.editor.maxSeed + 1));
+        seed.value = String(state.seed);
+      },
+    });
+
+    const drift = h('select', {},
+      h('option', { value: 'off', text: 'Off' }),
+      h('option', { value: 'slow', text: 'Slow (±10% over centuries)' }),
+      h('option', { value: 'strong', text: 'Strong (±25% over centuries)' }));
+    drift.value = state.climateDrift;
+    drift.addEventListener('change', () => { state.climateDrift = drift.value as ClimateDrift; });
+
     return [
       h('h3', { text: 'Run' }),
-      h('div', { class: 'row' }, h('span', { text: 'Run name' }), name),
-      h('p', { class: 'hint', text: 'Seed, climate drift and the Run button arrive in build step 2. The run name is used when you export a run file.' }),
+      h('div', { class: 'form-grid' },
+        h('label', { text: 'Run name' }), name,
+        h('label', { text: 'Seed' }), h('div', { class: 'row' }, seed, dice),
+        h('label', { text: 'Climate drift' }), drift,
+      ),
+      h('p', { class: 'hint', text: 'Same map + same seed = the same history, every time. Change one thing and keep the seed to compare.' }),
+      h('p', { class: 'hint', text: 'Build step 2: the world (plants, animals, rain) comes alive. People start living in step 3.' }),
+      h('button', { class: 'primary run-big', text: 'Run ▶', onclick: () => actions.startRun() }),
     ];
   }
 
@@ -155,4 +187,35 @@ export function buildSetupPanel(
 
   refresh();
   return { refresh, show, setStatus };
+}
+
+type RunTab = 'Inspect' | 'Graphs' | 'Log';
+const RUN_TABS: RunTab[] = ['Inspect', 'Graphs', 'Log'];
+
+/** Right panel during a run (§20.3). The full inspector, graphs and log arrive in steps 3–6. */
+export function buildRunPanel(tabsEl: HTMLElement, bodyEl: HTMLElement): { show(t: RunTab): void } {
+  tabsEl.replaceChildren();
+  const buttons = RUN_TABS.map((t) => {
+    const b = h('button', { text: t, onclick: () => show(t) });
+    tabsEl.append(b);
+    return b;
+  });
+  function show(t: RunTab): void {
+    buttons.forEach((b, k) => b.classList.toggle('active', RUN_TABS[k] === t));
+    bodyEl.replaceChildren(...(
+      t === 'Inspect' ? [
+        h('h3', { text: 'Inspect' }),
+        h('p', { class: 'hint', text: 'Hover any tile to see its rain, plants and animals right now.' }),
+        h('p', { class: 'hint', text: 'Clicking for full tile, group and person cards comes with people in build step 3.' }),
+      ] : t === 'Graphs' ? [
+        h('h3', { text: 'Graphs' }),
+        h('p', { class: 'hint', text: 'Population, traits, eras and food per lineage arrive in build step 6.' }),
+      ] : [
+        h('h3', { text: 'Event log' }),
+        h('p', { class: 'hint', text: 'The log fills up once people live in the world (build step 3).' }),
+      ]
+    ));
+  }
+  show('Inspect');
+  return { show };
 }

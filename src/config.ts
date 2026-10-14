@@ -8,6 +8,10 @@ export const CONFIG = {
     fastMultiplier: 8,           // the 8× button
     maxFramesPerSecond: 30,
     maxWorkMsPerLoop: 50,
+    // Added in step 2: if the computer falls behind, at most this much real time is "owed",
+    // so a slow machine runs as fast as it can instead of trying to catch up forever.
+    maxBacklogSeconds: 0.5,
+    speedWindowMs: 1000,         // real speed ("years/s") is measured over this window
   },
 
   seasonOfMonth: [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], // 0 spring, 1 summer, 2 autumn, 3 winter
@@ -51,6 +55,9 @@ export const CONFIG = {
     predatorDeath: 0.01,
     diffusion: 0.03,
     foundAtDensity: 0.05,
+    // Added in step 2: densities below this are set to 0 (local extinction). Without it,
+    // decay never reaches 0 and float denormals slow the whole simulation down.
+    minDensity: 0.0001,
   },
 
   people: {
@@ -186,6 +193,9 @@ export const CONFIG = {
     herdPerSprite: 10, maxHerdDrawn: 12,
     waterShimmerMs: 500, riverFlowMs: 300,
     fogAlpha: 0.6, rainOverlayAlpha: 0.6, areaHoverAlpha: 0.2,
+    zoom: 2,                     // §18.8: Z toggles 2× zoom
+    terrainBudgetMs: 6,          // max terrain redraw work per frame; the rest waits for the next frame
+    panStepPx: 24,               // arrow keys / WASD pan this many map pixels per press
     // Added in step 1 (numbers from §18.3 / §18.7 that were inside formulas):
     darkColorMult: 0.7,          // lineage dark variant D = RGB × 0.7 (§18.1)
     mountainLightSpeck: 0.10, mountainDarkSpeck: 0.10,
@@ -242,6 +252,7 @@ export const CONFIG = {
     areaLabelMinTiles: 30,       // only label areas at least this big, so tiny pockets don't clutter the map
     newMap: { ground: 0, rain: 50 },  // Ground.Grassland, rain 50
     defaultSeed: 1,
+    maxSeed: 4294967295,         // seeds are uint32 (§7.2)
   },
 
   ui: {

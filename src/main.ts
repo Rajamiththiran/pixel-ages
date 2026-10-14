@@ -1,27 +1,32 @@
-// Bootstraps the UI, editor and renderer. Step 1: setup mode only (no worker yet).
+// Bootstraps the UI, editor, renderer and (during a run) the simulation worker.
+// Two modes: setup (paint + place people) and run (watch; nothing can be edited).
 
 import './ui/styles.css';
 import { CONFIG } from './config';
 import {
   Ground, WallType, Plant, Resource,
   GROUND_NAMES, PLANT_NAMES, RESOURCE_NAMES, WALL_NAMES, SPECIES_NAMES,
+  type Season,
 } from './shared/ids';
 import type { FounderGroup, MapData, RunSetup } from './shared/types';
 import { decodeMap, decodeRun, encodeMap, encodeRun } from './shared/save';
 import { areaName } from './sim/world/regions';
 import { Editor } from './editor/editor';
-import { Layer, createMap } from './editor/mapState';
+import { Layer, cloneMap, createMap } from './editor/mapState';
 import { RegionsPreview } from './editor/regionsPreview';
 import { Renderer, type SetupView } from './render/renderer';
 import { GROUP_COLORS } from './render/palette';
 import { buildLayout, showToast } from './ui/layout';
-import { buildToolbar } from './ui/toolbar';
-import { buildSetupPanel, type SetupState } from './ui/setupPanel';
-import { buildBottomBar } from './ui/runControls';
+import { buildRunToolbar, buildToolbar, type RunToolbarApi, type ToolbarApi, type ViewMode } from './ui/toolbar';
+import { buildRunPanel, buildSetupPanel, type SetupPanelActions, type SetupPanelApi, type SetupState } from './ui/setupPanel';
+import { buildBottomBar, yearLabel } from './ui/runControls';
 import { openPeopleDialog } from './ui/peopleDialog';
 import * as storage from './ui/storage';
+import { RunSession } from './runSession';
 
 const TILE = CONFIG.map.tilePx;
+const SETUP_HINT = 'Setup — paint the world and place people';
+const NO_FOUNDERS: readonly FounderGroup[] = [];
 
 const ui = buildLayout(document.getElementById('app')!);
 
@@ -33,9 +38,12 @@ const setup: SetupState = {
   climateDrift: 'off',
 };
 
+let mode: 'setup' | 'run' = 'setup';
+
 // ---------- editor + renderer ----------
 
 let animalsDirty = false;
+let toolbar: ToolbarApi | null = null;
 
 const editor = new Editor(
   (c) => {
@@ -61,10 +69,6 @@ const renderer = new Renderer(ui.canvas, view);
 const regions = new RegionsPreview(editor.map, (a) => renderer.setAreas(a));
 renderer.setAreas(regions.current);
 
-const bottom = buildBottomBar(ui.bottom);
-renderer.onFps = (fps) => bottom.setFps(fps);
-bottom.setMode('Setup — paint the world and place people');
-
 /** Wild animal sprites are re-placed after a stroke ends, not while painting, so they don't jitter. */
 function flushAnimals(): void {
   if (!animalsDirty || editor.painting) return;
@@ -73,12 +77,17 @@ function flushAnimals(): void {
 }
 
 function syncView(): void {
+  if (mode !== 'setup') return;
   view.showRain = editor.tool.kind === 'rain';
   view.brushSize = editor.tool.kind === 'people' || editor.fillMode ? null : editor.brushSize;
   ui.canvas.classList.toggle('place', editor.tool.kind === 'people' || movingGroupId !== null);
 }
 
-const toolbar = buildToolbar(ui.toolbar, editor, syncView, () => { editor.undo(); flushAnimals(); }, () => { editor.redo(); flushAnimals(); });
+function buildSetupToolbar(): void {
+  toolbar = buildToolbar(ui.toolbar, editor, syncView,
+    () => { editor.undo(); flushAnimals(); },
+    () => { editor.redo(); flushAnimals(); });
+}
 
 // ---------- groups ----------
 
@@ -134,11 +143,15 @@ function editGroup(id: number): void {
   });
 }
 
+function setBanner(text: string | null): void {
+  ui.banner.textContent = text ?? '';
+  ui.banner.style.display = text ? 'block' : 'none';
+}
+
 function setMoving(id: number | null): void {
   movingGroupId = id;
   const g = setup.founders.find((f) => f.id === id);
-  ui.banner.textContent = g ? `Click the map to move ${g.name} (Esc to cancel)` : '';
-  ui.banner.style.display = g ? 'block' : 'none';
+  setBanner(g ? `Click the map to move ${g.name} (Esc to cancel)` : null);
   syncView();
 }
 
@@ -168,7 +181,7 @@ function currentRun(): RunSetup {
   };
 }
 
-const panel = buildSetupPanel(ui.tabs, ui.tabBody, setup, {
+const panelActions: SetupPanelActions = {
   editGroup,
   moveGroup: (id) => setMoving(id),
   deleteGroup: (id) => {
@@ -236,22 +249,144 @@ const panel = buildSetupPanel(ui.tabs, ui.tabBody, setup, {
       panel.setStatus((e as Error).message, 'err');
     }
   },
+  startRun: () => startRun(),
+};
+
+let panel: SetupPanelApi = buildSetupPanel(ui.tabs, ui.tabBody, setup, panelActions);
+
+// ---------- run mode ----------
+
+let session: RunSession | null = null;
+let runView: ViewMode = 'normal';
+let runToolbar: RunToolbarApi | null = null;
+let runAnimals: Float32Array[] | null = null;
+
+const bottom = buildBottomBar(ui.bottom, {
+  play: () => session?.send({ type: 'play' }),
+  pause: () => session?.send({ type: 'pause' }),
+  speed: (v) => session?.send({ type: 'speed', value: v }),
+  step: () => session?.send({ type: 'step' }),
+  viewYear: (y) => {
+    if (!session) return;
+    setBanner(`Going to year ${y.toLocaleString('en-US')}…`);
+    session.send({ type: 'viewYear', year: y });
+  },
+  backToNow: () => session?.send({ type: 'backToNow' }),
 });
+renderer.onFps = (fps) => bottom.setFps(fps);
+bottom.setSetupMode(SETUP_HINT);
+
+function setRunView(m: ViewMode): void {
+  runView = m;
+  view.showRain = m === 'rain';
+  runToolbar?.refresh(runView, renderer.camera.zoom > 1);
+}
+
+function startRun(): void {
+  const runSetup: RunSetup = {
+    version: 1,
+    name: setup.name,
+    map: cloneMap(editor.map),
+    founders: structuredClone(setup.founders),
+    events: structuredClone(setup.events),
+    seed: setup.seed >>> 0,
+    climateDrift: setup.climateDrift,
+  };
+  setMoving(null);
+  mode = 'run';
+  runAnimals = null;
+  session = new RunSession(runSetup, {
+    started: () => {},
+    terrainChanged: (tiles) => (tiles === 'all' ? renderer.markAllTiles() : renderer.markTiles(tiles)),
+    rainChanged: () => renderer.invalidateRain(),
+    animalsChanged: (d) => { runAnimals = d; renderer.setAnimalDensities(d); },
+    frame: (f) => {
+      bottom.update(f);
+      // The world changes under a still mouse, so keep the hover tooltip live.
+      if (view.hover && ui.tooltip.style.display === 'block') ui.tooltip.textContent = tileInfo(view.hover.x, view.hover.y);
+      renderer.setSeason(CONFIG.seasonOfMonth[f.month] as Season);
+      setBanner(f.isPast ? `Viewing the past — ${yearLabel(f.year, f.month)}` : null);
+    },
+    progress: (label) => setBanner(label),
+    error: (message) => {
+      console.error(message);
+      showToast(ui.toast, 'The simulation hit an error — see the browser console.');
+    },
+  });
+  renderer.setMap(session.map);
+  renderer.setCrossing(session.crossing);
+  renderer.terrainBudgetMs = CONFIG.render.terrainBudgetMs;
+  // People are simulated from build step 3; until then the run shows the living world only.
+  view.founders = NO_FOUNDERS;
+  view.showAreas = false;
+  view.brushSize = null;
+  view.hoverArea = -1;
+  ui.canvas.classList.remove('place');
+  runToolbar = buildRunToolbar(ui.toolbar, setRunView, () => toggleZoom(), () => stopRun());
+  setRunView(runView);
+  buildRunPanel(ui.tabs, ui.tabBody);
+  bottom.setRunMode();
+}
+
+function stopRun(): void {
+  if (!session) return;
+  if (!confirm('Stop and return to setup? You can replay this exact run any time with the same seed.')) return;
+  session.stop();
+  session = null;
+  runToolbar = null;
+  runAnimals = null;
+  mode = 'setup';
+  setBanner(null);
+  renderer.setCrossing(null);
+  renderer.terrainBudgetMs = Infinity;
+  renderer.setMap(editor.map);
+  view.founders = setup.founders;
+  view.showAreas = true;
+  buildSetupToolbar();
+  panel = buildSetupPanel(ui.tabs, ui.tabBody, setup, panelActions);
+  panel.show('Run');
+  bottom.setSetupMode(SETUP_HINT);
+  syncView();
+}
+
+// ---------- zoom and pan (§18.8) ----------
+
+let lastMouseMap = { x: renderer.camera.viewW / 2, y: renderer.camera.viewH / 2 };
+
+function toggleZoom(): void {
+  renderer.camera.toggle(lastMouseMap.x, lastMouseMap.y);
+  runToolbar?.refresh(runView, renderer.camera.zoom > 1);
+}
 
 // ---------- mouse ----------
 
-function tileAt(e: MouseEvent): { x: number; y: number } | null {
+function canvasPoint(e: MouseEvent): { x: number; y: number } {
   const r = ui.canvas.getBoundingClientRect();
-  const x = Math.floor(((e.clientX - r.left) / r.width) * ui.canvas.width / TILE);
-  const y = Math.floor(((e.clientY - r.top) / r.height) * ui.canvas.height / TILE);
+  return {
+    x: ((e.clientX - r.left) / r.width) * ui.canvas.width,
+    y: ((e.clientY - r.top) / r.height) * ui.canvas.height,
+  };
+}
+
+function tileAt(e: MouseEvent): { x: number; y: number } | null {
+  const p = canvasPoint(e);
+  const m = renderer.camera.toMap(p.x, p.y);
+  const x = Math.floor(m.x / TILE);
+  const y = Math.floor(m.y / TILE);
   if (x < 0 || y < 0 || x >= editor.map.width || y >= editor.map.height) return null;
   return { x, y };
 }
 
 ui.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+let panning: { x: number; y: number } | null = null;
+
 ui.canvas.addEventListener('mousedown', (e) => {
-  if (e.button !== 0) return;
+  if (e.button === 2) {
+    if (renderer.camera.zoom > 1) panning = { x: e.clientX, y: e.clientY };
+    return;
+  }
+  if (e.button !== 0 || mode !== 'setup') return;
   const t = tileAt(e);
   if (!t) return;
   if (movingGroupId !== null) {
@@ -271,13 +406,24 @@ ui.canvas.addEventListener('mousedown', (e) => {
   flushAnimals();
 });
 
-window.addEventListener('mouseup', () => {
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 2) panning = null;
   if (!editor.painting) return;
   editor.end();
   flushAnimals();
 });
 
+window.addEventListener('mousemove', (e) => {
+  if (!panning) return;
+  const r = ui.canvas.getBoundingClientRect();
+  const scale = ui.canvas.width / r.width / renderer.camera.zoom;
+  renderer.camera.pan(-(e.clientX - panning.x) * scale, -(e.clientY - panning.y) * scale);
+  panning = { x: e.clientX, y: e.clientY };
+});
+
 ui.canvas.addEventListener('mousemove', (e) => {
+  const p = canvasPoint(e);
+  lastMouseMap = renderer.camera.toMap(p.x, p.y);
   const t = tileAt(e);
   view.hover = t;
   if (!t) { ui.tooltip.style.display = 'none'; return; }
@@ -309,11 +455,12 @@ function showTileInfo(x: number, y: number, e: MouseEvent): void {
 }
 
 function tileInfo(x: number, y: number): string {
-  const m = editor.map;
+  // In a run the tooltip shows live values: the session map's `rain` holds rain right now.
+  const m = session ? session.map : editor.map;
   const i = y * m.width + x;
   const parts = [`(${x}, ${y}) km`];
   const wall = m.wall[i]!;
-  if (wall !== WallType.None) parts.push(`${WALL_NAMES[wall]} wall`);
+  if (wall !== WallType.None) parts.push(`${WALL_NAMES[wall]} wall${session?.crossing[i] ? ' (crossing)' : ''}`);
   else {
     parts.push(GROUND_NAMES[m.ground[i]!]!);
     const area = regions.current.regionId[i]!;
@@ -325,13 +472,15 @@ function tileInfo(x: number, y: number): string {
   if (m.resourceType[i] !== Resource.None) {
     parts.push(`${RESOURCE_NAMES[m.resourceType[i]!]} ${Math.round((m.resourceAmount[i]! / 255) * 100)}%`);
   }
-  parts.push(`Rain ${m.rain[i]}`);
+  parts.push(`Rain ${m.rain[i]}${session ? ' now' : ''}`);
   for (let s = 0; s < 4; s++) {
-    const d = m.animals[s]![i]!;
-    if (d > 0) parts.push(`${SPECIES_NAMES[s]} ${Math.round((d / 255) * 100)}%`);
+    const d = runAnimals ? runAnimals[s]![i]! : m.animals[s]![i]! / 255;
+    if (d > 0) parts.push(`${SPECIES_NAMES[s]} ${Math.round(d * 100)}%`);
   }
-  const home = setup.founders.find((g: FounderGroup) => g.x === x && g.y === y);
-  if (home) parts.push(`Home of ${home.name}`);
+  if (!session) {
+    const home = setup.founders.find((g: FounderGroup) => g.x === x && g.y === y);
+    if (home) parts.push(`Home of ${home.name}`);
+  }
   return parts.join(' · ');
 }
 
@@ -342,6 +491,34 @@ window.addEventListener('keydown', (e) => {
   if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
   if (document.querySelector('.modal-back')) return;
   const key = e.key.toLowerCase();
+
+  // Both modes: zoom and pan.
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (key === 'z') { toggleZoom(); return; }
+    const pan = CONFIG.render.panStepPx;
+    const d: Record<string, [number, number]> = {
+      arrowleft: [-pan, 0], a: [-pan, 0], arrowright: [pan, 0], d: [pan, 0],
+      arrowup: [0, -pan], w: [0, -pan], arrowdown: [0, pan], s: [0, pan],
+    };
+    const step = d[key];
+    if (step && renderer.camera.zoom > 1) {
+      e.preventDefault();
+      renderer.camera.pan(step[0], step[1]);
+      return;
+    }
+  }
+
+  if (mode === 'run') {
+    if (!session || e.ctrlKey || e.metaKey || e.altKey) return;
+    const f = session.lastFrame;
+    if (e.key === ' ') { e.preventDefault(); session.send({ type: f?.playing ? 'pause' : 'play' }); }
+    else if (e.key === '1') session.send({ type: 'speed', value: 1 });
+    else if (e.key === '8') session.send({ type: 'speed', value: 8 });
+    else if (e.key === '.') session.send({ type: 'step' });
+    else if (e.key === 'Escape' && f?.isPast) session.send({ type: 'backToNow' });
+    return;
+  }
+
   if ((e.ctrlKey || e.metaKey) && key === 'z') {
     e.preventDefault();
     if (e.shiftKey) editor.redo(); else editor.undo();
@@ -367,9 +544,10 @@ window.addEventListener('keydown', (e) => {
   } else {
     return;
   }
-  toolbar.refresh();
+  toolbar?.refresh();
   syncView();
 });
 
+buildSetupToolbar();
 syncView();
 renderer.start();

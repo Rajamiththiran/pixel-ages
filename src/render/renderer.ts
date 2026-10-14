@@ -8,6 +8,8 @@ import { TerrainLayer } from './terrain';
 import { AreaOverlay, RainOverlay, drawBrushPreview, drawHoverTile } from './overlays';
 import { WildAnimals, paintedDensities } from './decor';
 import { collectFounders, drawGroupLabels } from './people';
+import { Camera } from './camera';
+import type { Season } from '../shared/ids';
 
 export interface SetupView {
   map: MapData;
@@ -26,6 +28,7 @@ export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private terrain: TerrainLayer;
   readonly areas: AreaOverlay;
+  readonly camera: Camera;
   private readonly rain: RainOverlay;
   private readonly animals = new WildAnimals();
   private items: DrawItem[] = [];
@@ -33,20 +36,22 @@ export class Renderer {
   private lastMs = 0;
   private frames = 0;
   private fpsWindowStart = 0;
+  /** Max terrain redraw per frame in ms. Infinity in setup (instant), limited during a run. */
+  terrainBudgetMs = Infinity;
   onFps: ((fps: number) => void) | null = null;
 
-  constructor(canvas: HTMLCanvasElement, private view: SetupView) {
+  constructor(private readonly canvas: HTMLCanvasElement, private view: SetupView) {
     canvas.width = view.map.width * CONFIG.map.tilePx;
     canvas.height = view.map.height * CONFIG.map.tilePx;
     this.ctx = canvas.getContext('2d')!;
-    this.ctx.imageSmoothingEnabled = false;
     this.terrain = new TerrainLayer(view.map);
     this.areas = new AreaOverlay(view.map.width, view.map.height);
     this.rain = new RainOverlay(view.map.width, view.map.height);
+    this.camera = new Camera(canvas.width, canvas.height);
     this.rebuildAnimals();
   }
 
-  /** The map object was replaced (new map, load, import). */
+  /** The map object was replaced (new map, load, import, run start/stop). */
   setMap(map: MapData): void {
     this.view.map = map;
     this.terrain.setMap(map);
@@ -58,14 +63,33 @@ export class Renderer {
     this.terrain.mapChanged(tiles);
   }
 
+  markAllTiles(): void {
+    this.terrain.setMap(this.view.map);
+  }
+
+  /** Breached wall tiles (run mode); null in setup. */
+  setCrossing(crossing: Uint8Array | null): void {
+    this.terrain.crossing = crossing;
+  }
+
+  setSeason(season: Season): void {
+    this.terrain.setSeason(season);
+  }
+
   invalidateRain(): void { this.rain.invalidate(); }
 
   setAreas(a: AreaResult): void {
     this.areas.setAreas(a, this.view.map.width, this.view.map.height);
   }
 
+  /** Wild animal sprites from the painted map (setup). */
   rebuildAnimals(): void {
     this.animals.rebuild(this.view.map, paintedDensities(this.view.map));
+  }
+
+  /** Wild animal sprites from live densities 0..1 (run, once a year). */
+  setAnimalDensities(density: Float32Array[]): void {
+    this.animals.rebuild(this.view.map, density);
   }
 
   start(): void {
@@ -91,7 +115,12 @@ export class Renderer {
     const v = this.view;
     const ctx = this.ctx;
     this.terrain.animate(now);
-    this.terrain.flush();
+    this.terrain.flush(this.terrainBudgetMs);
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.camera.apply(ctx);
     ctx.drawImage(this.terrain.canvas, 0, 0);
 
     if (v.showAreas) ctx.drawImage(this.areas.canvas, 0, 0);
@@ -122,6 +151,7 @@ export class Renderer {
       drawHoverTile(ctx, v.hover.x, v.hover.y);
       if (v.brushSize !== null) drawBrushPreview(ctx, v.hover.x, v.hover.y, v.brushSize);
     }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   private countFps(now: number): void {

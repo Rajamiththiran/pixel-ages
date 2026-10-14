@@ -215,6 +215,18 @@ input[type='number'] { width: 64px; }
 .bottombar input[type='range'] { width: 100%; }
 .bottombar .fps { color: var(--muted); font-size: 11px; min-width: 50px; text-align: right; }
 .bottombar .mode { color: var(--muted); }
+.bottombar button.selected-speed { outline: 2px solid var(--accent); outline-offset: 0; }
+.run-big { width: 100%; padding: 10px; font-size: 15px; font-weight: 600; margin-top: 10px; }
+.tb-view { display: grid; grid-template-columns: 1fr; gap: 4px; }
+.tb-view button { padding: 4px 0; font-size: 11px; }
+.tb-view button.selected { outline: 2px solid var(--accent); outline-offset: 0; }
+.tb-stop { margin-top: 14px; width: 100%; padding: 6px 0; font-size: 11px; color: #f08a8a; }
+select {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 6px;
+}
 
 /* ---------- dialog ---------- */
 .modal-back {
