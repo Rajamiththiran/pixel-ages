@@ -1,6 +1,5 @@
 // SimState (§7.3) and creating it from a RunSetup. Worker-only data.
-// Step 2 holds the world (tiles, climate, plants, animals). People, groups, lineages and
-// relations are added in step 3+.
+// Villages and relations between groups are added in step 5.
 
 import { CONFIG } from '../config';
 import { WallType } from '../shared/ids';
@@ -46,18 +45,19 @@ export interface Group {
   knownCount: number;
   knownVersion: number;          // +1 whenever known tiles change (fog updates)
   frontier: number[];            // tile indices, kept sorted ascending
-  discoveries: number;           // bitmask (bit = discovery id) — step 4
-  inactive: number;              // bitmask: owned but missing resource — step 4
+  discoveries: number;           // bitmask (bit = discovery id)
+  inactive: number;              // bitmask: owned but missing resource
   era: number;                   // 0–6
-  belowLimitYears: Uint8Array;   // per discovery, years under forget limit — step 4
+  belowLimitYears: Uint8Array;   // per discovery, years under forget limit
   foodStock: number;             // FU
   fedHistory: Float32Array;      // last 12 months of group average fed ratio (ring buffer)
   fedIndex: number;              // next write position in fedHistory
-  herd: number;                  // step 4
-  farmTiles: number[];           // step 4
+  herd: number;                  // owned herd animals
+  herders: number;               // last month's herders (for sustainable yield, §11.5)
+  farmTiles: number[];           // tile indices, in the order farmers fill them (best first)
   hasHunted: boolean;
   huts: number;
-  houses: number;                // step 4
+  houses: number;                // mud-brick houses
   buildProgress: number;         // worker-months toward the next building
   hungryMonths: number;          // consecutive months over the migrate threshold
   crowdedMonths: number;         // consecutive months over the split threshold
@@ -108,7 +108,8 @@ export interface SimState {
   dryYears: Uint16Array;         // ground change counters
   wetYears: Uint16Array;
   farmIdleYears: Uint8Array;
-  climate: Float32Array;         // cellsX × cellsY drift values
+  farmedThisYear: Uint8Array;    // 1 if a farmer worked the tile this year (idle farmland rule, §10.2)
+  climate: Float32Array;       // cellsX × cellsY drift values
   driftMult: Float32Array;       // per tile, interpolated from `climate` once a year
 
   groups: Group[];               // always sorted by id
@@ -173,6 +174,7 @@ export function createState(setup: RunSetup): SimState {
     dryYears: new Uint16Array(n),
     wetYears: new Uint16Array(n),
     farmIdleYears: new Uint8Array(n),
+    farmedThisYear: new Uint8Array(n),
     climate: new Float32Array(CONFIG.climate.cellsX * CONFIG.climate.cellsY),
     driftMult: new Float32Array(n),
     groups: [],

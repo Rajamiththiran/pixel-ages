@@ -60,7 +60,7 @@ export function tileSustainable(s: SimState, i: number, huntFactor = 1): number 
 /** How well this group can use prey, relative to full tools (matches hunting success, §11.5). */
 export const huntFactor = (g: Group): number => (hasActive(g, Discovery.stoneTools) ? 1 : F.huntNoToolsMult);
 
-/** Sustainable yield of a whole range. Farms and herds join in step 4. */
+/** Sustainable yield of a range's wild food (plants and prey). Fields and herds are added in computeSignals. */
 export function rangeSustainable(s: SimState, range: number[], g: Group): number {
   const hf = huntFactor(g);
   let sy = 0;
@@ -79,7 +79,10 @@ export function computeSignals(s: SimState, g: Group, range: number[]): void {
   for (const i of range) { plant += s.plantFood[i]!; prey += s.animal[Species.Prey][i]!; }
   g.plantAvail = need > 0 ? Math.min(1, Math.max(0, plant / (2 * need))) : 1;
   g.preyAvail = range.length > 0 ? Math.min(1, Math.max(0, (4 * prey) / range.length)) : 0;
-  g.sustainable = rangeSustainable(s, range, g);
+  // Wild food, plus fields (10 farmers × 2 FU each) and last month's tended herd (§11.5).
+  g.sustainable = rangeSustainable(s, range, g)
+    + g.farmTiles.length * F.farmersPerTile * F.farmerCap
+    + Math.min(g.herd, g.herders * F.herdPerHerder) * F.herdYieldPerAnimal;
   g.crowding = g.sustainable > 0 ? Math.min(P.crowdingMax, need / g.sustainable) : P.crowdingMax;
   g.hunger = hungerOf(g);
 }

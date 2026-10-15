@@ -22,6 +22,8 @@ describe('determinism with people (§16.3)', () => {
     runTicks(c, 100 * 12);
     expect(hashState(a)).toBe(hashState(b));
     expect(hashState(a)).not.toBe(hashState(c));
+    // The run includes discoveries (step 4), so they are covered by the same hash.
+    expect(a.log.some((e) => e.type === 'discovery')).toBe(true);
   });
 
   it('a keyframe restored at year 40 reproduces year 100 exactly', () => {
@@ -46,7 +48,7 @@ describe('Scenario B starts as the owner set it up (§26)', () => {
 
 describe.skipIf(!LONG)('Scenario A — Garden (§26), seeds 1–10', () => {
   it('lineage alive at year 100 in at least 7 of 10 seeds; bands stay 15–60 and split', () => {
-    let alive = 0, splits = 0, maxBand = 0;
+    let alive = 0, splits = 0, maxBand = 0, discovered = 0;
     const rows: string[] = [];
     for (let seed = 1; seed <= 10; seed++) {
       const s = createState(scenarioA(seed));
@@ -60,11 +62,17 @@ describe.skipIf(!LONG)('Scenario A — Garden (§26), seeds 1–10', () => {
       }
       if (at[0]! > 0) alive++;
       splits += s.log.filter((e) => e.type === 'split').length;
-      rows.push(`seed ${String(seed).padStart(2)} | year 100: ${String(at[0]).padStart(4)} | year 300: ${String(at[1]).padStart(4)} | groups ${s.groups.length}`);
+      const disc = s.log.filter((e) => e.type === 'discovery');
+      if (disc.length > 0) discovered++;
+      const first = disc[0] ? `${disc[0].year}`.padStart(4) : '   —';
+      const farming = disc.find((e) => e.text.endsWith('Farming'))?.year ?? '—';
+      const era = Math.max(0, ...s.groups.map((g) => g.era));
+      rows.push(`seed ${String(seed).padStart(2)} | year 100: ${String(at[0]).padStart(5)} | year 300: ${String(at[1]).padStart(6)} | groups ${String(s.groups.length).padStart(3)} | first discovery ${first} | farming ${farming} | era ${era}`);
     }
     console.log(['Scenario A summary', ...rows, `alive at 100: ${alive}/10, splits: ${splits}, biggest band: ${maxBand}`].join('\n'));
     expect(alive).toBeGreaterThanOrEqual(7);
     expect(splits).toBeGreaterThan(0);
+    expect(discovered).toBeGreaterThanOrEqual(7);
   }, 1800000);
 });
 
@@ -72,9 +80,10 @@ describe.skipIf(!LONG)('Scenario B — Smart desert vs rich forest (§26)', () =
   it('runs 1,000 years without errors (the full 10,000 comes with steps 4–5)', () => {
     const s = createState(scenarioB(48213));
     const rows: string[] = [];
+    const era = (lineage: number): number => Math.max(0, ...s.groups.filter((g) => g.lineageId === lineage).map((g) => g.era));
     for (const year of [100, 300, 1000]) {
       runTicks(s, (year - s.year) * 12);
-      rows.push(`year ${year}: Forest ${population(s, 1)}, Desert ${population(s, 2)}`);
+      rows.push(`year ${year}: Forest ${population(s, 1)} (era ${era(1)}), Desert ${population(s, 2)} (era ${era(2)})`);
     }
     console.log(['Scenario B (seed 48213)', ...rows].join('\n'));
     expect(s.year).toBe(1000);

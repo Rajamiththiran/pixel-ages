@@ -10,6 +10,7 @@ import {
 } from './shared/ids';
 import type { FounderGroup, LogEntry, MapData, RunSetup } from './shared/types';
 import type { GroupView } from './shared/protocol';
+import { ERA_NAMES } from './shared/discoveries';
 import { decodeMap, decodeRun, encodeMap, encodeRun } from './shared/save';
 import { areaName } from './sim/world/regions';
 import { Editor } from './editor/editor';
@@ -26,7 +27,7 @@ import * as storage from './ui/storage';
 import { RunSession } from './runSession';
 
 const TILE = CONFIG.map.tilePx;
-const SETUP_HINT = 'Setup — paint the world and place people';
+const SETUP_HINT = 'Setup — paint the world and place people, then press ▶ to start';
 const NO_FOUNDERS: readonly FounderGroup[] = [];
 
 const ui = buildLayout(document.getElementById('app')!);
@@ -267,6 +268,7 @@ let runToolbar: RunToolbarApi | null = null;
 let runAnimals: Float32Array[] | null = null;
 
 const bottom = buildBottomBar(ui.bottom, {
+  start: () => startRun(),
   play: () => session?.send({ type: 'play' }),
   pause: () => session?.send({ type: 'pause' }),
   speed: (v) => session?.send({ type: 'speed', value: v }),
@@ -309,13 +311,13 @@ function requestInspect(): void {
   if (session && selection) session.send({ type: 'inspect', ...selection });
 }
 
-/** Run-mode click: a person within 3 px, else a group whose home or hut is on the tile, plus the tile. */
+/** Run-mode click: a person within 3 px, else a group whose home or building is on the tile, plus the tile. */
 function inspectAt(tx: number, ty: number, mx: number, my: number): void {
   const personId = renderer.people.pick(mx, my);
   const groups = session?.lastFrame?.groups ?? [];
   let group = groups.find((g) => g.homeX === tx && g.homeY === ty) ?? null;
-  if (!group && renderer.buildings.hutAt(tx, ty)) {
-    // A hut belongs to the nearest home.
+  if (!group && renderer.buildings.buildingAt(tx, ty)) {
+    // A building belongs to the nearest home.
     group = groups.reduce<GroupView | null>((best, g) => {
       const d = (g.homeX - tx) ** 2 + (g.homeY - ty) ** 2;
       return !best || d < (best.homeX - tx) ** 2 + (best.homeY - ty) ** 2 ? g : best;
@@ -355,6 +357,7 @@ function startRun(): void {
   view.selectedPerson = null;
   renderer.people.clear();
   renderer.buildings.clear();
+  renderer.camps.clear();
   renderer.fog.setKnown(null);
   session = new RunSession(runSetup, {
     started: () => {},
@@ -369,7 +372,11 @@ function startRun(): void {
       setBanner(f.isPast ? `Viewing the past — ${yearLabel(f.year, f.month)}` : null);
       renderer.people.update(f.people, f.speed === 8, performance.now());
       renderer.buildings.update(session!.map, f.groups);
-      view.runGroups = f.groups.map((g) => ({ name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup }));
+      renderer.camps.update(session!.map, f.groups);
+      view.runGroups = f.groups.map((g) => ({
+        name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup,
+        sub: ERA_NAMES[g.era],
+      }));
       if (f.selectedKnown) renderer.fog.setKnown(f.selectedKnown);
     },
     progress: (label) => setBanner(label),
@@ -422,6 +429,7 @@ function stopRun(): void {
   view.selectedPerson = null;
   renderer.people.clear();
   renderer.buildings.clear();
+  renderer.camps.clear();
   mode = 'setup';
   setBanner(null);
   renderer.setCrossing(null);

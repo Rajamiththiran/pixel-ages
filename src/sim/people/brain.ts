@@ -2,7 +2,7 @@
 // and their own traits, adds a small seeded nudge, and takes the highest score.
 
 import { CONFIG } from '../../config';
-import { Action } from '../../shared/ids';
+import { Action, Season } from '../../shared/ids';
 import { Discovery } from '../../shared/discoveries';
 import { float } from '../../shared/rng';
 import type { Group, SimState } from '../state';
@@ -23,6 +23,10 @@ export interface BandContext {
   hungriest: number;             // 100 × (1 − lowest fed ratio last month)
   adults: number;
   chosen: Int32Array;            // people who already picked each action this month, by Action id
+  farmCandidates: number[];      // range tiles that could become new fields, best first
+  farmSlots: number;             // farmers the fields (existing + possible) can take this month
+  herdOk: boolean;               // Taming, and a herd or wild herd animals in range
+  herdCapacity: number;
 }
 
 /** Diminishing returns for support jobs: the more already do it, the less the next one adds. */
@@ -50,12 +54,21 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
     if (total > bestScore) { bestScore = total; best = action; }
   };
 
-  // In id order: Gather 1, Hunt 2, (Farm 3, Herd 4 — step 4), Explore 5, Care 6, Build 7,
+  // In id order: Gather 1, Hunt 2, Farm 3, Herd 4, Explore 5, Care 6, Build 7,
   // (Wall 8 — step 5), Rest 9, Teach 10. Elders (60+) only Gather, Care, Rest, Teach.
   consider(Action.Gather, B.gatherBase + H * g.plantAvail);
   if (!elder && age <= A.hunterMaxAge) {
     consider(Action.Hunt, (B.huntBase + H) * g.preyAvail * (str / 100)
       * (stoneTools ? 1 : B.huntNoToolsMult) * (spear ? B.huntSpearMult : 1));
+  }
+  const season = CONFIG.seasonOfMonth[s.month]!;
+  if (!elder && season !== Season.Winter && hasActive(g, Discovery.farming) && ctx.chosen[Action.Farm]! < ctx.farmSlots) {
+    const sowOrHarvest = season === Season.Spring || season === Season.Autumn;
+    consider(Action.Farm, B.farmBase + B.farmHungerWeight * H + (sowOrHarvest ? B.farmSeasonBonus : 0));
+  }
+  const F = CONFIG.people.food;
+  if (!elder && ctx.herdOk && ctx.chosen[Action.Herd]! * F.herdPerHerder < Math.max(g.herd, F.herdPerHerder)) {
+    consider(Action.Herd, B.herdBase + B.herdHungerWeight * H);
   }
   if (!elder && age <= A.explorerMaxAge && ctx.frontierInRange.length > 0) {
     consider(Action.Explore, (B.exploreBase + (int - 100) / B.exploreIntDivisor

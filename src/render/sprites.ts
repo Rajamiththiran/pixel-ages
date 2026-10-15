@@ -107,35 +107,57 @@ export function personSprite(p: PersonLook, frame: 1 | 2): HTMLCanvasElement {
 
 const composites = new Map<string, HTMLCanvasElement>();
 
+interface Part { img: HTMLCanvasElement; x: number; y: number; rows?: number }
+
 /**
- * Hunter (§19.2): the adult with the spear drawn at (+4, 0) from the adult's top-left,
- * 5×6 in total. Cached per look and frame like every other sprite.
+ * Stacks sprites into one w×h canvas (later parts on top, `rows` limits a part to its top
+ * rows), optionally mirrored. Builds the packed pixels too, like every other sprite.
  */
-export function hunterSprite(p: PersonLook, frame: 1 | 2): HTMLCanvasElement {
-  const key = `hunter|${p.female ? 1 : 0}|${p.ageClass}|${p.colorIndex}|${p.skin}|${p.hair}|${p.clothed ? 1 : 0}|${frame}`;
+function compose(key: string, w: number, h: number, parts: Part[], flip = false): HTMLCanvasElement {
   let c = composites.get(key);
-  if (!c) {
-    const body = personSprite(p, frame);
-    const spear = getSprite('spear');
-    c = document.createElement('canvas');
-    c.width = 5;
-    c.height = body.height;
-    const ctx = c.getContext('2d')!;
-    ctx.drawImage(body, 0, 0);
-    ctx.drawImage(spear, 4, 0);
-    // Same composite as packed pixels: body, then the spear column on top at x = 4.
-    const bp = spritePixels(body)!;
-    const sp = spritePixels(spear)!;
-    const data = new Uint32Array(5 * body.height);
-    for (let y = 0; y < bp.h; y++) for (let x = 0; x < bp.w; x++) data[y * 5 + x] = bp.data[y * bp.w + x]!;
-    for (let y = 0; y < Math.min(sp.h, body.height); y++) {
-      const v = sp.data[y]!;
-      if (v !== 0) data[y * 5 + 4] = v;
+  if (c) return c;
+  const data = new Uint32Array(w * h);
+  for (const part of parts) {
+    const px = spritePixels(part.img)!;
+    const rows = Math.min(px.h, part.rows ?? px.h);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < px.w; x++) {
+        const v = px.data[y * px.w + x]!;
+        const dx = part.x + x;
+        const dy = part.y + y;
+        if (v === 0 || dx < 0 || dy < 0 || dx >= w || dy >= h) continue;
+        data[dy * w + (flip ? w - 1 - dx : dx)] = v;
+      }
     }
-    pixelsByCanvas.set(c, { w: 5, h: body.height, data });
-    composites.set(key, c);
   }
+  c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(data.slice().buffer), w, h), 0, 0);
+  pixelsByCanvas.set(c, { w, h, data });
+  composites.set(key, c);
   return c;
+}
+
+const lookKey = (p: PersonLook): string =>
+  `${p.female ? 1 : 0}|${p.ageClass}|${p.colorIndex}|${p.skin}|${p.hair}|${p.clothed ? 1 : 0}`;
+
+/** Hunter (§19.2): the adult with the spear drawn at (+4, 0) from the adult's top-left, 5×6 in total. */
+export function hunterSprite(p: PersonLook, frame: 1 | 2): HTMLCanvasElement {
+  const body = personSprite(p, frame);
+  return compose(`hunter|${lookKey(p)}|${frame}`, 5, body.height,
+    [{ img: body, x: 0, y: 0 }, { img: getSprite('spear'), x: 4, y: 0 }]);
+}
+
+/**
+ * Rider (§19.3): horse_n at (0, +2), then the top 4 rows of the adult (head, face, arms,
+ * body) at (+1, 0) → 7×7. Faces right like the horse; `flip` faces left.
+ */
+export function riderSprite(p: PersonLook, frame: 1 | 2, flip: boolean): HTMLCanvasElement {
+  return compose(`rider|${lookKey(p)}|${frame}|${flip ? 1 : 0}`, 7, 7, [
+    { img: getSprite(`horse_${frame}`), x: 0, y: 2 },
+    { img: personSprite(p, 1), x: 1, y: 0, rows: 4 },
+  ], flip);
 }
 
 /** Draws a sprite with its bottom-centre at (x, y), on integer pixels. */

@@ -7,6 +7,8 @@ import type { Frame, Speed } from '../shared/protocol';
 import { h } from './layout';
 
 export interface BottomBarHandlers {
+  /** ▶ in setup mode: same as the Run tab's Run ▶ button. */
+  start(): void;
   play(): void;
   pause(): void;
   speed(v: Speed): void;
@@ -28,6 +30,7 @@ export const yearLabel = (year: number, month: number): string =>
 export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): BottomBarApi {
   let last: Frame | null = null;
   let dragging = false;
+  let setup = true;
 
   const play = h('button', { text: '▶', title: 'Play / pause (Space)' });
   const x1 = h('button', { text: '1×', title: '1 year per second (1)' });
@@ -40,7 +43,11 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
   const fps = h('span', { class: 'fps' });
   const mode = h('span', { class: 'mode' });
 
-  play.addEventListener('click', () => (last?.playing ? hd.pause() : hd.play()));
+  play.addEventListener('click', () => {
+    if (setup) hd.start();
+    else if (last?.playing) hd.pause();
+    else hd.play();
+  });
   x1.addEventListener('click', () => hd.speed(1));
   x8.addEventListener('click', () => hd.speed(8));
   step.addEventListener('click', () => hd.step());
@@ -68,9 +75,11 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
 
   function setSetupMode(text: string): void {
     last = null;
-    for (const b of [play, x1, x8, step]) b.disabled = true;
-    const later = 'Press Run in the Run tab to start the world';
-    play.title = later;
+    setup = true;
+    // ▶ stays live so the world can be started from here too; the rest waits for the run.
+    play.disabled = false;
+    for (const b of [x1, x8, step]) b.disabled = true;
+    play.title = 'Start the world (same as Run ▶ in the Run tab)';
     play.textContent = '▶';
     x1.classList.remove('selected-speed');
     x8.classList.remove('selected-speed');
@@ -84,6 +93,7 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
   }
 
   function setRunMode(): void {
+    setup = false;
     for (const b of [play, x1, x8]) b.disabled = false;
     play.title = 'Play / pause (Space)';
     slider.disabled = false;

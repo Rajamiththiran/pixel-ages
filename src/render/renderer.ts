@@ -6,7 +6,7 @@ import type { FounderGroup, MapData } from '../shared/types';
 import type { AreaResult } from '../sim/world/regions';
 import { TerrainLayer } from './terrain';
 import { AreaOverlay, FogOverlay, RainOverlay, drawBrushPreview, drawHoverTile } from './overlays';
-import { BuildingLayer, WildAnimals, paintedDensities } from './decor';
+import { BuildingLayer, CampLayer, WildAnimals, paintedDensities } from './decor';
 import { PeopleLayer, collectFounders, drawGroupLabels, type GroupLabel } from './people';
 import { Camera } from './camera';
 import { SpriteLayer } from './blit';
@@ -41,6 +41,7 @@ export class Renderer {
   private readonly animals = new WildAnimals();
   readonly people = new PeopleLayer();
   readonly buildings = new BuildingLayer();
+  readonly camps = new CampLayer();
   readonly fog: FogOverlay;
   private items: DrawItem[] = [];
   private itemCount = 0;
@@ -149,6 +150,7 @@ export class Renderer {
       this.people.animate(now, dt);
       this.people.collect(now, this.push);
       this.buildings.collect(this.push);
+      this.camps.collect(now, this.push);
     } else {
       collectFounders(v.founders, this.push);
     }

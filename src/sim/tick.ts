@@ -11,6 +11,8 @@ import { updateBand } from './people/band';
 import { checkMigration, checkSplit } from './people/movement';
 import { removeEmptyGroups } from './people/groups';
 import { recordYearStats } from './stats';
+import { farmlandIdle } from './people/farming';
+import { yearlyDiscoveries, yearlyResources } from './progress/discoveryRules';
 
 export function tick(s: SimState): void {
   // 1. Planned events start/end — step 6.
@@ -40,16 +42,14 @@ export function tick(s: SimState): void {
 function yearly(s: SimState): void {
   // 1. Climate drift.
   updateClimate(s);
-  // 2. Plant growth/death/spread and ground change.
+  // 2. Plant growth/death/spread, ground change, idle fields back to grass.
   yearlyPlants(s);
-  // 3–6. Resources, discoveries, contact, village samples — steps 4–5.
-  // Teaching sets next year's discovery bonus (§11.6): average teachers per month vs population.
-  const T = CONFIG.people.teach;
-  for (const g of s.groups) {
-    const teachers = g.teacherMonths / CONFIG.time.ticksPerYear;
-    g.teachBonus = 1 + Math.min(T.maxBonus, (T.perShare * teachers) / Math.max(1, g.members.length));
-    g.teacherMonths = 0;
-  }
+  farmlandIdle(s);
+  // 3. Resources used up by discoveries.
+  yearlyResources(s);
+  // 4. Discoveries: forgetting, new rolls (with this year's teaching), era.
+  yearlyDiscoveries(s);
+  // 5–6. Contact and village samples — step 5.
   // 7. Yearly stats (the log is written as things happen).
   recordYearStats(s);
   // 8. Keyframes are stored by the timeline after the year rolls over (timeline.ts).

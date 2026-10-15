@@ -17,7 +17,7 @@ export function newGroup(s: SimState, id: number, name: string, lineageId: numbe
     frontier: [],
     discoveries: 0, inactive: 0, era: 0, belowLimitYears: new Uint8Array(DISCOVERY_COUNT),
     foodStock: 0, fedHistory: fed, fedIndex: 0,
-    herd: 0, farmTiles: [], hasHunted: false, huts: 0, houses: 0, buildProgress: 0,
+    herd: 0, herders: 0, farmTiles: [], hasHunted: false, huts: 0, houses: 0, buildProgress: 0,
     hungryMonths: 0, crowdedMonths: 0, wantsSplit: false, wallTarget: null,
     teachBonus: 1, teacherMonths: 0, carers: 0, cannotReproduceLogged: false, village: null,
     members: [],

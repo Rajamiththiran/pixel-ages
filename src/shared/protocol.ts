@@ -52,6 +52,7 @@ export interface GroupView {
   id: number; name: string; lineageId: number; colourIndex: number; mode: number;
   homeX: number; homeY: number; population: number; era: number; discoveries: number;
   huts: number; houses: number; herd: number; range: number;
+  farms: number;                 // added: field count, so buildings are re-laid off new fields
 }
 
 export interface InspectResult {

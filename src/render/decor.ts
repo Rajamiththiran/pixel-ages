@@ -1,8 +1,9 @@
-﻿// Decorative wild animals (§18.5). Visual only: Math.random is fine here because
-// nothing in this file feeds back into the simulation.
+﻿// Decorative wild animals, buildings and camp objects (§18.5). Visual only: Math.random is
+// fine here because nothing in this file feeds back into the simulation.
 
 import { CONFIG } from '../config';
-import { Ground, Species, WallType } from '../shared/ids';
+import { Ground, Plant, Species, WallType } from '../shared/ids';
+import { Discovery, has } from '../shared/discoveries';
 import type { MapData } from '../shared/types';
 import { getSprite } from './sprites';
 
@@ -143,58 +144,139 @@ export function paintedDensities(map: MapData): Float32Array[] {
   });
 }
 
-export interface BuildingGroup { id: number; homeX: number; homeY: number; huts: number }
+export interface BuildingGroup { id: number; homeX: number; homeY: number; huts: number; houses: number; farms: number }
+
+interface Building { x: number; y: number; w: number; h: number; img: 'hut' | 'house' }
 
 /**
- * Huts around each home (§18.5): candidate tiles sorted by (distance², dy, dx); each hut takes
- * the next candidate that is dry, wall-free land and not already used. Recomputed only when
- * a group's home or hut count changes.
+ * Huts and mud-brick houses around each home (§18.5): candidate tiles sorted by (distance²,
+ * dy, dx); each building takes the next candidate whose footprint (hut 1×1, house 2×2, top-left
+ * at the candidate) is dry, wall-free, not a field, and free. Houses go first, nearest the camp.
+ * A band draws at most 12 buildings. Recomputed only when a home, a count or the fields change.
  */
 export class BuildingLayer {
   private key = '';
-  private huts: Array<{ x: number; y: number }> = [];
-  private hutImg: HTMLCanvasElement | null = null;
+  private list: Building[] = [];
+  private readonly imgs: Partial<Record<Building['img'], HTMLCanvasElement>> = {};
 
   update(map: MapData, groups: readonly BuildingGroup[]): void {
-    const key = groups.map((g) => `${g.id}:${g.homeX},${g.homeY},${g.huts}`).join('|');
+    const key = groups.map((g) => `${g.id}:${g.homeX},${g.homeY},${g.huts},${g.houses},${g.farms}`).join('|');
     if (key === this.key) return;
     this.key = key;
-    this.huts = [];
+    this.list = [];
     const used = new Set<number>();
     for (const g of groups) used.add(g.homeY * map.width + g.homeX); // the home tile stays open
     const r = CONFIG.people.range.forage;
     const candidates: Array<[number, number, number]> = [];
     for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) candidates.push([dx * dx + dy * dy, dy, dx]);
     candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    const free = (x: number, y: number): boolean => {
+      if (x < 0 || y < 0 || x >= map.width || y >= map.height) return false;
+      const i = y * map.width + x;
+      return !used.has(i) && map.ground[i] !== Ground.Water && map.wall[i] === WallType.None
+        && map.plantType[i] !== Plant.Farmland;
+    };
     for (const g of groups) {
-      let placed = 0;
-      const want = Math.min(g.huts, R.maxHutsDrawnBand);
+      const houses = Math.min(g.houses, R.maxHutsDrawnBand);
+      const huts = Math.min(g.huts, R.maxHutsDrawnBand - houses);
+      const want: Array<Building['img']> = [...Array<'house'>(houses).fill('house'), ...Array<'hut'>(huts).fill('hut')];
+      let next = 0;
       for (const [, dy, dx] of candidates) {
-        if (placed >= want) break;
+        if (next >= want.length) break;
+        const kind = want[next]!;
+        const size = kind === 'house' ? 2 : 1;
         const x = g.homeX + dx;
         const y = g.homeY + dy;
-        if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue;
-        const i = y * map.width + x;
-        if (used.has(i) || map.ground[i] === Ground.Water || map.wall[i] !== WallType.None) continue;
-        used.add(i);
-        this.huts.push({ x, y });
-        placed++;
+        let ok = true;
+        for (let yy = 0; yy < size && ok; yy++) for (let xx = 0; xx < size && ok; xx++) ok = free(x + xx, y + yy);
+        if (!ok) continue;
+        for (let yy = 0; yy < size; yy++) for (let xx = 0; xx < size; xx++) used.add((y + yy) * map.width + x + xx);
+        this.list.push({ x, y, w: size, h: size, img: kind });
+        next++;
       }
     }
   }
 
   collect(push: (img: HTMLCanvasElement, x: number, y: number) => void): void {
-    this.hutImg ??= getSprite('hut');
-    for (const h of this.huts) push(this.hutImg, (h.x + 0.5) * TILE, (h.y + 1) * TILE);
+    for (const b of this.list) {
+      const img = (this.imgs[b.img] ??= getSprite(b.img));
+      push(img, (b.x + b.w / 2) * TILE, (b.y + b.h) * TILE);
+    }
   }
 
-  /** True if a hut stands on tile (x, y). */
-  hutAt(x: number, y: number): boolean {
-    return this.huts.some((h) => h.x === x && h.y === y);
+  /** True if a building stands on tile (x, y). */
+  buildingAt(x: number, y: number): boolean {
+    return this.list.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
   }
 
   clear(): void {
     this.key = '';
-    this.huts = [];
+    this.list = [];
   }
+}
+
+export interface CampGroup { id: number; homeX: number; homeY: number; discoveries: number }
+
+interface CampItem { kind: 'fire' | 'raft' | 'boat' | 'cart'; x: number; y: number }
+
+/**
+ * Things at each camp (§18.5): an animated campfire on the home tile with Fire, a raft or boat
+ * (Boat replaces Raft) on the water tile nearest home within 3 tiles, and a cart beside home.
+ */
+export class CampLayer {
+  private key = '';
+  private items: CampItem[] = [];
+  private readonly imgs = new Map<string, HTMLCanvasElement>();
+
+  update(map: MapData, groups: readonly CampGroup[]): void {
+    const key = groups.map((g) => `${g.id}:${g.homeX},${g.homeY},${g.discoveries}`).join('|');
+    if (key === this.key) return;
+    this.key = key;
+    this.items = [];
+    for (const g of groups) {
+      const cx = (g.homeX + 0.5) * TILE;
+      const cy = (g.homeY + 0.5) * TILE;
+      if (has(g.discoveries, Discovery.fire)) this.items.push({ kind: 'fire', x: cx, y: cy + 2 });
+      if (has(g.discoveries, Discovery.cart)) this.items.push({ kind: 'cart', x: cx + TILE, y: cy + TILE / 2 - 1 });
+      const vessel = has(g.discoveries, Discovery.boat) ? 'boat' : has(g.discoveries, Discovery.raft) ? 'raft' : null;
+      if (vessel) {
+        const w = nearestWater(map, g.homeX, g.homeY);
+        if (w) this.items.push({ kind: vessel, x: (w.x + 0.5) * TILE, y: (w.y + 0.5) * TILE + 2 });
+      }
+    }
+  }
+
+  collect(nowMs: number, push: (img: HTMLCanvasElement, x: number, y: number) => void): void {
+    const frame = Math.floor(nowMs / R.campfireFrameMs) % 2 === 0 ? 1 : 2;
+    for (const it of this.items) {
+      const name = it.kind === 'fire' ? `campfire_${frame}` : it.kind;
+      let img = this.imgs.get(name);
+      if (!img) { img = getSprite(name); this.imgs.set(name, img); }
+      push(img, it.x, it.y);
+    }
+  }
+
+  clear(): void {
+    this.key = '';
+    this.items = [];
+  }
+}
+
+/** Water ground, or an intact River / Sea wall, nearest (x, y) within 3 tiles; ties by (dy, dx). */
+function nearestWater(map: MapData, hx: number, hy: number): { x: number; y: number } | null {
+  const r = R.vesselSearchTiles;
+  let best: { x: number; y: number; d: number } | null = null;
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) {
+      const d = dx * dx + dy * dy;
+      if (d > r * r || (best && d >= best.d)) continue;
+      const x = hx + dx;
+      const y = hy + dy;
+      if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue;
+      const i = y * map.width + x;
+      const wall = map.wall[i];
+      if (map.ground[i] === Ground.Water || wall === WallType.River || wall === WallType.Sea) best = { x, y, d };
+    }
+  }
+  return best;
 }

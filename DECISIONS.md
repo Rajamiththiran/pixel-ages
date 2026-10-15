@@ -58,3 +58,28 @@ Where [pixel-ages-blueprint.md](pixel-ages-blueprint.md) is silent or unclear, t
 | 3.16 | `inspect` message | Also carries the clicked person / group id, picked on the main thread | Only the main thread knows where people are drawn |
 | 3.17 | Rendering thousands of sprites with separate drawImage calls was 1 fps at 5,000 people | Sprites are copied into one pixel layer per frame and drawn once (`render/blit.ts`) | 5,000 people now render at ~100 fps |
 | 3.18 | Birth numbers | Tuned 5% → 7% a month and 24 → 18 months nursing — see TUNING.md pass 1 | Scenario A target (7/10 alive at year 100) with real-forager birth intervals |
+| 3.19 | The bottom ▶ in setup mode (§20.3 shows it disabled) | It starts the run, the same as Run ▶ in the Run tab; 1×, 8× and Step stay disabled until then | On a window narrower than 1,680 px the right panel is off-screen, and the owner couldn't find how to start |
+
+## Step 4 — Discoveries and eras
+
+| # | Gap | Decision | Why |
+|---|---|---|---|
+| 4.1 | "The group keeps ceil(farmers / 10) farm tiles" (§11.5): nobody may farm in winter, so taken literally every field would vanish each winter | Fields are only ever added to reach ceil(farmers / 10). A field is given up when nobody has farmed it for 3 years (it turns back into grass, §10.2) or when the group migrates | Fields persist through winter and fallow years, as real fields do |
+| 4.2 | Which tiles become fields when rain ties (§11.5 says ties → lowest index) | Wettest first, then open land before forest or fruit bushes, then lowest index. Never the camp tile | Clearing a fruit grove throws away foragers' best food; early farmers chose open land. The camp stays a camp |
+| 4.3 | "Farm tile available" (brain, §11.6) | Free farmer places: 10 per existing field plus 10 per tile that could still become a field | The brain can't send more farmers than the land can take |
+| 4.4 | How "no farmers for 3 years" is tracked | A per-tile "farmed this year" mark; a field with no mark for 3 yearly checks reverts | Exact, and independent of which month the last farmer worked |
+| 4.5 | Teaching "this year's discovery rolls" (replaces 3.13) | Teachers during the year raise the rolls at the end of that same year | Now that rolls exist, the literal reading works |
+| 4.6 | Resource use when there isn't enough (§12.6) | Nothing is taken; the discovery goes inactive (logged once) and is checked again next year. An emptied deposit disappears from the map | Taking the last scraps and still failing would waste them; an empty deposit shouldn't still look like stone |
+| 4.7 | How far a group fetches resources | Any known tile, nearest first (no range limit) | §12.6 says "known tiles"; distance only sets the order |
+| 4.8 | Logging a forgetting cascade (§12.5) | One line per lost discovery: "forgot Boat (too few people)", then "forgot Clothing (it needs Spear)" | The log shows exactly what was lost and why |
+| 4.9 | What happens to a herd when Taming is forgotten | The herd goes wild (herd = 0). Herds only grow while Taming is active | Nobody left knows how to keep them |
+| 4.10 | Several discoveries in one year (§12.3) | Rolled in id order against the up-to-date set, so Stone Tools then Spear can both arrive in one year | "Roll each discovery in id order"; no rule says to freeze the set first |
+| 4.11 | "Found" on wall tiles (§12.2) | A River or Sea wall counts as Water, a Mountain wall as Mountain; nothing else (walls have no plants or resources) | Matches §12.2 and §8.2 |
+| 4.12 | §11.5 "density × 10" animals when herding | 1.0 wild herd density = 10 catchable animals (`food.herdAnimalsPerDensity`) | The number lives in config.ts like every other |
+| 4.13 | Pressure (§13) belongs to step 5, but step 4's tests need "inactive adds pressure" | Pressure is built now (`society/walls.ts`) and shown in the inspector; wall work comes in step 5 | Needed for the step 4 acceptance test |
+| 4.14 | Laying out mud-brick houses (§18.5) | Houses (2×2 tiles, top-left at the candidate) are placed first, nearest the camp, then huts; a band draws at most 12 buildings; buildings never stand on fields. `GroupView` gained `farms` so the layout updates when fields appear | Fields and buildings no longer overlap |
+| 4.15 | Raft, boat and cart positions (§18.5) | Raft/boat on the nearest Water ground or River/Sea wall within 3 tiles of home; the cart on the tile right of home | "Nearest water" includes rivers and seas, where boats belong |
+| 4.16 | "Era name shown on groups" | A small line with the era name above each group's name on the map, and in the inspector | Visible without clicking |
+| 4.17 | Herd goats and city buildings (§18.5) | Not drawn yet: §24 lists them under step 5's village visuals. The herd size shows in the inspector | Keeps to the build order |
+| 4.18 | Riders and facing (§19.1) | Riders face the way they move (flipped when going left) | Horses face right in the grid; a rider going left looked backwards |
+| 4.19 | §11.8 sets no minimum size for a split. Scenario B's 4 desert founders are crowded from year 1 and split 2 + 2, so neither half could ever have children (this already happened in step 3) | A band only splits if both parts keep at least 4 people including a man 16+ and a woman 16–40 (`split.minPeople`) — the same test §14.4 uses for refugees | Real bands don't split below a breeding core; a 2-person "band" is a death sentence, not a daughter group |

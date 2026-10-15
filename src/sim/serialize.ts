@@ -44,6 +44,7 @@ export function cloneState(s: SimState): SimState {
     dryYears: s.dryYears.slice(),
     wetYears: s.wetYears.slice(),
     farmIdleYears: s.farmIdleYears.slice(),
+    farmedThisYear: s.farmedThisYear.slice(),
     climate: s.climate.slice(),
     driftMult: s.driftMult.slice(),
     groups: s.groups.map(cloneGroup),
@@ -61,7 +62,7 @@ function stateArrays(s: SimState): ArrayBufferView[] {
   const out: ArrayBufferView[] = [
     s.rng, s.ground, s.plantType, s.plantDensity, s.plantFood, s.resourceType, s.resourceAmount,
     s.baseRain, s.rainNow, s.animal[0], s.animal[1], s.animal[2], s.animal[3], s.wall, s.crossing,
-    s.regionId, s.regionParent, s.dryYears, s.wetYears, s.farmIdleYears, s.climate, s.driftMult,
+    s.regionId, s.regionParent, s.dryYears, s.wetYears, s.farmIdleYears, s.farmedThisYear, s.climate, s.driftMult,
   ];
   for (const k of POOL_ARRAYS) out.push(s.persons[k]);
   for (const g of s.groups) out.push(g.known, g.belowLimitYears, g.fedHistory);

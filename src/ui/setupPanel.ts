@@ -252,7 +252,7 @@ export function buildRunPanel(
         h('span', { class: 'log-year', text: `Year ${e.year.toLocaleString('en-US')}` }), dot, h('span', { text: e.text })));
     }
     const out: Node[] = [h('h3', { text: `Event log (${log.length.toLocaleString('en-US')})` })];
-    if (log.length === 0) out.push(h('p', { class: 'hint', text: 'Nothing has happened yet: splits, moves and extinctions appear here.' }));
+    if (log.length === 0) out.push(h('p', { class: 'hint', text: 'Nothing has happened yet: discoveries, eras, splits, moves and extinctions appear here.' }));
     out.push(list);
     return out;
   }

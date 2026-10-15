@@ -103,6 +103,7 @@ export const CONFIG = {
       farmerCap: 2.0, farmersPerTile: 10, farmMinRain: 30, irrigationDistance: 2,
       farmSeason: [0.4, 0.93, 2.67, 0], ironFarmMult: 1.2,
       herdPerHerder: 20, herdYieldPerAnimal: 0.08, herdGrowth: 0.015, herdCapturePerHerder: 2, herdCapacityPerTile: 5,
+      herdAnimalsPerDensity: 10, // a tile's wild herd density 1.0 = 10 catchable animals (§11.5)
       cookedMult: 1.15, copperMult: 1.15, intYieldDivisor: 400, tradeMult: 1.05,
     },
     distribution: { selfishness: 0.5, childBase: 0.5, carerMult: 0.7 },
@@ -130,7 +131,10 @@ export const CONFIG = {
       supportFalloff: 2,
     },
     groupSize: { bandMax: 60, toVillageAt: 150, toBandBelow: 100 },
-    split: { crowdingAbove: 1.1, months: 12, bandChance: 0.10, villageChance: 0.05, coopBase: 1.2, bandShare: 0.4, villageShare: 0.3, minDistanceR: 2 },
+    split: {
+      crowdingAbove: 1.1, months: 12, bandChance: 0.10, villageChance: 0.05, coopBase: 1.2, bandShare: 0.4, villageShare: 0.3, minDistanceR: 2,
+      minPeople: 4,              // added in step 4: both halves of a split keep 4+ people incl. a man 16+ and a woman 16–40 (DECISIONS 4.19)
+    },
     migrate: { hungerAbove: 60, months: 3, plantAvailBelow: 0.4, farmerHungerAbove: 80, farmerMonths: 12, logMinDistance: 10, distancePenalty: 0.5, sampleStep: 2 },
     village: { sampleSize: 64, revealsPerExplorer: 0.2, birthIntervalMonths: 44, fertileShare: 25 / 35, traitHazardDivisor: 250 },
     sustainable: { plantShare: 0.1, preyValue: 0.3 },   // plantShare = regenRate × 0.5
@@ -152,6 +156,10 @@ export const CONFIG = {
     writingChanceMult: 1.3,
     resourceUsePer: 50,
     cityMinPop: 500,
+    // Added in step 4 (numbers inside the §12.3 formula):
+    spareFoodFrom: 0.5,          // spareFood = clamp((fed12 − 0.5) × 2, 0, 1)
+    spareFoodScale: 2,
+    popSqrtDivisor: 5,           // × sqrt(population) / 5
   },
 
   walls: {
@@ -259,6 +267,9 @@ export const CONFIG = {
     animalDensityDivisor: 4,     // §18.5: animals per block = floor(density sum / 4 + random)
     animalWanderMs: 1500,       // decorative animals pick a new spot about this often
     animalSpeedPx: 6,            // decorative animal walking speed
+    // Added in step 4 (§18.5, §19.5):
+    campfireFrameMs: 250,        // campfire alternates frames this often
+    vesselSearchTiles: 3,        // raft / boat is drawn on the water tile nearest home, within 3 tiles
   },
 
   // Editor and setup UI (step 1). Not used by the simulation.

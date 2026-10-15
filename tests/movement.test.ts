@@ -3,8 +3,8 @@ import { createMap } from '../src/editor/mapState';
 import { Ground } from '../src/shared/ids';
 import { createState } from '../src/sim/state';
 import { runTicks } from '../src/sim/tick';
-import { pickFamilies } from '../src/sim/people/movement';
-import { fourPeople, runOf, scenarioA } from './fixtures';
+import { pickFamilies, viable } from '../src/sim/people/movement';
+import { fourPeople, runOf, scenarioA, scenarioB } from './fixtures';
 
 describe('splitting and migration (§11.8)', () => {
   it('splits move whole families: couples together, children under 15 with a parent', () => {
@@ -28,6 +28,20 @@ describe('splitting and migration (§11.8)', () => {
         if (parent !== undefined) expect(moving.has(slot)).toBe(moving.has(parent));
       }
     }
+  });
+
+  it('a crowded band of 4 never splits; every split leaves two groups that can have children', () => {
+    // Scenario B's desert founders are crowded from year 1 (a tiny oasis).
+    const s = createState(scenarioB(48213));
+    runTicks(s, 60 * 12);
+    for (const e of s.log.filter((x) => x.type === 'split')) {
+      expect(Number(/with (\d+) people/.exec(e.text)![1])).toBeGreaterThanOrEqual(4);
+    }
+    const small = createState(scenarioB(48213));
+    const desert = small.groups[1]!;
+    expect(viable(small, desert.members)).toBe(true);           // 2 men + 2 women
+    expect(viable(small, desert.members.slice(0, 2))).toBe(false); // too few
+    expect(viable(small, desert.members.slice(0, 3))).toBe(false);
   });
 
   it('a group placed in empty desert declines and dies out or moves away', () => {

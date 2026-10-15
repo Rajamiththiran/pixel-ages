@@ -5,7 +5,8 @@ import { CONFIG } from '../config';
 import {
   Action, ACTION_NAMES, GROUND_NAMES, Mode, Plant, PLANT_NAMES, Resource, RESOURCE_NAMES, Sex, SPECIES_NAMES, WallType, WALL_NAMES,
 } from '../shared/ids';
-import { Discovery, ERA_NAMES, has } from '../shared/discoveries';
+import { Discovery, DISCOVERIES, ERA_NAMES, has } from '../shared/discoveries';
+import { pressure } from './society/walls';
 import type { GroupView, InspectResult } from '../shared/protocol';
 import type { Group, SimState } from './state';
 import { areaName } from './world/regions';
@@ -51,7 +52,8 @@ export function groupViews(s: SimState): GroupView[] {
   return s.groups.map((g) => ({
     id: g.id, name: g.name, lineageId: g.lineageId, colourIndex: groupColor(s, g), mode: g.mode,
     homeX: g.homeX, homeY: g.homeY, population: g.members.length, era: g.era, discoveries: g.discoveries,
-    huts: g.huts, houses: g.houses, herd: g.herd, range: CONFIG.people.range.forage,
+    huts: g.huts, houses: g.houses, herd: Math.floor(g.herd), range: CONFIG.people.range.forage,
+    farms: g.farmTiles.length,
   }));
 }
 
@@ -121,8 +123,9 @@ function groupCard(s: SimState, g: Group): Record<string, unknown> {
   const t = traitAverages(s, g);
   const lin = s.lineages.find((l) => l.id === g.lineageId);
   const owned: string[] = [];
-  for (const [name, id] of Object.entries(Discovery)) {
-    if (has(g.discoveries, id)) owned.push(has(g.inactive, id) ? `${name} (inactive)` : name);
+  for (const d of DISCOVERIES) {
+    if (!has(g.discoveries, d.id)) continue;
+    owned.push(has(g.inactive, d.id) ? `${d.name} (inactive: no ${RESOURCE_NAMES[d.uses]})` : d.name);
   }
   // Share of the home area this group has seen.
   const home = g.homeY * s.width + g.homeX;
@@ -139,15 +142,18 @@ function groupCard(s: SimState, g: Group): Record<string, unknown> {
     Lineage: lin?.name ?? '—',
     Mode: g.mode === Mode.Band ? 'Band' : 'Village',
     Population: `${g.members.length} (${c.men} men, ${c.women} women, ${c.children} children, ${c.elders} elders)`,
-    Era: ERA_NAMES[g.era] ?? '—',
-    Discoveries: owned.length ? owned.join(', ') : 'none yet (discoveries arrive in build step 4)',
+    Era: `${g.era} · ${ERA_NAMES[g.era] ?? '—'}`,
+    Discoveries: owned.length ? owned.join(', ') : 'none yet',
     'Intelligence (potential → actual)': `${t.potInt.toFixed(0)} → ${t.int.toFixed(0)}`,
     'Cooperation (potential → actual)': `${t.potCoop.toFixed(0)} → ${t.coop.toFixed(0)}`,
     'Strength (potential → actual)': `${t.potStr.toFixed(0)} → ${t.str.toFixed(0)}`,
     'Food stock': `${f1(g.foodStock)} FU (need ${f1(g.need)} a month)`,
     Hunger: Math.round(g.hunger),
     Crowding: g.crowding.toFixed(2),
-    Huts: g.huts,
+    Pressure: pressure(g).toFixed(2),
+    ...(hasActive(g, Discovery.taming) || g.herd > 0 ? { Herd: `${Math.floor(g.herd)} animals` } : {}),
+    ...(g.farmTiles.length > 0 ? { 'Farm tiles': g.farmTiles.length } : {}),
+    Shelters: g.houses > 0 ? `${g.huts} huts, ${g.houses} houses` : `${g.huts} huts`,
     Home: `(${g.homeX}, ${g.homeY})`,
     Known: `${g.knownCount} tiles (${pct(knownInArea / Math.max(1, areaTiles))} of its area)`,
     Founded: `year ${g.foundedYear}`,

@@ -1,7 +1,7 @@
 ﻿// Migration and splitting (§11.8).
 
 import { CONFIG } from '../../config';
-import { Ground } from '../../shared/ids';
+import { Ground, Sex } from '../../shared/ids';
 import { Discovery } from '../../shared/discoveries';
 import { chance, int } from '../../shared/rng';
 import type { Group, SimState } from '../state';
@@ -81,7 +81,8 @@ export function checkSplit(s: SimState, g: Group): void {
   const pop = g.members.length;
   const triggered = g.crowdedMonths >= SP.months || (!farming && pop > P.groupSize.bandMax);
   g.wantsSplit = triggered;
-  if (!triggered || pop < 2) return;
+  // Both halves must be able to carry on (DECISIONS 4.19), so a tiny band never splits.
+  if (!triggered || pop < 2 * SP.minPeople) return;
   const avgCoop = traitAverages(s, g).coop;
   if (!chance(s.rng, SP.bandChance * (SP.coopBase - avgCoop / 100))) return;
 
@@ -90,7 +91,26 @@ export function checkSplit(s: SimState, g: Group): void {
 
   const moving = pickFamilies(s, g, Math.round(pop * SP.bandShare));
   if (moving.length === 0 || moving.length >= pop) return;
+  const leaving = new Set(moving);
+  if (!viable(s, moving) || !viable(s, g.members.filter((slot) => !leaving.has(slot)))) return;
   createSplit(s, g, moving, site);
+}
+
+/**
+ * A group that can carry on by itself: at least 4 people, including a man 16+ and a woman
+ * 16–40 — the same test §14.4 uses for refugees.
+ */
+export function viable(s: SimState, slots: readonly number[]): boolean {
+  if (slots.length < SP.minPeople) return false;
+  const p = s.persons;
+  const B = P.birth;
+  let man = false, woman = false;
+  for (const slot of slots) {
+    const age = p.ageMonths[slot]! / 12;
+    if (p.sex[slot] === Sex.Male) { if (age >= B.minAge) man = true; }
+    else if (age >= B.minAge && age <= B.maxAge) woman = true;
+  }
+  return man && woman;
 }
 
 /** Best known site by sustainable yield, connected, at least 2R from every group's home. */
