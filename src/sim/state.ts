@@ -1,6 +1,4 @@
 // SimState (§7.3) and creating it from a RunSetup. Worker-only data.
-// Step 2 holds the world (tiles, climate, plants, animals). People, groups, lineages and
-// relations are added in step 3+.
 
 import { CONFIG } from '../config';
 import { WallType } from '../shared/ids';
@@ -18,6 +16,39 @@ export interface WallSegment {
   health: number;
   maxHealth: number;
   breached: boolean;
+  breachTile: number;            // tile last worn (where the breach opens), -1 if never worked
+  breachGroup: number;           // group that wore it last, -1 if none
+}
+
+/** A representative member of a village (§7.3): keeps genes and selection working in village mode. */
+export interface SampleMember {
+  sex: number;                   // Sex
+  ageYears: number;
+  pot: [number, number, number]; // potential [int, coop, str]
+  act: [number, number, number]; // actual    [int, coop, str]
+}
+
+export interface VillageData {
+  // counts[sex * 6 + bucket]; buckets: 0:0–4, 1:5–14, 2:15–49, 3:50–59, 4:60–69, 5:70+
+  counts: Int32Array;            // length 12
+  sample: SampleMember[];        // representative people, length = sampleSize
+  fed: number;                   // last month's fed ratio
+  childFed: number;              // childhood nutrition, average over the last 15 years (§11.4 cn)
+  childAdversity: number;        // 0–1 share of hard months (war, plague, starving) over the last 15 years (ca)
+  birthsThisYear: number;        // for the yearly sample update
+  deathMultSum: number;          // sum of this year's monthly group death multipliers
+  deathMultMonths: number;       // months summed in deathMultSum
+  shortage: boolean;             // a month this year with fed < 1
+}
+
+export interface Relation {
+  a: number;                     // group id (a < b)
+  b: number;
+  kind: 'coexist' | 'trade' | 'war';
+  sinceYear: number;
+  reviewYear: number;
+  pa: number;                    // pressures at the last decision (re-decide on a change > 0.3)
+  pb: number;
 }
 
 export interface ActiveEvent {
@@ -46,28 +77,31 @@ export interface Group {
   knownCount: number;
   knownVersion: number;          // +1 whenever known tiles change (fog updates)
   frontier: number[];            // tile indices, kept sorted ascending
-  discoveries: number;           // bitmask (bit = discovery id) — step 4
-  inactive: number;              // bitmask: owned but missing resource — step 4
+  discoveries: number;           // bitmask (bit = discovery id)
+  inactive: number;              // bitmask: owned but missing resource
   era: number;                   // 0–6
-  belowLimitYears: Uint8Array;   // per discovery, years under forget limit — step 4
+  belowLimitYears: Uint8Array;   // per discovery, years under forget limit
   foodStock: number;             // FU
   fedHistory: Float32Array;      // last 12 months of group average fed ratio (ring buffer)
   fedIndex: number;              // next write position in fedHistory
-  herd: number;                  // step 4
-  farmTiles: number[];           // step 4
+  herd: number;                  // owned herd animals
+  herders: number;               // last month's herders (for sustainable yield, §11.5)
+  farmTiles: number[];           // tile indices, in the order farmers fill them (best first)
   hasHunted: boolean;
   huts: number;
-  houses: number;                // step 4
+  houses: number;                // mud-brick houses
   buildProgress: number;         // worker-months toward the next building
   hungryMonths: number;          // consecutive months over the migrate threshold
   crowdedMonths: number;         // consecutive months over the split threshold
   wantsSplit: boolean;           // split triggered this month (scouts go farther, DECISIONS 3.6)
-  wallTarget: { segmentId: number; tile: number } | null; // step 5
+  wallTarget: { segmentId: number; tile: number } | null;
+  wallScanKey: string;           // what a fruitless wall search last saw; no rescan until it changes
   teachBonus: number;            // this year's teaching multiplier
   teacherMonths: number;         // teachers summed over this year's months
   carers: number;                // this month's carers
   cannotReproduceLogged: boolean;
-  village: null;                 // VillageData in step 5
+  village: VillageData | null;    // only in village mode
+  trading: boolean;              // traded at the last yearly contact: food × 1.05 this year
   members: number[];             // pool slots, ascending by person id
   // Signals computed at the start of each month (§11.5), used by the brain and inspector.
   need: number;                  // FU per month
@@ -108,13 +142,16 @@ export interface SimState {
   dryYears: Uint16Array;         // ground change counters
   wetYears: Uint16Array;
   farmIdleYears: Uint8Array;
-  climate: Float32Array;         // cellsX × cellsY drift values
+  farmedThisYear: Uint8Array;    // 1 if a farmer worked the tile this year (idle farmland rule, §10.2)
+  climate: Float32Array;       // cellsX × cellsY drift values
   driftMult: Float32Array;       // per tile, interpolated from `climate` once a year
 
   groups: Group[];               // always sorted by id
   nextGroupId: number;
   lineages: Lineage[];           // sorted by id
   persons: PersonPool;           // band-mode people only
+  relations: Relation[];         // sorted by (a, b)
+  lineagesMet: number[];         // lineage pairs that have met (lo × 65536 + hi), sorted
 
   activeEvents: ActiveEvent[];
   log: LogEntry[];
@@ -168,17 +205,20 @@ export function createState(setup: RunSetup): SimState {
     originalRegionId: areas.regionId.slice(),
     wallSegmentId: segs.segmentId,
     wallSegments: segs.types.map((type, id) => ({
-      id, type, health: WALL_HEALTH[type]!, maxHealth: WALL_HEALTH[type]!, breached: false,
+      id, type, health: WALL_HEALTH[type]!, maxHealth: WALL_HEALTH[type]!, breached: false, breachTile: -1, breachGroup: -1,
     })),
     dryYears: new Uint16Array(n),
     wetYears: new Uint16Array(n),
     farmIdleYears: new Uint8Array(n),
+    farmedThisYear: new Uint8Array(n),
     climate: new Float32Array(CONFIG.climate.cellsX * CONFIG.climate.cellsY),
     driftMult: new Float32Array(n),
     groups: [],
     nextGroupId: 1,
     lineages: [],
     persons: createPool(),
+    relations: [],
+    lineagesMet: [],
     activeEvents: [],
     log: [],
     logDropped: 0,

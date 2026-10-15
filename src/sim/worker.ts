@@ -38,6 +38,7 @@ let lastAnimalYear = -1;
 let selectedGroup: number | null = null;
 let lastKnownVersion = -1;              // fog: known version of the selected group last sent
 let sentLog = 0;                        // live log entries already sent (absolute count)
+let sentStats = 0;                      // live yearly stats rows already sent
 
 const post = (msg: FromWorker, transfer: Transferable[] = []): void => {
   (self as unknown as Worker).postMessage(msg, transfer);
@@ -60,6 +61,7 @@ function handle(msg: ToWorker): void {
       rebuildTarget = null;
       selectedGroup = null;
       sentLog = 0;
+      sentStats = 0;
       const m = msg.setup.map;
       const areas = computeAreas(m.wall, m.width, m.height);
       post({
@@ -257,6 +259,11 @@ function sendFrame(): void {
     const from = Math.max(0, sentLog - live.logDropped);
     post({ type: 'log', entries: live.log.slice(from) });
     sentLog = total;
+  }
+  // New yearly stats rows for the graphs (live only, like the log).
+  if (live.stats.length > sentStats) {
+    post({ type: 'stats', rows: live.stats.slice(sentStats) });
+    sentStats = live.stats.length;
   }
 }
 

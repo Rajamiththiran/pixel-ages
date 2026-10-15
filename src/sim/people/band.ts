@@ -5,18 +5,22 @@ import { CONFIG } from '../../config';
 import type { Group, SimState } from '../state';
 import { chooseAction, type BandContext } from './brain';
 import { doActions } from './actions';
-import { computeSignals, distribute, rangeTiles, spoil } from './food';
-import { frontierInRange } from './explore';
+import { computeSignals, distribute, homeRange, spoil } from './food';
+import { frontierInRange, hasActive } from './explore';
+import { farmCandidates, herdCapacity, herdFoundInRange } from './farming';
+import { Discovery } from '../../shared/discoveries';
 import { aging, births, checkCanReproduce, deaths, pairing, updateHealth } from './lifecycle';
 import { buryDead, traitAverages } from './groups';
+import { pressure, updateWallTarget } from '../society/walls';
 
 const P = CONFIG.people;
 
 export function updateBand(s: SimState, g: Group): void {
   const p = s.persons;
   pairing(s, g);
-  const range = rangeTiles(s, g);
+  const range = homeRange(s, g);
   computeSignals(s, g, range);
+  updateWallTarget(s, g);
   const ctx = bandContext(s, g, range);
 
   for (const slot of g.members) p.action[slot] = chooseAction(s, g, ctx, slot);
@@ -59,7 +63,14 @@ function bandContext(s: SimState, g: Group, range: number[]): BandContext {
   for (const slot of g.members) if (p.ageMonths[slot]! < P.ages.adult * 12) children++;
   const adults = g.members.length - children;
   const sheltered = g.huts * P.build.familiesPerHut + g.houses * P.build.familiesPerHouse;
+  const farmCands = farmCandidates(s, g, range);
+  const taming = hasActive(g, Discovery.taming);
   return {
+    farmCandidates: farmCands,
+    farmSlots: P.food.farmersPerTile * (g.farmTiles.length + farmCands.length),
+    herdOk: taming && (g.herd > 0 || herdFoundInRange(s, range)),
+    herdCapacity: taming ? herdCapacity(s, g, range) : 0,
+    pressure: pressure(g),
     range,
     frontierInRange: frontierInRange(s, g),
     kidsRatio: children / Math.max(1, adults),

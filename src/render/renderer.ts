@@ -6,7 +6,9 @@ import type { FounderGroup, MapData } from '../shared/types';
 import type { AreaResult } from '../sim/world/regions';
 import { TerrainLayer } from './terrain';
 import { AreaOverlay, FogOverlay, RainOverlay, drawBrushPreview, drawHoverTile } from './overlays';
-import { BuildingLayer, WildAnimals, paintedDensities } from './decor';
+import { BuildingLayer, CampLayer, CampLife, WildAnimals, paintedDensities } from './decor';
+import { getSprite } from './sprites';
+import { WallType } from '../shared/ids';
 import { PeopleLayer, collectFounders, drawGroupLabels, type GroupLabel } from './people';
 import { Camera } from './camera';
 import { SpriteLayer } from './blit';
@@ -24,6 +26,8 @@ export interface SetupView {
   running: boolean;
   runGroups: GroupLabel[];       // group names above homes
   showFog: boolean;
+  /** Territory (§18.7): range circles (tile centre, radius in tiles, colour) of the selected lineage. */
+  territory: Array<{ x: number; y: number; r: number; colour: string }>;
   selectedPerson: number | null;
 }
 
@@ -41,6 +45,9 @@ export class Renderer {
   private readonly animals = new WildAnimals();
   readonly people = new PeopleLayer();
   readonly buildings = new BuildingLayer();
+  readonly camps = new CampLayer();
+  readonly life = new CampLife();
+  private bridgeImg: HTMLCanvasElement | null = null;
   readonly fog: FogOverlay;
   private items: DrawItem[] = [];
   private itemCount = 0;
@@ -137,6 +144,7 @@ export class Renderer {
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.camera.apply(ctx);
     ctx.drawImage(this.terrain.canvas, 0, 0);
+    if (v.running) this.drawBridges(ctx);
 
     if (v.showAreas) ctx.drawImage(this.areas.canvas, 0, 0);
     if (v.hoverArea >= 0) this.areas.drawHover(ctx, v.hoverArea, v.map.width, v.map.height);
@@ -149,6 +157,9 @@ export class Renderer {
       this.people.animate(now, dt);
       this.people.collect(now, this.push);
       this.buildings.collect(this.push);
+      this.camps.collect(now, this.push);
+      this.life.animate(now, dt);
+      this.life.collect(now, this.push);
     } else {
       collectFounders(v.founders, this.push);
     }
@@ -168,6 +179,7 @@ export class Renderer {
     }
     ctx.drawImage(layer.end(), 0, 0);
     if (v.showFog) this.fog.draw(ctx);
+    if (v.running) drawTerritory(ctx, v.territory);
     if (v.running) {
       drawGroupLabels(ctx, v.runGroups);
       this.drawSelectedPerson(ctx, v.selectedPerson);
@@ -181,6 +193,21 @@ export class Renderer {
       if (v.brushSize !== null) drawBrushPreview(ctx, v.hover.x, v.hover.y, v.brushSize);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /** A bridge on every crossing of a River or Sea wall (§18.5), filling the tile (top-left anchored, §19.5). */
+  private drawBridges(ctx: CanvasRenderingContext2D): void {
+    const crossing = this.terrain.crossing;
+    if (!crossing) return;
+    const m = this.view.map;
+    const T = CONFIG.map.tilePx;
+    for (let i = 0; i < crossing.length; i++) {
+      if (crossing[i] !== 1) continue;
+      const wall = m.wall[i];
+      if (wall !== WallType.River && wall !== WallType.Sea) continue;
+      this.bridgeImg ??= getSprite('bridge');
+      ctx.drawImage(this.bridgeImg, (i % m.width) * T, Math.floor(i / m.width) * T);
+    }
   }
 
   /** Small white corner brackets around the selected person. */
@@ -205,4 +232,20 @@ export class Renderer {
       this.fpsWindowStart = now;
     }
   }
+}
+
+/** Dotted circle of radius R around each home (§18.7 Territory). */
+function drawTerritory(ctx: CanvasRenderingContext2D, circles: SetupView['territory']): void {
+  if (circles.length === 0) return;
+  const T = CONFIG.map.tilePx;
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 3]);
+  for (const c of circles) {
+    ctx.strokeStyle = c.colour;
+    ctx.beginPath();
+    ctx.arc((c.x + 0.5) * T, (c.y + 0.5) * T, c.r * T, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
 }

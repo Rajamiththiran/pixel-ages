@@ -1,7 +1,7 @@
 // Main-thread side of a run: owns the worker, sends commands, and applies frames to a
 // local copy of the tiles that the renderer draws. Rendering never changes sim state.
 
-import type { LogEntry, MapData, RunSetup } from './shared/types';
+import type { LogEntry, MapData, RunSetup, YearStats } from './shared/types';
 import {
   TILE_BYTES, TILE_UPDATE_BYTES, unpackTile, type AreaInfo, type Frame, type FromWorker, type InspectResult, type ToWorker,
 } from './shared/protocol';
@@ -17,6 +17,7 @@ export interface RunHandlers {
   progress(label: string): void;
   error(message: string): void;
   log(entries: LogEntry[]): void;
+  stats(rows: YearStats[]): void;
   inspect(result: InspectResult): void;
 }
 
@@ -53,7 +54,7 @@ export class RunSession {
       case 'error': this.h.error(msg.message); return;
       case 'log': this.h.log(msg.entries); return;
       case 'inspectResult': this.h.inspect(msg.result); return;
-      case 'stats': return; // graphs arrive in step 6
+      case 'stats': this.h.stats(msg.rows); return;
     }
   }
 

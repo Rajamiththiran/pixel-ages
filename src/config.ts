@@ -103,6 +103,7 @@ export const CONFIG = {
       farmerCap: 2.0, farmersPerTile: 10, farmMinRain: 30, irrigationDistance: 2,
       farmSeason: [0.4, 0.93, 2.67, 0], ironFarmMult: 1.2,
       herdPerHerder: 20, herdYieldPerAnimal: 0.08, herdGrowth: 0.015, herdCapturePerHerder: 2, herdCapacityPerTile: 5,
+      herdAnimalsPerDensity: 10, // a tile's wild herd density 1.0 = 10 catchable animals (§11.5)
       cookedMult: 1.15, copperMult: 1.15, intYieldDivisor: 400, tradeMult: 1.05,
     },
     distribution: { selfishness: 0.5, childBase: 0.5, carerMult: 0.7 },
@@ -130,9 +131,21 @@ export const CONFIG = {
       supportFalloff: 2,
     },
     groupSize: { bandMax: 60, toVillageAt: 150, toBandBelow: 100 },
-    split: { crowdingAbove: 1.1, months: 12, bandChance: 0.10, villageChance: 0.05, coopBase: 1.2, bandShare: 0.4, villageShare: 0.3, minDistanceR: 2 },
+    split: {
+      crowdingAbove: 1.1, months: 12, bandChance: 0.10, villageChance: 0.05, coopBase: 1.2, bandShare: 0.4, villageShare: 0.3, minDistanceR: 2,
+      minPeople: 4,              // added in step 4: both halves of a split keep 4+ people incl. a man 16+ and a woman 16–40 (DECISIONS 4.19)
+    },
     migrate: { hungerAbove: 60, months: 3, plantAvailBelow: 0.4, farmerHungerAbove: 80, farmerMonths: 12, logMinDistance: 10, distancePenalty: 0.5, sampleStep: 2 },
-    village: { sampleSize: 64, revealsPerExplorer: 0.2, birthIntervalMonths: 44, fertileShare: 25 / 35, traitHazardDivisor: 250 },
+    village: {
+      sampleSize: 64, revealsPerExplorer: 0.2, birthIntervalMonths: 44, fertileShare: 25 / 35, traitHazardDivisor: 250,
+      // Added in step 5 (numbers inside §11.10):
+      bucketYears: [5, 10, 35, 10, 10], // years in buckets 0–4; the 70+ bucket only loses people to death
+      oldestSpanYears: 10,       // a 70+ person rebuilt as an individual gets an age of 70–79 (DECISIONS 5.3)
+      traitHazardMid: 50,        // sample death × (1 + (50 − strength) / 250) × (shortage ? 1 + (coop − 50) / 250 : 1)
+      sampleNoiseShare: 0.5,     // copies of sample members get gaussian × mendelSd × 0.5 noise
+      labourFalloffRounds: 10,   // damped rounds of the support-job falloff when sharing village labour (DECISIONS 5.4)
+      hungryBirthMult: 0.5,      // expected births are halved when H > 60
+    },
     sustainable: { plantShare: 0.1, preyValue: 0.3 },   // plantShare = regenRate × 0.5
     // Added in step 3:
     founderFoodMonths: 2,        // founders arrive carrying this many months of food
@@ -152,6 +165,10 @@ export const CONFIG = {
     writingChanceMult: 1.3,
     resourceUsePer: 50,
     cityMinPop: 500,
+    // Added in step 4 (numbers inside the §12.3 formula):
+    spareFoodFrom: 0.5,          // spareFood = clamp((fed12 − 0.5) × 2, 0, 1)
+    spareFoodScale: 2,
+    popSqrtDivisor: 5,           // × sqrt(population) / 5
   },
 
   walls: {
@@ -183,6 +200,8 @@ export const CONFIG = {
     warAdversityMonths: 3,
     warMult: { riding: 1.3, copperWorking: 1.2, ironWorking: 1.4 },
     gridCell: 16,
+    // Added in step 5:
+    fightingAgeMax: 59,          // "adults" in war power and battle deaths are 15–59 (DECISIONS 5.9)
   },
 
   events: {
@@ -208,6 +227,7 @@ export const CONFIG = {
     walkSpeedPx: 24, fastWalkMult: 4, walkFrameMs: 250, idleStepMs: 2000, personOffsetPx: 3,
     maxHutsDrawnBand: 12, maxBuildingsDrawn: 30, cityShare: 0.3, maxCityDrawn: 12,
     herdPerSprite: 10, maxHerdDrawn: 12,
+    herdRadiusTiles: 2,          // added in step 5: herd goats wander within 2 tiles of home ("near home", §18.5)
     waterShimmerMs: 500, riverFlowMs: 300,
     fogAlpha: 0.6, rainOverlayAlpha: 0.6, areaHoverAlpha: 0.2,
     idleStepPx: 2,               // §18.6: idle people make a tiny random step of at most this many px
@@ -259,6 +279,9 @@ export const CONFIG = {
     animalDensityDivisor: 4,     // §18.5: animals per block = floor(density sum / 4 + random)
     animalWanderMs: 1500,       // decorative animals pick a new spot about this often
     animalSpeedPx: 6,            // decorative animal walking speed
+    // Added in step 4 (§18.5, §19.5):
+    campfireFrameMs: 250,        // campfire alternates frames this often
+    vesselSearchTiles: 3,        // raft / boat is drawn on the water tile nearest home, within 3 tiles
   },
 
   // Editor and setup UI (step 1). Not used by the simulation.
@@ -281,7 +304,9 @@ export const CONFIG = {
     bottomBarPx: 80,
     hoverInfoRefreshMs: 50,
     inspectRefreshMs: 250,       // §21.1: inspector refreshes about 4 times per second
-    logRowsShown: 500,           // basic log tab: newest rows rendered (virtualised list in step 6)
+    logRowPx: 20,                // event log: height of one row (the list is virtualised, §21.3)
+    graphs: { width: 292, height: 112, maxPoints: 2000, redrawMs: 250 }, // §21.2: draw every n-th year past 2,000 points
+    eventDialog: { year: 100, length: 20, strength: 50 }, // a new event's starting values
     toastMs: 2500,
     peopleDialog: {
       men: 2, women: 2, minCount: 0, maxCount: 20,

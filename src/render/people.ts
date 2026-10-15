@@ -1,12 +1,12 @@
 // People drawing. Setup: placed founders stand around their home. Run: every band person
 // walks smoothly toward their work tile (§18.6); children follow their mothers; hunters carry
-// spears. Visual-only randomness (idle steps) may use Math.random: it never reaches the sim.
+// spears; explorers with Riding ride horses. Visual-only randomness (idle steps) may use Math.random: it never reaches the sim.
 
 import { CONFIG } from '../config';
 import { Action, Sex } from '../shared/ids';
 import { hash01 } from '../shared/hash';
 import type { FounderGroup } from '../shared/types';
-import { AgeClass, hunterSprite, personSprite, type PersonLook } from './sprites';
+import { AgeClass, hunterSprite, personSprite, riderSprite, type PersonLook } from './sprites';
 import { GROUP_COLORS } from './palette';
 
 const TILE = CONFIG.map.tilePx;
@@ -41,20 +41,28 @@ export function collectFounders(
   }
 }
 
-export interface GroupLabel { name: string; x: number; y: number; colorIndex: number; selected?: boolean }
+export interface GroupLabel { name: string; x: number; y: number; colorIndex: number; selected?: boolean; sub?: string }
 
-/** Group names above their homes. */
+/** Group names above their homes, with a small second line (the era) above the name. */
 export function drawGroupLabels(ctx: CanvasRenderingContext2D, groups: readonly GroupLabel[]): void {
-  ctx.font = 'bold 10px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
   for (const g of groups) {
     const x = (g.x + 0.5) * TILE;
     const y = g.y * TILE - R.founderSpreadPx - 2;
+    const colour = g.selected ? '#ffffff' : GROUP_COLORS[g.colorIndex % GROUP_COLORS.length]!;
+    ctx.font = 'bold 10px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(28, 26, 36, 0.8)';
     ctx.fillText(g.name, x + 1, y + 1);
-    ctx.fillStyle = g.selected ? '#ffffff' : GROUP_COLORS[g.colorIndex % GROUP_COLORS.length]!;
+    ctx.fillStyle = colour;
     ctx.fillText(g.name, x, y);
+    if (g.sub) {
+      ctx.font = '8px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(28, 26, 36, 0.8)';
+      ctx.fillText(g.sub, x + 1, y - 9);
+      ctx.fillStyle = '#e8e2d4';
+      ctx.fillText(g.sub, x, y - 10);
+    }
   }
 }
 
@@ -65,11 +73,15 @@ interface VisualPerson {
   motherId: number;
   child: boolean;
   hunter: boolean;
+  rider: boolean;
+  facingLeft: boolean;           // riders face the way they move (people face the viewer)
   moving: boolean;
   nextIdleMs: number;
   lookKey: number;
   img1: HTMLCanvasElement;
   img2: HTMLCanvasElement;
+  img1Left: HTMLCanvasElement;   // riders only: mirrored frames
+  img2Left: HTMLCanvasElement;
   seen: number;
 }
 
@@ -100,14 +112,16 @@ export class PeopleLayer {
       const ty = (data[o + 2]! + 0.5) * TILE + (2 * hash01(id, 0, 202) - 1) * R.personOffsetPx + TILE / 2;
       let v = this.people.get(id);
       const hunter = action === Action.Hunt;
+      const rider = (flags & 16) === 16;
       const lookKey = flags * 1000 + colour * 10 + skinHair + (hunter ? 100000 : 0);
       if (!v) {
         // Babies appear at their mother; everyone else appears where they work.
         const mom = this.people.get(data[o + 5]!);
         v = {
           id, x: mom ? mom.x : tx, y: mom ? mom.y : ty, tx, ty, motherId: data[o + 5]!,
-          child: false, hunter, moving: false, nextIdleMs: nowMs + Math.random() * R.idleStepMs,
+          child: false, hunter, rider, facingLeft: false, moving: false, nextIdleMs: nowMs + Math.random() * R.idleStepMs,
           lookKey: -1, img1: undefined as unknown as HTMLCanvasElement, img2: undefined as unknown as HTMLCanvasElement,
+          img1Left: undefined as unknown as HTMLCanvasElement, img2Left: undefined as unknown as HTMLCanvasElement,
           seen: 0,
         };
         this.people.set(id, v);
@@ -115,6 +129,7 @@ export class PeopleLayer {
       v.tx = tx;
       v.ty = ty;
       v.hunter = hunter;
+      v.rider = rider;
       v.seen = this.frameNo;
       if (v.lookKey !== lookKey) {
         // Look changed (grew up, got clothes, started hunting): re-fetch cached sprites once.
@@ -127,8 +142,15 @@ export class PeopleLayer {
           clothed: (flags & 8) === 8,
         };
         v.child = look.ageClass === AgeClass.Child;
-        v.img1 = hunter ? hunterSprite(look, 1) : personSprite(look, 1);
-        v.img2 = hunter ? hunterSprite(look, 2) : personSprite(look, 2);
+        if (rider) {
+          v.img1 = riderSprite(look, 1, false);
+          v.img2 = riderSprite(look, 2, false);
+          v.img1Left = riderSprite(look, 1, true);
+          v.img2Left = riderSprite(look, 2, true);
+        } else {
+          v.img1 = hunter ? hunterSprite(look, 1) : personSprite(look, 1);
+          v.img2 = hunter ? hunterSprite(look, 2) : personSprite(look, 2);
+        }
         v.lookKey = lookKey;
       }
     }
@@ -154,6 +176,7 @@ export class PeopleLayer {
         v.x += (dx / len) * step;
         v.y += (dy / len) * step;
         v.moving = true;
+        if (Math.abs(dx) > 0.5) v.facingLeft = dx < 0;
       } else {
         v.x = tx;
         v.y = ty;
@@ -170,7 +193,11 @@ export class PeopleLayer {
 
   collect(nowMs: number, push: (img: HTMLCanvasElement, x: number, y: number) => void): void {
     const walk2 = Math.floor(nowMs / R.walkFrameMs) % 2 === 1;
-    for (const v of this.list) push(v.moving && walk2 ? v.img2 : v.img1, v.x, v.y);
+    for (const v of this.list) {
+      const two = v.moving && walk2;
+      if (v.rider && v.facingLeft) push(two ? v.img2Left : v.img1Left, v.x, v.y);
+      else push(two ? v.img2 : v.img1, v.x, v.y);
+    }
   }
 
   /** The person whose feet are within 3 px of (mx, my), nearest first; null if none. */

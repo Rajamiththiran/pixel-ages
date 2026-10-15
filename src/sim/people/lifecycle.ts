@@ -9,6 +9,7 @@ import { allocPerson } from './persons';
 import { fixActualTraits, inheritAll } from './inheritance';
 import { hasActive } from './explore';
 import { logEvent } from './groups';
+import { eventDeathMult } from '../events';
 
 const P = CONFIG.people;
 const AGE = P.ages;
@@ -93,13 +94,14 @@ export function deaths(s: SimState, g: Group): number[] {
   const groupMult = (harshHome ? M.harshHomeNoClothing : 1)
     * (winter && !hasActive(g, Discovery.fire) ? M.winterNoFire : 1)
     * (hasActive(g, Discovery.mudBrick) ? M.mudBrick : 1);
+  const events = eventDeathMult(s, g);
   const careMult = g.carers > 0 ? Math.max(P.care.minMult, 1 - P.care.reductionPerCarer * g.carers) : 1;
   const dead: number[] = [];
   for (const slot of g.members) {
     const months = p.ageMonths[slot]!;
     if (months >= AGE.maxAge * 12) { dead.push(slot); continue; }
     const fed = p.fed[slot]!;
-    let rate = baseDeathRate(months) * groupMult;
+    let rate = baseDeathRate(months) * groupMult * events;
     if (fed < P.fed.starvingBelow) rate *= M.starving;
     else if (fed < P.fed.malnourishedBelow) rate *= M.malnourished;
     if (p.health[slot]! < P.health.lowBelow) rate *= M.lowHealth;

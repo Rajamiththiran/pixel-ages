@@ -23,3 +23,27 @@ Each pass: what changed, why, and the results before and after.
 **After:** seeds 1–10 → 7 of 10 alive at year 100 (target met). Surviving lineages grow to bands of 15–60 and split (up to 3 bands by year 200).
 
 **Notes for later tuning (step 7):** Fire (no winter death ×1.3) and Stone Tools (full hunting) arrive in step 4 and should raise survival further; re-check then and consider moving back toward 24 months nursing.
+
+## Pass 2 — Step 4 (discoveries), 15 Oct 2026 — measured, nothing changed
+
+**Goal (§24 Step 4):** Scenario A's first discoveries "usually within the first 50–150 years".
+
+**Measured with the blueprint numbers (Scenario A, seeds 1–30):**
+
+| | Result |
+|---|---|
+| First discovery | median year 23; only 4 of 30 seeds in years 50–150 |
+| First discovery with every `baseChanceByEra` × 0.5 | median 23, 1 of 30 in 50–150 (more seeds find nothing by year 200) |
+| First discovery with × 0.35 | median 33, 4 of 30 in 50–150 |
+| Alive at year 100 / 300, discoveries on | 19 / 10 of 30 |
+| Alive at year 100 / 300, discoveries off | 18 / 13 of 30 (same founder losses as step 3) |
+| Population of surviving seeds at year 300 | 7,800–89,000 (without discoveries: 90–1,000) |
+| Best era at year 300 | era 6 in 3 of 10 seeds (seeds 1–10) |
+
+**Why no change yet:**
+
+1. A yearly chance is memoryless: whatever the chance, at most about 40% of seeds can land inside one 100-year window, so "usually within 50–150" can't be reached by scaling. Lowering the chance mostly turns early discoveries into "nothing by year 200".
+2. In Scenario A, Fire and Farming are both possible from year 0 (forest and Grassland with rain ≥ 30 are inside the starting radius), so several rolls run from the first year.
+3. The fast eras come from runaway growth: a farming band has plenty of food, grows ~3% a year and, without village mode (step 5), stays a band of thousands. `sqrt(population)` then makes it very inventive. Villages (step 5) and events (step 6) change this, so tuning discovery chances now would have to be redone.
+
+**For step 7:** retune with villages in place. Levers: `discoveries.baseChanceByEra` (era pace, tuning goal "era 6 not before ~3,000"), farming-era growth (births/deaths of farmers), and Scenario A survival over seeds 11–30 (~55–60% alive at year 100, below the 70% seen on seeds 1–10).

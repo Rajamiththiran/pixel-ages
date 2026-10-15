@@ -278,3 +278,30 @@ select {
 .log-row { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; border-bottom: 1px solid #2c2935; }
 .log-row .swatch-dot { flex: none; width: 8px; height: 8px; }
 .log-year { color: var(--muted); flex: none; width: 72px; }
+
+/* ---------- step 6: events, graphs, log ---------- */
+.modal.small { width: 440px; }
+.graphs { position: relative; }
+.graph { display: block; margin: 4px 0 8px; background: var(--bg); border-radius: 3px; cursor: pointer; }
+.graph-legend, .log-filters { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 4px 0; font-size: 11.5px; }
+.legend-item { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.legend-item input { margin: 0; }
+.graph-tip {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  background: rgba(28, 26, 36, 0.95);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 4px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 3;
+}
+.event-log { display: flex; flex-direction: column; height: 100%; }
+.log-scroll { position: relative; flex: 1; min-height: 360px; max-height: 520px; overflow-y: auto; border-top: 1px solid var(--line); margin-top: 6px; }
+.log-spacer { position: relative; }
+.log-spacer .log-row { position: absolute; left: 0; right: 0; height: 20px; white-space: nowrap; overflow: hidden; }
+.log-text { overflow: hidden; text-overflow: ellipsis; }
+.log-row.clickable { cursor: pointer; }
+.log-row.clickable:hover { background: var(--bg3); }

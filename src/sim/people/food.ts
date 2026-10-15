@@ -9,6 +9,7 @@ import type { PersonPool } from './persons';
 import { hasActive, isKnown, passableFor } from './explore';
 import { strengthNow } from './inheritance';
 import { maxStock } from '../world/plants';
+import { harshWinterNow, plagued } from '../events';
 import { forEach8Passable } from '../../shared/grid';
 
 const P = CONFIG.people;
@@ -49,6 +50,27 @@ export function rangeTiles(s: SimState, g: Group, cx = g.homeX, cy = g.homeY): n
   return out.sort((a, b) => a - b);
 }
 
+// Each group's home range, reused until something that shapes it changes (speed only: it is a
+// pure function of the state, kept outside it).
+const homeRanges = new WeakMap<Group, { key: string; tiles: number[] }>();
+
+/** Wall segments breached so far: crossings are the only way passability changes besides Raft. */
+const breachCount = (s: SimState): number => {
+  let n = 0;
+  for (const seg of s.wallSegments) if (seg.breached) n++;
+  return n;
+};
+
+/** rangeTiles around home, cached while known tiles, home, Raft and crossings stay the same. Don't mutate. */
+export function homeRange(s: SimState, g: Group): number[] {
+  const key = `${g.knownVersion}|${g.homeX},${g.homeY}|${hasActive(g, Discovery.raft) ? 1 : 0}|${breachCount(s)}`;
+  const c = homeRanges.get(g);
+  if (c && c.key === key) return c.tiles;
+  const tiles = rangeTiles(s, g);
+  homeRanges.set(g, { key, tiles });
+  return tiles;
+}
+
 /**
  * What a tile can give per month without running down (§11.5 sustainableYield). Prey only
  * count as much as the group can hunt them: half without Stone Tools (DECISIONS 3.4).
@@ -60,7 +82,7 @@ export function tileSustainable(s: SimState, i: number, huntFactor = 1): number 
 /** How well this group can use prey, relative to full tools (matches hunting success, §11.5). */
 export const huntFactor = (g: Group): number => (hasActive(g, Discovery.stoneTools) ? 1 : F.huntNoToolsMult);
 
-/** Sustainable yield of a whole range. Farms and herds join in step 4. */
+/** Sustainable yield of a range's wild food (plants and prey). Fields and herds are added in computeSignals. */
 export function rangeSustainable(s: SimState, range: number[], g: Group): number {
   const hf = huntFactor(g);
   let sy = 0;
@@ -68,18 +90,25 @@ export function rangeSustainable(s: SimState, range: number[], g: Group): number
   return sy;
 }
 
-/** Updates need, H, PA, YA, sustainable yield and crowding for this month (§11.5). */
-export function computeSignals(s: SimState, g: Group, range: number[]): void {
-  const p = s.persons;
+/** A band's monthly food need: the sum of its members' needs. */
+export function bandNeed(s: SimState, g: Group): number {
   let need = 0;
-  for (const slot of g.members) need += needOf(p, slot);
+  for (const slot of g.members) need += needOf(s.persons, slot);
+  return need;
+}
+
+/** Updates need, H, PA, YA, sustainable yield and crowding for this month (§11.5). */
+export function computeSignals(s: SimState, g: Group, range: number[], need = bandNeed(s, g)): void {
   g.need = need;
 
   let plant = 0, prey = 0;
   for (const i of range) { plant += s.plantFood[i]!; prey += s.animal[Species.Prey][i]!; }
   g.plantAvail = need > 0 ? Math.min(1, Math.max(0, plant / (2 * need))) : 1;
   g.preyAvail = range.length > 0 ? Math.min(1, Math.max(0, (4 * prey) / range.length)) : 0;
-  g.sustainable = rangeSustainable(s, range, g);
+  // Wild food, plus fields (10 farmers × 2 FU each) and last month's tended herd (§11.5).
+  g.sustainable = rangeSustainable(s, range, g)
+    + g.farmTiles.length * F.farmersPerTile * F.farmerCap
+    + Math.min(g.herd, g.herders * F.herdPerHerder) * F.herdYieldPerAnimal;
   g.crowding = g.sustainable > 0 ? Math.min(P.crowdingMax, need / g.sustainable) : P.crowdingMax;
   g.hunger = hungerOf(g);
 }
@@ -97,10 +126,20 @@ export function hungerOf(g: Group): number {
 
 /** Multiplier on all food a worker gains: cooking, copper tools, cleverness, trade. */
 export function yieldMult(s: SimState, g: Group, slot: number): number {
+  return yieldMultInt(s, g, s.persons.actInt[slot]!);
+}
+
+/**
+ * yieldMult for a worker of intelligence `int` (villages use the group average). In a harsh
+ * winter it halves too: that touches gathering, hunting and herding — fields give nothing in
+ * winter anyway (§15).
+ */
+export function yieldMultInt(s: SimState, g: Group, int: number): number {
   return (hasActive(g, Discovery.fire) ? F.cookedMult : 1)
     * (hasActive(g, Discovery.copperWorking) ? F.copperMult : 1)
-    * (1 + (s.persons.actInt[slot]! - 100) / F.intYieldDivisor);
-  // × tradeMult while trading — step 5
+    * (1 + (int - 100) / F.intYieldDivisor)
+    * (g.trading ? F.tradeMult : 1)
+    * (harshWinterNow(s) ? CONFIG.events.harshWinterFoodMult : 1);
 }
 
 /**
@@ -169,6 +208,7 @@ export function distribute(s: SimState, g: Group, avgCoop: number, carers: Set<n
   const m = g.members;
   const n = m.length;
   if (n === 0) return 1;
+  const plague = plagued(s, g);
   const need = new Float64Array(n);
   let total = 0;
   for (let k = 0; k < n; k++) { need[k] = needOf(p, m[k]!); total += need[k]!; }
@@ -221,7 +261,8 @@ export function distribute(s: SimState, g: Group, avgCoop: number, carers: Set<n
     p.nutrition[slot] = (p.nutrition[slot]! * 11) / 12 + fed / 12;
     if (p.ageMonths[slot]! < P.ages.adult * 12) {
       p.childFedSum[slot] = p.childFedSum[slot]! + fed;
-      if (fed < P.fed.starvingBelow) p.childAdversity[slot] = p.childAdversity[slot]! + 1;
+      // A hard month for a child: starving, or a plague at home (§15).
+      if (fed < P.fed.starvingBelow || plague) p.childAdversity[slot] = p.childAdversity[slot]! + 1;
     }
     sum += fed;
     lowest = Math.min(lowest, fed);
