@@ -36,3 +36,4 @@ Code style: TypeScript `strict`, small pure functions, short comments that expla
 - This machine's global `~/.npmrc` sets `os=linux`; install with `npm install --os=win32 --cpu=x64`.
 - The full test suite takes a few minutes (multi-century simulation tests). Long scenario runs: `LONG=1 npm test` (bash) or `$env:LONG=1; npm test` (PowerShell).
 - Number tuning goes in [TUNING.md](TUNING.md).
+- Future plan (v1.1 → v2.0, not active until v1 ships and the owner approves): [pixel-ages-future-blueprint.md](pixel-ages-future-blueprint.md).

@@ -1,52 +1,35 @@
-// Investigation: forest loss, animal use, and early extinction in a typical painted world.
+// Investigation (temporary): why Scenario A bands die out before year 100.
 import { it } from 'vitest';
-import { createMap } from '../../src/editor/mapState';
-import { Action, ACTION_NAMES, Plant, Species } from '../../src/shared/ids';
+import { Sex } from '../../src/shared/ids';
 import { createState } from '../../src/sim/state';
 import { tick } from '../../src/sim/tick';
-import { population } from '../../src/sim/people/groups';
-import { runOf, fourPeople } from '../fixtures';
+import { scenarioA } from '../fixtures';
+import { CONFIG } from '../../src/config';
 
-const SEED = Number((globalThis as any).process.env.SEED ?? 1);
+const env = (globalThis as any).process.env as Record<string, string | undefined>;
 
 it('why', () => {
-  // Like a painted map: forest (density 255) on the west 100 columns at the default rain 50,
-  // deer in the forest, goats and horses on the grassland east of it.
-  const m = createMap();
-  for (let y = 0; y < 90; y++) for (let x = 0; x < 160; x++) {
-    const i = y * 160 + x;
-    if (x < 100) { m.plantType[i] = Plant.Forest; m.plantDensity[i] = 255; m.animals[Species.Prey][i] = 153; }
-    else { m.animals[Species.Herd][i] = 128; m.animals[Species.Riding][i] = 102; }
-  }
-  const run = runOf(m, SEED);
-  run.founders = [{ id: 1, name: 'Oak', colorIndex: 0, x: 95, y: 45, people: fourPeople() }];
-  const s = createState(run);
-  const count = (t: number): number => { let n = 0; for (let i = 0; i < s.plantType.length; i++) if (s.plantType[i] === t) n++; return n; };
-  const acts = new Map<string, number>();
-  let starvingMonths = 0, monthsWithPeople = 0;
+  for (const [k, v] of Object.entries(JSON.parse(env.OVERRIDES ?? '{}'))) { const ks = k.split('.'); let o: any = CONFIG; for (const x of ks.slice(0, -1)) o = o[x]; o[ks.at(-1)!] = v; }
   const lines: string[] = [];
-  for (let month = 0; month < 300 * 12; month++) {
-    tick(s);
-    for (const g of s.groups) {
-      if (g.village) continue;
-      monthsWithPeople++;
-      if (g.hunger > 60) starvingMonths++;
-      for (const slot of g.members) {
-        const a = ACTION_NAMES[s.persons.action[slot]!]!;
-        if (s.persons.action[slot] !== Action.Child) acts.set(a, (acts.get(a) ?? 0) + 1);
+  for (const seed of (env.SEEDS ?? '7').split(',').map(Number)) {
+    const s = createState(scenarioA(seed));
+    const p = s.persons;
+    let hungry = 0, months = 0;
+    lines.push(`=== seed ${seed}`);
+    for (let m = 0; m < 120 * 12; m++) {
+      tick(s);
+      for (const g of s.groups) { months++; if (g.hunger > 60) hungry++; }
+      if (s.month === 0 && s.year % 5 === 0) {
+        const parts = s.groups.map((g) => {
+          const ppl = g.members.map((x) => `${p.sex[x] === Sex.Male ? 'M' : 'F'}${Math.floor(p.ageMonths[x]! / 12)}${p.partnerId[x] !== -1 ? '*' : ''}`).join(' ');
+          return `[${g.name} H${g.hunger.toFixed(0)} fed${g.fed12?.toFixed?.(2) ?? ''}: ${ppl}]`;
+        });
+        lines.push(`y${s.year} ${parts.join(' ')}`);
       }
+      if (s.groups.length === 0) { lines.push(`extinct ${s.year}`); break; }
     }
-    if (s.month === 0 && s.year % 25 === 0) {
-      const pop = s.groups.reduce((n, g) => n + population(g), 0);
-      const g = s.groups[0];
-      lines.push(`y${s.year}: pop ${pop} groups ${s.groups.length} | forest ${count(Plant.Forest)} farmland ${count(Plant.Farmland)} grass ${count(Plant.Grass)} | `
-        + (g ? `H ${g.hunger.toFixed(0)} PA ${g.plantAvail.toFixed(2)} YA ${g.preyAvail.toFixed(2)} crowd ${g.crowding.toFixed(2)} stock ${g.foodStock.toFixed(0)} need ${g.need.toFixed(1)} disc ${g.discoveries.toString(2)}` : ''));
-    }
-    if (s.groups.length === 0) { lines.push(`extinct at year ${s.year}`); break; }
+    lines.push(`hungry months ${hungry}/${months}`);
+    lines.push(s.log.slice(0, 30).map((e) => `${e.year} ${e.text}`).join(' | '));
   }
-  const total = [...acts.values()].reduce((a, b) => a + b, 0);
-  console.log(`SEED ${SEED}\n` + lines.join('\n'));
-  console.log('adult months by action: ' + [...acts].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${(100 * v / total).toFixed(0)}%`).join(', '));
-  console.log(`band-months with H > 60: ${starvingMonths}/${monthsWithPeople}`);
-  console.log(s.log.filter((e) => e.type !== 'split').slice(0, 25).map((e) => `${e.year} ${e.text}`).join(' | '));
+  (globalThis as any).process.getBuiltinModule('fs').writeFileSync(env.OUT ?? 'why.txt', lines.join('\n'));
 }, 600000);

@@ -8,6 +8,7 @@ import { doActions } from './actions';
 import { computeSignals, distribute, homeRange, spoil } from './food';
 import { frontierInRange, hasActive } from './explore';
 import { farmCandidates, herdCapacity, herdFoundInRange } from './farming';
+import { foodOutlook } from './foodJobs';
 import { Discovery } from '../../shared/discoveries';
 import { aging, births, checkCanReproduce, deaths, pairing, updateHealth } from './lifecycle';
 import { buryDead, traitAverages } from './groups';
@@ -71,6 +72,7 @@ function bandContext(s: SimState, g: Group, range: number[]): BandContext {
     herdOk: taming && (g.herd > 0 || herdFoundInRange(s, range)),
     herdCapacity: taming ? herdCapacity(s, g, range) : 0,
     pressure: pressure(g),
+    outlook: foodOutlook(s, g, range, farmCands),
     range,
     frontierInRange: frontierInRange(s, g),
     kidsRatio: children / Math.max(1, adults),

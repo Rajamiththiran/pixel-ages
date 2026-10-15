@@ -8,6 +8,10 @@ import { float } from '../../shared/rng';
 import type { Group, SimState } from '../state';
 import { hasActive } from './explore';
 import { strengthNow } from './inheritance';
+import { yieldMult } from './food';
+import {
+  expectedFarm, expectedGather, expectedHerd, expectedHunt, foodScore, gatherCapOf, huntSuccess, type FoodOutlook,
+} from './foodJobs';
 
 const B = CONFIG.people.brain;
 const A = CONFIG.people.ages;
@@ -28,6 +32,7 @@ export interface BandContext {
   herdOk: boolean;               // Taming, and a herd or wild herd animals in range
   herdCapacity: number;
   pressure: number;              // P (§13), for wall work
+  outlook: FoodOutlook;          // food the range offers this month (food job scores)
 }
 
 /** Diminishing returns for support jobs: the more already do it, the less the next one adds. */
@@ -45,8 +50,8 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
   const coop = p.actCoop[slot]!;
   const str = strengthNow(p, slot);
   const health = p.health[slot]!;
-  const stoneTools = hasActive(g, Discovery.stoneTools);
-  const spear = hasActive(g, Discovery.spear);
+  const mult = yieldMult(s, g, slot);
+  const J = B.food;
 
   let best: number = Action.Gather;
   let bestScore = -1;
@@ -57,19 +62,19 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
 
   // In id order: Gather 1, Hunt 2, Farm 3, Herd 4, Explore 5, Care 6, Build 7, Wall 8,
   // Rest 9, Teach 10. Elders (60+) only Gather, Care, Rest, Teach.
-  consider(Action.Gather, B.gatherBase + H * g.plantAvail);
+  // Food jobs: scored by the food each would bring this month (future blueprint F0).
+  const o = ctx.outlook;
+  consider(Action.Gather, foodScore(J.gatherBase, H, expectedGather(gatherCapOf(g, mult), o, ctx.chosen[Action.Gather]!)));
   if (!elder && age <= A.hunterMaxAge) {
-    consider(Action.Hunt, (B.huntBase + H) * g.preyAvail * (str / 100)
-      * (stoneTools ? 1 : B.huntNoToolsMult) * (spear ? B.huntSpearMult : 1));
+    consider(Action.Hunt, foodScore(J.huntBase, H, expectedHunt(huntSuccess(g, str, ctx.avgCoop), mult, o, ctx.chosen[Action.Hunt]!)));
   }
   const season = CONFIG.seasonOfMonth[s.month]!;
   if (!elder && season !== Season.Winter && hasActive(g, Discovery.farming) && ctx.chosen[Action.Farm]! < ctx.farmSlots) {
-    const sowOrHarvest = season === Season.Spring || season === Season.Autumn;
-    consider(Action.Farm, B.farmBase + B.farmHungerWeight * H + (sowOrHarvest ? B.farmSeasonBonus : 0));
+    consider(Action.Farm, foodScore(J.farmBase, H, expectedFarm(s, g, o, mult)));
   }
   const F = CONFIG.people.food;
   if (!elder && ctx.herdOk && ctx.chosen[Action.Herd]! * F.herdPerHerder < Math.max(g.herd, F.herdPerHerder)) {
-    consider(Action.Herd, B.herdBase + B.herdHungerWeight * H);
+    consider(Action.Herd, foodScore(J.herdBase, H, expectedHerd(g, o, ctx.herdCapacity, ctx.chosen[Action.Herd]!, mult)));
   }
   if (!elder && age <= A.explorerMaxAge && ctx.frontierInRange.length > 0) {
     consider(Action.Explore, (B.exploreBase + (int - 100) / B.exploreIntDivisor

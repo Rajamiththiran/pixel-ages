@@ -3,8 +3,8 @@
 import { VERSION } from '../version';
 import { h } from './layout';
 
-/** Credits line in the About panel (the owner fills in names). */
-const CREDITS = 'Built with TypeScript, Vite and Canvas 2D. Every sprite and terrain tile is drawn in code.';
+/** Credits in the About panel (names given by the owner, DECISIONS 7.5). */
+const CREDITS = 'Created by Rajamiththiran. Built with TypeScript, Vite and Canvas 2D. Every sprite and terrain tile is drawn in code.';
 
 const CARDS: Array<[string, string[]]> = [
   ['1 · Paint the world', [

@@ -16,6 +16,7 @@ import { pairing } from './lifecycle';
 import { actualFromChildhood, inheritTrait } from './inheritance';
 import { pressure, updateWallTarget, wearWall } from '../society/walls';
 import { fed12 } from '../progress/discoveryRules';
+import { expectedFarm, expectedGather, expectedHerd, expectedHunt, foodOutlook, foodScore, gatherCapOf, huntSuccess } from './foodJobs';
 import { eventDeathMult, plagued } from '../events';
 
 const P = CONFIG.people;
@@ -296,7 +297,6 @@ export function updateVillage(s: SimState, g: Group): void {
   const H = g.hunger;
   const season = CONFIG.seasonOfMonth[s.month]!;
   const stoneTools = hasActive(g, Discovery.stoneTools);
-  const spear = hasActive(g, Discovery.spear);
   const mudBrick = hasActive(g, Discovery.mudBrick);
   const taming = hasActive(g, Discovery.taming);
   const P_ = pressure(g);
@@ -312,13 +312,17 @@ export function updateVillage(s: SimState, g: Group): void {
 
   // Scores: the band brain's formulas with group averages and no nudge (§11.10).
   const sc = new Map<number, number>();
-  sc.set(Action.Gather, B.gatherBase + H * g.plantAvail);
-  sc.set(Action.Hunt, (B.huntBase + H) * g.preyAvail * (avg.str / 100) * (stoneTools ? 1 : B.huntNoToolsMult) * (spear ? B.huntSpearMult : 1));
+  // Food jobs scored by expected food per worker (future blueprint F0); the range's plants and
+  // prey are shared among everyone who might work them.
+  const J = B.food;
+  const o = foodOutlook(s, g, range, cands);
+  const ymult = yieldMultInt(s, g, avg.int);
+  sc.set(Action.Gather, foodScore(J.gatherBase, H, expectedGather(gatherCapOf(g, ymult), o, workers)));
+  sc.set(Action.Hunt, foodScore(J.huntBase, H, expectedHunt(huntSuccess(g, avg.str, avg.coop), ymult, o, workers * J.villageHunterShare)));
   if (hasActive(g, Discovery.farming) && season !== Season.Winter && farmSlots > 0) {
-    const sowOrHarvest = season === Season.Spring || season === Season.Autumn;
-    sc.set(Action.Farm, B.farmBase + B.farmHungerWeight * H + (sowOrHarvest ? B.farmSeasonBonus : 0));
+    sc.set(Action.Farm, foodScore(J.farmBase, H, expectedFarm(s, g, o, ymult)));
   }
-  if (herdOk) sc.set(Action.Herd, B.herdBase + B.herdHungerWeight * H);
+  if (herdOk) sc.set(Action.Herd, foodScore(J.herdBase, H, expectedHerd(g, o, capacity, 0, ymult)));
   if (frontier.length > 0) {
     sc.set(Action.Explore, B.exploreBase + (avg.int - 100) / B.exploreIntDivisor
       + B.exploreCrowdWeight * Math.max(0, g.crowding - B.exploreCrowdStart) + B.exploreHungerWeight * H * (1 - g.plantAvail));
@@ -351,8 +355,7 @@ export function updateVillage(s: SimState, g: Group): void {
   // Hunt: expected successes, each on the range tile with the most prey right now.
   const hunters = L[Action.Hunt] ?? 0;
   if (hunters > 0 && range.length > 0) {
-    const success = Math.min(F.huntMaxSuccess, F.huntBaseSuccess * (F.huntStrengthBase + avg.str / 100)
-      * (stoneTools ? 1 : F.huntNoToolsMult) * (spear ? F.huntSpearMult : 1) * (1 + avg.coop / F.huntCoopDivisor));
+    const success = huntSuccess(g, avg.str, avg.coop);
     const prey = s.animal[Species.Prey];
     // Tiles by prey, most first (ties → lowest index); after each success the hit tile sinks
     // back into place, so every success still lands on the richest tile at that moment.

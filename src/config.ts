@@ -97,7 +97,10 @@ export const CONFIG = {
       spoilage: 0.10, spoilagePottery: 0.06,
       gatherCap: 2.0, stoneToolsGatherMult: 1.2,
       huntBaseSuccess: 0.5, huntNoToolsMult: 0.5, huntSpearMult: 1.5, huntCoopDivisor: 200,
-      huntMaxSuccess: 0.95, huntYield: 3.0, huntDepletion: 0.01,
+      huntMaxSuccess: 0.95, huntDepletion: 0.01,
+      // Tuned in step 7 (TUNING.md pass 3): 3.0 → 5.0. A successful hunt beats a month of gathering, as real
+      // big-game hunting did; with tools and a spear a hunter brings ~2.8 FU, without tools ~0.9.
+      huntYield: 5.0,
       huntStrengthBase: 0.5,     // success = 0.5 × (0.5 + strength/100) × … (§11.5)
       gatherMaxTiles: 4,         // a gatherer visits at most this many tiles a month to fill their cap (DECISIONS 3.1)
       farmerCap: 2.0, farmersPerTile: 10, farmMinRain: 30, irrigationDistance: 2,
@@ -115,10 +118,15 @@ export const CONFIG = {
     reveal: { base: 2, intStart: 60, intStep: 40, min: 1, max: 5 },
     brain: {
       nudge: 10,
-      gatherBase: 15,
-      huntBase: 15, huntNoToolsMult: 0.5, huntSpearMult: 1.3,
-      farmBase: 25, farmHungerWeight: 0.8, farmSeasonBonus: 20,
-      herdBase: 20, herdHungerWeight: 0.5,
+      // Food jobs are scored by the food they would bring (future blueprint F0, DECISIONS 7.1):
+      // score = base + (H + hungerFloor) × expected FU / gatherCap. A full gatherer at H = 0 scores
+      // 15, like v1, so support jobs keep their balance.
+      food: {
+        hungerFloor: 10, gatherBase: 5, huntBase: 5, farmBase: 15, herdBase: 10,
+        herdInvestMonths: 12,    // a caught animal counts as a year of future herd food
+        preyMonthlyShare: 0.2,   // hunters can take up to ~20% of the range's prey food a month without emptying it
+        villageHunterShare: 0.25, // villages estimate a quarter of workers might hunt when sharing prey
+      },
       exploreBase: 10, exploreIntDivisor: 2, exploreCrowdWeight: 40, exploreCrowdStart: 0.9, exploreHungerWeight: 0.5,
       careKidsWeight: 40, careHungerWeight: 0.5,
       buildBase: 25, buildPerFamily: 5,
@@ -135,7 +143,14 @@ export const CONFIG = {
       crowdingAbove: 1.1, months: 12, bandChance: 0.10, villageChance: 0.05, coopBase: 1.2, bandShare: 0.4, villageShare: 0.3, minDistanceR: 2,
       minPeople: 4,              // added in step 4: both halves of a split keep 4+ people incl. a man 16+ and a woman 16–40 (DECISIONS 4.19)
     },
-    migrate: { hungerAbove: 60, months: 3, plantAvailBelow: 0.4, farmerHungerAbove: 80, farmerMonths: 12, logMinDistance: 10, distancePenalty: 0.5, sampleStep: 2 },
+    // Tuned in step 7 (F0): bands move sooner (H > 40 and PA < 0.5 for 2 months; v1: 60, 0.4, 3) and
+    // judge sites by the food there now as well as the long-run yield (DECISIONS 7.2).
+    migrate: {
+      hungerAbove: 40, months: 2, plantAvailBelow: 0.5, farmerHungerAbove: 80, farmerMonths: 12, logMinDistance: 10, distancePenalty: 0.5, sampleStep: 2,
+      nowWeight: 0.5,            // site score = (1 − w) × sustainable yield + w × food there now / campMonths
+      campMonths: 6,             // food on hand counts as feeding the next half year
+      preyFoodValue: 5.0,        // FU per unit of prey density on a tile (= food.huntYield)
+    },
     village: {
       sampleSize: 64, revealsPerExplorer: 0.2, birthIntervalMonths: 44, fertileShare: 25 / 35, traitHazardDivisor: 250,
       // Added in step 5 (numbers inside §11.10):
@@ -152,9 +167,9 @@ export const CONFIG = {
     crowdingMax: 10,             // crowding when the range can sustain nothing at all
     splitNameStart: 2,           // first split of "Desert" is "Desert 2"
     childMonths: 180,            // months of childhood used for cn / ca (§11.4)
-    // Age window for pairing (DECISIONS 3.2): the man may be up to 20 years older or 5 years
+    // Age window for pairing (DECISIONS 3.2): the man may be up to 25 years older or 5 years
     // younger. Without it, older widows pair for life with young men and young women find nobody.
-    pairMaxOlderMan: 20,
+    pairMaxOlderMan: 25,         // tuned in step 7 (TUNING.md pass 3): 20 → 25, so widowers can pair again
     pairMaxOlderWoman: 5,
   },
 
@@ -314,5 +329,6 @@ export const CONFIG = {
       intelligence: 100, cooperation: 50, strength: 50,
       maxPeople: 40, nameMaxLength: 20,
     },
+    smallGroupWarnBelow: 10,     // setup warning: smaller founder groups often die out by chance (F0)
   },
 } as const;

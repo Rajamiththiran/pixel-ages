@@ -10,6 +10,7 @@ import { hasActive, isKnown, passableFor } from './explore';
 import { strengthNow } from './inheritance';
 import { maxStock } from '../world/plants';
 import { harshWinterNow, plagued } from '../events';
+import { huntSuccess } from './foodJobs';
 import { forEach8Passable } from '../../shared/grid';
 
 const P = CONFIG.people;
@@ -179,11 +180,7 @@ export function hunt(s: SimState, g: Group, slot: number, range: number[], avgCo
     if (d > bestD) { bestD = d; best = i; }
   }
   if (best < 0) return range.length > 0 ? range[0]! : g.homeY * s.width + g.homeX;
-  const success = Math.min(F.huntMaxSuccess,
-    F.huntBaseSuccess * (F.huntStrengthBase + strengthNow(s.persons, slot) / 100)
-    * (hasActive(g, Discovery.stoneTools) ? 1 : F.huntNoToolsMult)
-    * (hasActive(g, Discovery.spear) ? F.huntSpearMult : 1)
-    * (1 + avgCoop / F.huntCoopDivisor));
+  const success = huntSuccess(g, strengthNow(s.persons, slot), avgCoop);
   if (chance(s.rng, success)) {
     g.foodStock += F.huntYield * bestD * yieldMult(s, g, slot);
     prey[best] = Math.max(0, bestD - F.huntDepletion);
