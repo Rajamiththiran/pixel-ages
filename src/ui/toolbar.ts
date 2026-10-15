@@ -66,13 +66,14 @@ export const TOOL_GROUPS: ToolGroup[] = [
   },
 ];
 
-export type ViewMode = 'normal' | 'rain' | 'fog';
+/** Run view modes (§18.7). 'follow' = fog + territory for the followed group (§21.1). */
+export type ViewMode = 'normal' | 'rain' | 'fog' | 'territory' | 'follow';
 
 export interface RunToolbarApi {
   refresh(mode: ViewMode, zoomed: boolean): void;
 }
 
-/** Run-mode toolbar (§20.3): view modes, zoom, stop. Fog and Territory need groups (steps 3 and 6). */
+/** Run-mode toolbar (§20.3): view modes, zoom, stop. Fog and Territory need a selected group. */
 export function buildRunToolbar(
   root: HTMLElement,
   onView: (m: ViewMode) => void, onZoom: () => void, onStop: () => void,
@@ -83,7 +84,7 @@ export function buildRunToolbar(
   const normal = h('button', { text: 'Normal', title: 'Normal view', onclick: () => onView('normal') });
   const rain = h('button', { text: 'Rain', title: 'Show rain right now', onclick: () => onView('rain') });
   const fog = h('button', { text: 'Fog', title: 'Darken what the selected group has not explored (click a group first)', onclick: () => onView('fog') });
-  const territory = h('button', { text: 'Territory', title: 'Range of the selected lineage (build step 6)', disabled: true });
+  const territory = h('button', { text: 'Territory', title: 'Dotted range circles around every home of the selected lineage (click a group first)', onclick: () => onView('territory') });
   views.append(normal, rain, fog, territory);
   root.append(views);
   root.append(h('div', { class: 'tb-group-label', text: 'Zoom' }));
@@ -94,7 +95,8 @@ export function buildRunToolbar(
     refresh(mode, zoomed) {
       normal.classList.toggle('selected', mode === 'normal');
       rain.classList.toggle('selected', mode === 'rain');
-      fog.classList.toggle('selected', mode === 'fog');
+      fog.classList.toggle('selected', mode === 'fog' || mode === 'follow');
+      territory.classList.toggle('selected', mode === 'territory' || mode === 'follow');
       zoom.classList.toggle('selected', zoomed);
     },
   };

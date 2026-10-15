@@ -16,6 +16,7 @@ import { pairing } from './lifecycle';
 import { actualFromChildhood, inheritTrait } from './inheritance';
 import { pressure, updateWallTarget, wearWall } from '../society/walls';
 import { fed12 } from '../progress/discoveryRules';
+import { eventDeathMult, plagued } from '../events';
 
 const P = CONFIG.people;
 const V = P.village;
@@ -334,7 +335,7 @@ export function updateVillage(s: SimState, g: Group): void {
   const herders = Math.min(L[Action.Herd] ?? 0, Math.max(g.herd, F.herdPerHerder) / F.herdPerHerder);
   const gatherers = (L[Action.Gather] ?? 0) + (L[Action.Farm] ?? 0) - farmers + (L[Action.Herd] ?? 0) - herders;
 
-  const mult = yieldMultInt(g, avg.int);
+  const mult = yieldMultInt(s, g, avg.int);
   // Gather: expected harvest, taken from range tiles in proportion to their stock.
   if (gatherers > 0) {
     let stock = 0;
@@ -427,14 +428,14 @@ export function updateVillage(s: SimState, g: Group): void {
   g.teacherMonths += inBuckets(v, [3, 4, 5]) * (old > 0 ? clever / old : 0) * T.villageShare;
 
   spoil(g);
-  distributeVillage(g);
+  distributeVillage(s, g);
   villageBirths(s, g);
   villageDeaths(s, g);
   villageAging(s, g);
 }
 
 /** One fed ratio for everyone: min(1, stock / need) (§11.10). */
-function distributeVillage(g: Group): void {
+function distributeVillage(s: SimState, g: Group): void {
   const v = g.village!;
   const fed = g.need > 0 ? Math.min(1, g.foodStock / g.need) : 1;
   g.foodStock = Math.max(0, g.foodStock - g.need);
@@ -447,7 +448,8 @@ function distributeVillage(g: Group): void {
   // Childhood averages over the last 15 years (the length of a childhood).
   const months = P.childMonths;
   v.childFed += (fed - v.childFed) / months;
-  v.childAdversity += ((fed < P.fed.starvingBelow ? 1 : 0) - v.childAdversity) / months;
+  const hard = fed < P.fed.starvingBelow || plagued(s, g);
+  v.childAdversity += ((hard ? 1 : 0) - v.childAdversity) / months;
 }
 
 /** Expected births = fertile women (15–49 × 25/35) / 44 a month, halved when H > 60. */
@@ -469,7 +471,8 @@ function groupDeathMult(s: SimState, g: Group): number {
   return (harsh ? M.harshHomeNoClothing : 1)
     * (winter && !hasActive(g, Discovery.fire) ? M.winterNoFire : 1)
     * (hasActive(g, Discovery.mudBrick) ? M.mudBrick : 1)
-    * (v.fed < P.fed.starvingBelow ? M.starving : v.fed < P.fed.malnourishedBelow ? M.malnourished : 1);
+    * (v.fed < P.fed.starvingBelow ? M.starving : v.fed < P.fed.malnourishedBelow ? M.malnourished : 1)
+    * eventDeathMult(s, g);
 }
 
 /** Expected deaths per bucket = count × monthly rate × multipliers, stochastically rounded. */

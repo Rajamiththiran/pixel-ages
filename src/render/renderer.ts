@@ -26,6 +26,8 @@ export interface SetupView {
   running: boolean;
   runGroups: GroupLabel[];       // group names above homes
   showFog: boolean;
+  /** Territory (§18.7): range circles (tile centre, radius in tiles, colour) of the selected lineage. */
+  territory: Array<{ x: number; y: number; r: number; colour: string }>;
   selectedPerson: number | null;
 }
 
@@ -177,6 +179,7 @@ export class Renderer {
     }
     ctx.drawImage(layer.end(), 0, 0);
     if (v.showFog) this.fog.draw(ctx);
+    if (v.running) drawTerritory(ctx, v.territory);
     if (v.running) {
       drawGroupLabels(ctx, v.runGroups);
       this.drawSelectedPerson(ctx, v.selectedPerson);
@@ -229,4 +232,20 @@ export class Renderer {
       this.fpsWindowStart = now;
     }
   }
+}
+
+/** Dotted circle of radius R around each home (§18.7 Territory). */
+function drawTerritory(ctx: CanvasRenderingContext2D, circles: SetupView['territory']): void {
+  if (circles.length === 0) return;
+  const T = CONFIG.map.tilePx;
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 3]);
+  for (const c of circles) {
+    ctx.strokeStyle = c.colour;
+    ctx.beginPath();
+    ctx.arc((c.x + 0.5) * T, (c.y + 0.5) * T, c.r * T, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
 }

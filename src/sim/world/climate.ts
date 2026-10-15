@@ -3,6 +3,7 @@
 import { CONFIG } from '../../config';
 import { gaussian } from '../../shared/rng';
 import type { SimState } from '../state';
+import { eventRainMult } from '../events';
 
 const C = CONFIG.climate;
 
@@ -55,11 +56,12 @@ export function computeDriftMult(s: SimState): void {
   }
 }
 
-/** Monthly: rainNow = clamp(round(baseRain × drift × events), 0, 100). Events arrive in step 6. */
+/** Monthly: rainNow = clamp(round(baseRain × drift × events), 0, 100). */
 export function updateRainNow(s: SimState): void {
   const n = s.baseRain.length;
+  const ev = eventRainMult(s);
   for (let i = 0; i < n; i++) {
-    const r = Math.round(s.baseRain[i]! * s.driftMult[i]!);
+    const r = Math.round(s.baseRain[i]! * s.driftMult[i]! * (ev ? ev[i]! : 1));
     s.rainNow[i] = r < 0 ? 0 : r > 100 ? 100 : r;
   }
 }

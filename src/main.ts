@@ -8,7 +8,7 @@ import {
   GROUND_NAMES, PLANT_NAMES, RESOURCE_NAMES, WALL_NAMES, SPECIES_NAMES,
   type Season,
 } from './shared/ids';
-import type { FounderGroup, LogEntry, MapData, RunSetup } from './shared/types';
+import type { FounderGroup, LogEntry, MapData, PlannedEvent, RunSetup, YearStats } from './shared/types';
 import type { GroupView } from './shared/protocol';
 import { ERA_NAMES } from './shared/discoveries';
 import { decodeMap, decodeRun, encodeMap, encodeRun } from './shared/save';
@@ -22,7 +22,12 @@ import { AgeClass, personSprite } from './render/sprites';
 import type { WalkerSprite } from './render/decor';
 import { buildLayout, showToast } from './ui/layout';
 import { buildRunToolbar, buildToolbar, type RunToolbarApi, type ToolbarApi, type ViewMode } from './ui/toolbar';
-import { buildRunPanel, buildSetupPanel, type RunPanelApi, type SetupPanelActions, type SetupPanelApi, type SetupState } from './ui/setupPanel';
+import { buildSetupPanel, type SetupPanelActions, type SetupPanelApi, type SetupState } from './ui/setupPanel';
+import { buildRunPanel, type RunPanelApi } from './ui/runPanel';
+import { openEventDialog, type PickKind } from './ui/eventDialog';
+import { validateRun } from './ui/validation';
+import { describeEvent } from './sim/events';
+import type { LineageInfo } from './ui/graphs';
 import { buildBottomBar, yearLabel } from './ui/runControls';
 import { openPeopleDialog } from './ui/peopleDialog';
 import * as storage from './ui/storage';
@@ -70,6 +75,7 @@ const view: SetupView = {
   running: false,
   runGroups: [],
   showFog: false,
+  territory: [],
   selectedPerson: null,
 };
 
@@ -189,6 +195,60 @@ function currentRun(): RunSetup {
   };
 }
 
+// ---------- planned events (§15, §20.5) ----------
+
+/** Picking an area or a wall point for the event dialog (the dialog waits, hidden). */
+let picking: { kind: PickKind; done: (tile: { x: number; y: number } | null) => void } | null = null;
+
+function setPicking(p: typeof picking): void {
+  picking = p;
+  view.hoverArea = -1;
+  setBanner(p ? (p.kind === 'area' ? 'Click an area on the map (Esc to cancel)' : 'Click a wall tile on the map (Esc to cancel)') : null);
+  ui.canvas.classList.toggle('place', p !== null);
+}
+
+function areaAt(x: number, y: number): number {
+  return regions.current.regionId[y * editor.map.width + x] ?? -1;
+}
+
+function describeSetupEvent(ev: PlannedEvent): string {
+  const area = 'at' in ev && ev.kind !== 'earthquake' && ev.at.x >= 0 ? areaAt(ev.at.x, ev.at.y) : -1;
+  return describeEvent(ev, area);
+}
+
+function openEvent(index: number | null): void {
+  const initial = index === null ? null : setup.events[index]!;
+  openEventDialog({
+    title: index === null ? 'New planned event' : 'Edit planned event',
+    confirmText: index === null ? 'Add' : 'Save',
+    initial,
+    map: editor.map,
+    regionId: regions.current.regionId,
+    describeTile: (kind, x, y) => (kind === 'wall'
+      ? `${WALL_NAMES[editor.map.wall[y * editor.map.width + x]!]} wall at (${x}, ${y})`
+      : areaAt(x, y) >= 0 ? areaName(areaAt(x, y)) : 'not an area'),
+    pick: (kind, done) => setPicking({ kind, done }),
+    cancelPick: () => setPicking(null),
+    onDone: (ev) => {
+      if (index === null) setup.events.push(ev); else setup.events[index] = ev;
+      panel.show('Events');
+    },
+  });
+}
+
+/** A click while picking: areas need a non-wall tile, earthquakes a wall tile (§20.5). */
+function pickAt(x: number, y: number): void {
+  if (!picking) return;
+  const wall = editor.map.wall[y * editor.map.width + x] !== WallType.None;
+  if (picking.kind === 'wall' && !wall) { showToast(ui.toast, 'An earthquake needs a wall tile: click a river, mountain or sea wall.'); return; }
+  if (picking.kind === 'area' && (wall || areaAt(x, y) < 0)) { showToast(ui.toast, 'Click inside an area, not on a wall.'); return; }
+  const done = picking.done;
+  setPicking(null);
+  done({ x, y });
+}
+
+const currentValidation = () => validateRun(editor.map, setup.founders, setup.events, regions.current.regionId);
+
 const panelActions: SetupPanelActions = {
   editGroup,
   moveGroup: (id) => setMoving(id),
@@ -258,6 +318,16 @@ const panelActions: SetupPanelActions = {
     }
   },
   startRun: () => startRun(),
+  addEvent: () => openEvent(null),
+  editEvent: (k) => openEvent(k),
+  deleteEvent: (k) => {
+    const ev = setup.events[k];
+    if (!ev || !confirm(`Delete "${describeSetupEvent(ev)}"?`)) return;
+    setup.events.splice(k, 1);
+    panel.refresh();
+  },
+  describeEvent: describeSetupEvent,
+  validate: currentValidation,
 };
 
 let panel: SetupPanelApi = buildSetupPanel(ui.tabs, ui.tabBody, setup, panelActions);
@@ -288,17 +358,34 @@ bottom.setSetupMode(SETUP_HINT);
 // Selection and inspector (§21.1).
 let runPanel: RunPanelApi | null = null;
 const runLog: LogEntry[] = [];
-let lineageColours = new Map<number, number>();
+const runStats: YearStats[] = [];
+let runLineages: LineageInfo[] = [];
+let lastViewYear: number | null = null;     // the past year on screen, null when live
 let selection: { x: number; y: number; personId: number | null; groupId: number | null } | null = null;
 let selectedGroup: number | null = null;
 let inspectTimer: ReturnType<typeof setInterval> | null = null;
 
+const fogOn = (): boolean => (runView === 'fog' || runView === 'follow') && selectedGroup !== null;
+const territoryOn = (): boolean => runView === 'territory' || runView === 'follow';
+
 function setRunView(m: ViewMode): void {
   runView = m;
   view.showRain = m === 'rain';
-  view.showFog = m === 'fog' && selectedGroup !== null;
+  view.showFog = fogOn();
+  updateTerritory();
   runToolbar?.refresh(runView, renderer.camera.zoom > 1);
-  if (m === 'fog' && selectedGroup === null) showToast(ui.toast, 'Click a group (its home or one of its people) to see its fog.');
+  if ((m === 'fog' || m === 'territory') && selectedGroup === null) showToast(ui.toast, 'Click a group (its home or one of its people) first.');
+}
+
+/** Territory (§18.7): a dotted range circle around every home of the selected group's lineage. */
+function updateTerritory(): void {
+  const groups = session?.lastFrame?.groups ?? [];
+  const sel = groups.find((g) => g.id === selectedGroup);
+  view.territory = territoryOn() && sel
+    ? groups.filter((g) => g.lineageId === sel.lineageId).map((g) => ({
+      x: g.homeX, y: g.homeY, r: g.range, colour: GROUP_COLORS[g.colourIndex % GROUP_COLORS.length]!,
+    }))
+    : [];
 }
 
 function selectGroup(id: number | null): void {
@@ -306,7 +393,25 @@ function selectGroup(id: number | null): void {
   selectedGroup = id;
   session?.send({ type: 'select', groupId: id });
   if (id === null) renderer.fog.setKnown(null);
-  view.showFog = runView === 'fog' && id !== null;
+  view.showFog = fogOn();
+  updateTerritory();
+}
+
+/** Graph click (§21.2): go to that year. */
+function jumpToYear(year: number): void {
+  if (!session) return;
+  setBanner(`Going to year ${year.toLocaleString('en-US')}…`);
+  session.send({ type: 'viewYear', year });
+}
+
+/** Log click (§21.3): go to the year, select the group, and centre on it when zoomed. */
+function pickLogEntry(e: LogEntry): void {
+  jumpToYear(e.year);
+  if (e.groupId !== null) {
+    selectGroup(e.groupId);
+    if (e.x !== null && e.y !== null) selection = { x: e.x, y: e.y, personId: null, groupId: e.groupId };
+  }
+  if (e.x !== null && e.y !== null) renderer.camera.centreOn((e.x + 0.5) * TILE, (e.y + 0.5) * TILE);
 }
 
 function requestInspect(): void {
@@ -343,6 +448,12 @@ function clearSelection(): void {
 const walkerSprite: WalkerSprite = (look, frame) => personSprite({ ...look, ageClass: AgeClass.Adult }, frame);
 
 function startRun(): void {
+  const v = currentValidation();
+  if (v.errors.length > 0) {
+    showToast(ui.toast, v.errors[0]!);
+    panel.show('Run');
+    return;
+  }
   const runSetup: RunSetup = {
     version: 1,
     name: setup.name,
@@ -356,7 +467,9 @@ function startRun(): void {
   mode = 'run';
   runAnimals = null;
   runLog.length = 0;
-  lineageColours = new Map(runSetup.founders.map((f) => [f.id, f.colorIndex]));
+  runStats.length = 0;
+  lastViewYear = null;
+  runLineages = runSetup.founders.map((f) => ({ id: f.id, name: f.name, colour: GROUP_COLORS[f.colorIndex % GROUP_COLORS.length]! }));
   selection = null;
   selectedGroup = null;
   view.selectedPerson = null;
@@ -385,6 +498,9 @@ function startRun(): void {
         sub: ERA_NAMES[g.era],
       }));
       if (f.selectedKnown) renderer.fog.setKnown(f.selectedKnown);
+      updateTerritory();
+      const vy = f.isPast ? f.year : null;
+      if (vy !== lastViewYear) { lastViewYear = vy; runPanel?.viewChanged(); }
     },
     progress: (label) => setBanner(label),
     error: (message) => {
@@ -396,6 +512,10 @@ function startRun(): void {
       // Trim in place: the log panel holds this same array.
       if (runLog.length > CONFIG.log.maxEntries) runLog.splice(0, runLog.length - CONFIG.log.maxEntries);
       runPanel?.logChanged();
+    },
+    stats: (rows) => {
+      runStats.push(...rows);
+      runPanel?.statsChanged();
     },
     inspect: (result) => runPanel?.setInspect(result),
   });
@@ -412,9 +532,15 @@ function startRun(): void {
   ui.canvas.classList.remove('place');
   runToolbar = buildRunToolbar(ui.toolbar, setRunView, () => toggleZoom(), () => stopRun());
   setRunView(runView === 'fog' ? 'normal' : runView);
-  runPanel = buildRunPanel(ui.tabs, ui.tabBody, runLog,
-    (lineageId) => GROUP_COLORS[(lineageColours.get(lineageId ?? -1) ?? 0) % GROUP_COLORS.length]!,
-    (groupId) => { selectGroup(groupId); setRunView('fog'); });
+  runPanel = buildRunPanel(ui.tabs, ui.tabBody, {
+    log: runLog,
+    stats: runStats,
+    lineages: () => runLineages,
+    viewYear: () => lastViewYear,
+    onFollow: (groupId) => { selectGroup(groupId); setRunView('follow'); },
+    onJump: jumpToYear,
+    onLogPick: pickLogEntry,
+  });
   inspectTimer = setInterval(requestInspect, CONFIG.ui.inspectRefreshMs);
   bottom.setRunMode();
 }
@@ -433,7 +559,9 @@ function stopRun(): void {
   selectedGroup = null;
   view.running = false;
   view.showFog = false;
+  view.territory = [];
   view.selectedPerson = null;
+  setPicking(null);
   renderer.people.clear();
   renderer.buildings.clear();
   renderer.camps.clear();
@@ -498,6 +626,7 @@ ui.canvas.addEventListener('mousedown', (e) => {
     inspectAt(t.x, t.y, m.x, m.y);
     return;
   }
+  if (picking) { pickAt(t.x, t.y); return; }
   if (movingGroupId !== null) {
     if (!canPlaceAt(t.x, t.y)) { showToast(ui.toast, "People can't be placed on Water or walls."); return; }
     const g = setup.founders.find((f) => f.id === movingGroupId);
@@ -536,6 +665,8 @@ ui.canvas.addEventListener('mousemove', (e) => {
   const t = tileAt(e);
   view.hover = t;
   if (!t) { ui.tooltip.style.display = 'none'; return; }
+  // Picking an event area: the hovered area lights up (§18.7, §20.5).
+  if (picking?.kind === 'area') view.hoverArea = areaAt(t.x, t.y);
   if (editor.painting) editor.drag(t.x, t.y);
   showTileInfo(t.x, t.y, e);
 });

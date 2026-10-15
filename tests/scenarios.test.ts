@@ -7,7 +7,7 @@ import { runTicks } from '../src/sim/tick';
 import { cloneState, hashState } from '../src/sim/serialize';
 import { population as groupPop } from '../src/sim/people/groups';
 import { Discovery, DISCOVERIES } from '../src/shared/discoveries';
-import { scenarioA, scenarioB, scenarioD } from './fixtures';
+import { scenarioA, scenarioB, scenarioC, scenarioD } from './fixtures';
 
 const proc = (globalThis as { process?: { env?: Record<string, string | undefined>; memoryUsage?: () => { heapUsed: number } } }).process;
 const LONG = Boolean(proc?.env?.LONG);
@@ -138,4 +138,32 @@ describe.skipIf(!LONG)('Scenario D — Performance (§26)', () => {
     expect(s.year).toBe(10000);
     expect(peak).toBeLessThan(1024 * 1048576);
   }, 10800000);
+});
+
+describe.skipIf(!LONG)('Scenario C — Collapse (§26)', () => {
+  it('the drought cuts population by 30%+ in most living seeds; discoveries are forgotten; recovery follows', () => {
+    let alive = 0, dropped = 0, recovered = 0, forgot = 0;
+    const rows: string[] = [];
+    for (let seed = 1; seed <= 5; seed++) {
+      const s = createState(scenarioC(seed));
+      runTicks(s, 500 * 12);
+      const before = population(s);
+      let low = before;
+      while (s.year < 550) { runTicks(s, 12); low = Math.min(low, population(s)); }
+      runTicks(s, 50 * 12);
+      const after = population(s);
+      const lost = count(s, 'lostDiscovery');
+      if (before > 0) {
+        alive++;
+        if (low <= before * 0.7) dropped++;
+        if (after > low) recovered++;
+        if (lost > 0) forgot++;
+      }
+      rows.push(`seed ${seed} | year 500: ${before} | lowest in the drought: ${low} | year 600: ${after} | forgotten discoveries: ${lost}`);
+    }
+    console.log(['Scenario C (seeds 1–5)', ...rows].join('\n'));
+    expect(dropped).toBeGreaterThanOrEqual(Math.ceil(alive / 2));
+    expect(recovered).toBeGreaterThanOrEqual(Math.ceil(alive / 2));
+    expect(forgot).toBeGreaterThan(0);
+  }, 3600000);
 });

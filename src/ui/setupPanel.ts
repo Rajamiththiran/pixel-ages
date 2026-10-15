@@ -2,11 +2,12 @@
 
 import { CONFIG } from '../config';
 import { Sex } from '../shared/ids';
-import type { ClimateDrift, FounderGroup, LogEntry, PlannedEvent } from '../shared/types';
-import type { InspectResult } from '../shared/protocol';
+import type { ClimateDrift, FounderGroup, PlannedEvent } from '../shared/types';
 import { GROUP_COLORS } from '../render/palette';
+import { eventYears } from '../sim/events';
 import { h } from './layout';
 import { listPresets } from './storage';
+import type { Validation } from './validation';
 
 export interface SetupState {
   name: string;
@@ -29,6 +30,12 @@ export interface SetupPanelActions {
   exportRun(): void;
   importRun(): void;
   startRun(): void;
+  addEvent(): void;
+  editEvent(index: number): void;
+  deleteEvent(index: number): void;
+  /** "Drought in Area 2 (strength 70)" for the event list. */
+  describeEvent(ev: PlannedEvent): string;
+  validate(): Validation;
 }
 
 type TabName = 'Groups' | 'Events' | 'Run' | 'Maps';
@@ -66,10 +73,7 @@ export function buildSetupPanel(
   function render(): Node[] {
     switch (current) {
       case 'Groups': return renderGroups();
-      case 'Events': return [
-        h('h3', { text: 'Planned events' }),
-        h('p', { class: 'hint', text: 'Droughts, plagues, earthquakes and other events are added in build step 6.' }),
-      ];
+      case 'Events': return renderEvents();
       case 'Run': return renderRun();
       case 'Maps': return renderMaps();
     }
@@ -97,6 +101,26 @@ export function buildSetupPanel(
           h('button', { text: 'Move', onclick: () => actions.moveGroup(g.id) }),
           h('button', { class: 'danger', text: 'Delete', onclick: () => actions.deleteGroup(g.id) }),
         ),
+      ));
+    }
+    return out;
+  }
+
+  function renderEvents(): Node[] {
+    const order = state.events.map((ev, k) => ({ ev, k, start: eventYears(ev).start })).sort((a, b) => a.start - b.start || a.k - b.k);
+    const out: Node[] = [
+      h('h3', { text: `Planned events (${state.events.length})` }),
+      h('div', { class: 'row' }, h('button', { class: 'primary', text: '+ Add event', onclick: () => actions.addEvent() })),
+    ];
+    if (order.length === 0) out.push(h('p', { class: 'hint', text: 'No events: the world runs on its own. Add droughts, plagues, harsh winters or earthquakes to test how groups cope.' }));
+    for (const { ev, k } of order) {
+      const { start, end } = eventYears(ev);
+      out.push(h('div', { class: 'group-card' },
+        h('div', { class: 'title', text: actions.describeEvent(ev) }),
+        h('div', { class: 'meta', text: end - start === 1 ? `Year ${start.toLocaleString('en-US')}` : `Years ${start.toLocaleString('en-US')}–${(end - 1).toLocaleString('en-US')}` }),
+        h('div', { class: 'row' },
+          h('button', { text: 'Edit', onclick: () => actions.editEvent(k) }),
+          h('button', { class: 'danger', text: 'Delete', onclick: () => actions.deleteEvent(k) })),
       ));
     }
     return out;
@@ -136,8 +160,19 @@ export function buildSetupPanel(
         h('label', { text: 'Climate drift' }), drift,
       ),
       h('p', { class: 'hint', text: 'Same map + same seed = the same history, every time. Change one thing and keep the seed to compare.' }),
-      h('p', { class: 'hint', text: 'Build step 2: the world (plants, animals, rain) comes alive. People start living in step 3.' }),
-      h('button', { class: 'primary run-big', text: 'Run ▶', onclick: () => actions.startRun() }),
+      ...checks(),
+    ];
+  }
+
+  /** Validation (§20.6): errors disable Run; warnings are shown but allowed. */
+  function checks(): Node[] {
+    const v = actions.validate();
+    const run = h('button', { class: 'primary run-big', text: 'Run ▶', onclick: () => actions.startRun() });
+    run.disabled = v.errors.length > 0;
+    return [
+      ...v.errors.map((e) => h('div', { class: 'msg-err', text: `✕ ${e}` })),
+      ...v.warnings.map((w) => h('div', { class: 'msg-warn', text: `! ${w}` })),
+      run,
     ];
   }
 
@@ -190,87 +225,3 @@ export function buildSetupPanel(
   return { refresh, show, setStatus };
 }
 
-type RunTab = 'Inspect' | 'Graphs' | 'Log';
-const RUN_TABS: RunTab[] = ['Inspect', 'Graphs', 'Log'];
-
-export interface RunPanelApi {
-  show(t: RunTab): void;
-  setInspect(r: InspectResult | null): void;
-  logChanged(): void;
-}
-
-/** Right panel during a run (§20.3): Inspect, Graphs (step 6) and a basic Log. */
-export function buildRunPanel(
-  tabsEl: HTMLElement, bodyEl: HTMLElement,
-  log: readonly LogEntry[], colourOf: (lineageId: number | null) => string,
-  onFollow: (groupId: number) => void,
-): RunPanelApi {
-  let current: RunTab = 'Inspect';
-  let inspected: InspectResult | null = null;
-  tabsEl.replaceChildren();
-  const buttons = RUN_TABS.map((t) => {
-    const b = h('button', { text: t, onclick: () => show(t) });
-    tabsEl.append(b);
-    return b;
-  });
-
-  const card = (title: string, rows: Record<string, unknown>, extra?: Node): HTMLElement => {
-    const list = h('div', { class: 'kv' });
-    for (const [k, v] of Object.entries(rows)) {
-      if (k.startsWith('_')) continue;
-      list.append(h('span', { class: 'k', text: k }), h('span', { class: 'v', text: String(v) }));
-    }
-    return h('div', { class: 'group-card' }, h('div', { class: 'title', text: title }), list, extra ?? null);
-  };
-
-  function renderInspect(): Node[] {
-    if (!inspected) {
-      return [
-        h('h3', { text: 'Inspect' }),
-        h('p', { class: 'hint', text: 'Click a person, a home or any tile on the map.' }),
-        h('p', { class: 'hint', text: 'Pick Fog in the toolbar (or Follow on a group) to see what a group has explored.' }),
-      ];
-    }
-    const out: Node[] = [];
-    if (inspected.person) out.push(card('Person', inspected.person));
-    if (inspected.group) {
-      const gid = inspected.group._groupId as number;
-      out.push(card('Group', inspected.group, h('div', { class: 'row' },
-        h('button', { text: 'Follow', title: 'Show this group\'s explored land (fog)', onclick: () => onFollow(gid) }))));
-    }
-    out.push(card('Tile', inspected.tile));
-    return out;
-  }
-
-  function renderLog(): Node[] {
-    const rows = log.slice(-CONFIG.ui.logRowsShown).reverse();
-    const list = h('div', { class: 'log-list' });
-    for (const e of rows) {
-      const dot = h('span', { class: 'swatch-dot' });
-      dot.style.background = colourOf(e.lineageId);
-      list.append(h('div', { class: 'log-row' },
-        h('span', { class: 'log-year', text: `Year ${e.year.toLocaleString('en-US')}` }), dot, h('span', { text: e.text })));
-    }
-    const out: Node[] = [h('h3', { text: `Event log (${log.length.toLocaleString('en-US')})` })];
-    if (log.length === 0) out.push(h('p', { class: 'hint', text: 'Nothing has happened yet: discoveries, eras, splits, moves and extinctions appear here.' }));
-    out.push(list);
-    return out;
-  }
-
-  function show(t: RunTab): void {
-    current = t;
-    buttons.forEach((b, k) => b.classList.toggle('active', RUN_TABS[k] === t));
-    bodyEl.replaceChildren(...(
-      t === 'Inspect' ? renderInspect()
-        : t === 'Log' ? renderLog()
-          : [h('h3', { text: 'Graphs' }), h('p', { class: 'hint', text: 'Population, traits, eras and food per lineage arrive in build step 6.' })]
-    ));
-  }
-
-  show('Inspect');
-  return {
-    show,
-    setInspect(r) { inspected = r; if (current === 'Inspect') show('Inspect'); },
-    logChanged() { if (current === 'Log') show('Log'); },
-  };
-}

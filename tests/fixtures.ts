@@ -186,3 +186,17 @@ export function scenarioD(seed = 1): RunSetup {
   run.founders = homes.map(([x, y, name], k) => ({ id: k + 1, name, colorIndex: k, x, y, people: fourPeople(100) }));
   return run;
 }
+
+/**
+ * Scenario C — "Collapse" (§26): Scenario A plus a drought over the whole area (start 500,
+ * 50 years, strength 70) and a plague (start 800, strength 80).
+ */
+export function scenarioC(seed = 1): RunSetup {
+  const run = scenarioA(seed);
+  run.name = 'Scenario C — Collapse';
+  run.events = [
+    { kind: 'drought', at: { x: 76, y: 45 }, startYear: 500, lengthYears: 50, strength: 70 },
+    { kind: 'plague', at: { x: 76, y: 45 }, startYear: 800, strength: 80 },
+  ];
+  return run;
+}

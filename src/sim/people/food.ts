@@ -9,6 +9,7 @@ import type { PersonPool } from './persons';
 import { hasActive, isKnown, passableFor } from './explore';
 import { strengthNow } from './inheritance';
 import { maxStock } from '../world/plants';
+import { harshWinterNow, plagued } from '../events';
 import { forEach8Passable } from '../../shared/grid';
 
 const P = CONFIG.people;
@@ -125,15 +126,20 @@ export function hungerOf(g: Group): number {
 
 /** Multiplier on all food a worker gains: cooking, copper tools, cleverness, trade. */
 export function yieldMult(s: SimState, g: Group, slot: number): number {
-  return yieldMultInt(g, s.persons.actInt[slot]!);
+  return yieldMultInt(s, g, s.persons.actInt[slot]!);
 }
 
-/** yieldMult for a worker of intelligence `int` (villages use the group average). */
-export function yieldMultInt(g: Group, int: number): number {
+/**
+ * yieldMult for a worker of intelligence `int` (villages use the group average). In a harsh
+ * winter it halves too: that touches gathering, hunting and herding — fields give nothing in
+ * winter anyway (§15).
+ */
+export function yieldMultInt(s: SimState, g: Group, int: number): number {
   return (hasActive(g, Discovery.fire) ? F.cookedMult : 1)
     * (hasActive(g, Discovery.copperWorking) ? F.copperMult : 1)
     * (1 + (int - 100) / F.intYieldDivisor)
-    * (g.trading ? F.tradeMult : 1);
+    * (g.trading ? F.tradeMult : 1)
+    * (harshWinterNow(s) ? CONFIG.events.harshWinterFoodMult : 1);
 }
 
 /**
@@ -202,6 +208,7 @@ export function distribute(s: SimState, g: Group, avgCoop: number, carers: Set<n
   const m = g.members;
   const n = m.length;
   if (n === 0) return 1;
+  const plague = plagued(s, g);
   const need = new Float64Array(n);
   let total = 0;
   for (let k = 0; k < n; k++) { need[k] = needOf(p, m[k]!); total += need[k]!; }
@@ -254,7 +261,8 @@ export function distribute(s: SimState, g: Group, avgCoop: number, carers: Set<n
     p.nutrition[slot] = (p.nutrition[slot]! * 11) / 12 + fed / 12;
     if (p.ageMonths[slot]! < P.ages.adult * 12) {
       p.childFedSum[slot] = p.childFedSum[slot]! + fed;
-      if (fed < P.fed.starvingBelow) p.childAdversity[slot] = p.childAdversity[slot]! + 1;
+      // A hard month for a child: starving, or a plague at home (§15).
+      if (fed < P.fed.starvingBelow || plague) p.childAdversity[slot] = p.childAdversity[slot]! + 1;
     }
     sum += fed;
     lowest = Math.min(lowest, fed);

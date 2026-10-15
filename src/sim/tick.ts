@@ -16,13 +16,15 @@ import { yearlyDiscoveries, yearlyResources } from './progress/discoveryRules';
 import { modeSwitches, updateVillage, yearlySample } from './people/village';
 import { breachChecks } from './society/walls';
 import { yearlyContact } from './society/contact';
+import { harshWinterNow, updateEvents } from './events';
 
 export function tick(s: SimState): void {
-  // 1. Planned events start/end — step 6.
-  // 2. Current rain for every tile.
+  // 1. Planned events start, end or strike.
+  updateEvents(s);
+  // 2. Current rain for every tile (drift and events).
   updateRainNow(s);
-  // 3. Plants regrow food stock.
-  regenPlants(s, CONFIG.seasonOfMonth[s.month]!);
+  // 3. Plants regrow food stock (half as fast in a harsh winter).
+  regenPlants(s, CONFIG.seasonOfMonth[s.month]!, harshWinterNow(s) ? CONFIG.events.harshWinterRegenMult : 1);
   // 4. Animals: growth, predation, diffusion.
   updateAnimals(s);
   // 5. Each group, in ascending id.

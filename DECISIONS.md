@@ -107,3 +107,25 @@ Where [pixel-ages-blueprint.md](pixel-ages-blueprint.md) is silent or unclear, t
 | 5.17 | "Shortage this year" in the sample update | Any month with fed below 1 | The plainest reading |
 | 5.18 | A group made by a split or by refugees with fewer than 150 people, coming from a village | Starts as a band of individuals | §11.8: only a group of 150+ starts as a village |
 | 5.19 | Speed: site searches, "found" checks and wall searches dominated late games | Exact branch-and-bound for split and migration sites, found bits cached once a month, fruitless wall searches skipped until something relevant changes | Same results, several times faster |
+
+## Step 6 — Events, graphs, full inspector
+
+| # | Gap | Decision | Why |
+|---|---|---|---|
+| 6.1 | When exactly events start and end | At month 0 of the start year; a 30-year drought covers years start … start + 29 and ends at month 0 of start + 30. Die-offs and earthquakes strike at month 0 of their year (§15) | Matches §5.1 step 1 and "Year 500 … began" in the log |
+| 6.2 | The half-strength ramp for very short droughts and wet periods | First and last year are half strength; a 1-year event is half strength all year | "First and last year at half strength" taken literally |
+| 6.3 | Two rain events over one area | Their multipliers multiply | Simple and order-independent |
+| 6.4 | Harsh winters "gather, hunt and herd food × 0.5" | Applied to every worker's yield in winter months; fields give nothing in winter anyway, so only gathering, hunting and herding change | One rule in one place |
+| 6.5 | A child who starves during a plague month | Counts one hard month, not two | Adversity counts months |
+| 6.6 | Which groups a plague hits | Groups whose home tile is in the plague's (original) area; a home on a breached wall tile belongs to no area | §15: "groups whose home is in the area" |
+| 6.7 | An earthquake on a wall that is already broken there | Logged; nothing more opens | The crossing already exists |
+| 6.8 | Does an earthquake count as breaching the segment? | Yes: the segment is marked breached, like a worn-through wall | Groups don't keep wearing a wall that is already open |
+| 6.9 | Lineage filters for world events (planned events, breaches by nobody) | World events have no lineage: always shown, with a grey dot | They matter to every lineage |
+| 6.10 | Graphs while viewing the past | The x axis still runs to the live year; lines stop at the viewed year and a white marker shows it. A lineage's trait lines stop when it has no people; its population line shows 0 | Keeps the axis steady while scrubbing; extinct lineages don't drag averages to 0 |
+| 6.11 | Graph and log refresh rate | At most 4 times a second, only while their tab is open (`ui.graphs.redrawMs`) | At 8× a stats row arrives 8 times a second |
+| 6.12 | Follow "turns on fog + territory" while the toolbar view buttons are one-at-a-time | Follow selects both Fog and Territory; any view button switches back to a single view | Both views at once is the point of Follow |
+| 6.13 | Starting values in the event dialog | Year 100, 20 years, strength 50 (`ui.eventDialog`) | Something sensible to edit |
+| 6.14 | Where run errors stop the run | The Run tab (Run ▶ disabled, with the reasons) and the bottom ▶ (shows the first error and opens the Run tab) | Both buttons start a run |
+| 6.15 | "No Forest, Fruit bushes, Grass or prey within 6 tiles" | Painted plants with density > 0, or painted prey > 0, within the forage radius | The same 6-tile range the group forages |
+| 6.16 | "Two groups' homes within 12 tiles in the same area" | Distance ≤ 12 (the contact distance, §14.1) and the same area at setup | Exactly the pairs that will meet in the first year |
+| 6.17 | Scenario C's "plague hits villages harder than bands" | By year 800 every group in Scenario C is a village, so there is nothing to compare there; the unit test checks the rule instead (a band of 4: × 1.32; a village of 400 with Taming: × 5.8) | The scenario no longer contains bands when the plague comes |

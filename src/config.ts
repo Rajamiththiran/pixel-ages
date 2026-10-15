@@ -304,7 +304,9 @@ export const CONFIG = {
     bottomBarPx: 80,
     hoverInfoRefreshMs: 50,
     inspectRefreshMs: 250,       // §21.1: inspector refreshes about 4 times per second
-    logRowsShown: 500,           // basic log tab: newest rows rendered (virtualised list in step 6)
+    logRowPx: 20,                // event log: height of one row (the list is virtualised, §21.3)
+    graphs: { width: 292, height: 112, maxPoints: 2000, redrawMs: 250 }, // §21.2: draw every n-th year past 2,000 points
+    eventDialog: { year: 100, length: 20, strength: 50 }, // a new event's starting values
     toastMs: 2500,
     peopleDialog: {
       men: 2, women: 2, minCount: 0, maxCount: 20,
