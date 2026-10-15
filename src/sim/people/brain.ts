@@ -27,6 +27,7 @@ export interface BandContext {
   farmSlots: number;             // farmers the fields (existing + possible) can take this month
   herdOk: boolean;               // Taming, and a herd or wild herd animals in range
   herdCapacity: number;
+  pressure: number;              // P (§13), for wall work
 }
 
 /** Diminishing returns for support jobs: the more already do it, the less the next one adds. */
@@ -54,8 +55,8 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
     if (total > bestScore) { bestScore = total; best = action; }
   };
 
-  // In id order: Gather 1, Hunt 2, Farm 3, Herd 4, Explore 5, Care 6, Build 7,
-  // (Wall 8 — step 5), Rest 9, Teach 10. Elders (60+) only Gather, Care, Rest, Teach.
+  // In id order: Gather 1, Hunt 2, Farm 3, Herd 4, Explore 5, Care 6, Build 7, Wall 8,
+  // Rest 9, Teach 10. Elders (60+) only Gather, Care, Rest, Teach.
   consider(Action.Gather, B.gatherBase + H * g.plantAvail);
   if (!elder && age <= A.hunterMaxAge) {
     consider(Action.Hunt, (B.huntBase + H) * g.preyAvail * (str / 100)
@@ -82,6 +83,7 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
   if (!elder && ctx.familiesWithoutShelter > 0) {
     consider(Action.Build, (B.buildBase + B.buildPerFamily * ctx.familiesWithoutShelter) * crowdFactor(ctx, Action.Build));
   }
+  if (!elder && g.wallTarget !== null) consider(Action.Wall, B.wallWeight * ctx.pressure * (str / 100));
   if (health < CONFIG.people.health.restBelow) {
     consider(Action.Rest, B.restWeight * (CONFIG.people.health.restBelow - health));
   }

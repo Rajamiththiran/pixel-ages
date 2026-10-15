@@ -10,7 +10,7 @@ import { pressure } from './society/walls';
 import type { GroupView, InspectResult } from '../shared/protocol';
 import type { Group, SimState } from './state';
 import { areaName } from './world/regions';
-import { countMembers, groupColor, traitAverages } from './people/groups';
+import { countMembers, groupColor, population, traitAverages } from './people/groups';
 import { hasActive, isKnown } from './people/explore';
 
 const A = CONFIG.people.ages;
@@ -51,7 +51,7 @@ export function packPeople(s: SimState): Float32Array {
 export function groupViews(s: SimState): GroupView[] {
   return s.groups.map((g) => ({
     id: g.id, name: g.name, lineageId: g.lineageId, colourIndex: groupColor(s, g), mode: g.mode,
-    homeX: g.homeX, homeY: g.homeY, population: g.members.length, era: g.era, discoveries: g.discoveries,
+    homeX: g.homeX, homeY: g.homeY, population: population(g), era: g.era, discoveries: g.discoveries,
     huts: g.huts, houses: g.houses, herd: Math.floor(g.herd), range: CONFIG.people.range.forage,
     farms: g.farmTiles.length,
   }));
@@ -118,6 +118,25 @@ export function inspect(s: SimState, x: number, y: number, personId: number | nu
   return { tile, group: g ? groupCard(s, g) : null, person };
 }
 
+const KIND_NAMES = { coexist: 'living side by side', trade: 'trading', war: 'at war' } as const;
+
+/** "Desert 2: trading since year 640; …" */
+function relationsOf(s: SimState, g: Group): string {
+  const out: string[] = [];
+  for (const r of s.relations) {
+    if (r.a !== g.id && r.b !== g.id) continue;
+    const other = s.groups.find((o) => o.id === (r.a === g.id ? r.b : r.a));
+    if (other) out.push(`${other.name}: ${KIND_NAMES[r.kind]} since year ${r.sinceYear}`);
+  }
+  return out.length ? out.join('; ') : 'none';
+}
+
+/** "River wall, health 63 / 100" */
+function wallWork(s: SimState, g: Group): string {
+  const seg = s.wallSegments[g.wallTarget!.segmentId]!;
+  return `${WALL_NAMES[seg.type]} wall, health ${Math.max(0, Math.round(seg.health))} / ${seg.maxHealth}`;
+}
+
 function groupCard(s: SimState, g: Group): Record<string, unknown> {
   const c = countMembers(s, g);
   const t = traitAverages(s, g);
@@ -141,7 +160,7 @@ function groupCard(s: SimState, g: Group): Record<string, unknown> {
     Group: g.name,
     Lineage: lin?.name ?? '—',
     Mode: g.mode === Mode.Band ? 'Band' : 'Village',
-    Population: `${g.members.length} (${c.men} men, ${c.women} women, ${c.children} children, ${c.elders} elders)`,
+    Population: `${population(g)} (${c.men} men, ${c.women} women, ${c.children} children, ${c.elders} elders)`,
     Era: `${g.era} · ${ERA_NAMES[g.era] ?? '—'}`,
     Discoveries: owned.length ? owned.join(', ') : 'none yet',
     'Intelligence (potential → actual)': `${t.potInt.toFixed(0)} → ${t.int.toFixed(0)}`,
@@ -157,6 +176,8 @@ function groupCard(s: SimState, g: Group): Record<string, unknown> {
     Home: `(${g.homeX}, ${g.homeY})`,
     Known: `${g.knownCount} tiles (${pct(knownInArea / Math.max(1, areaTiles))} of its area)`,
     Founded: `year ${g.foundedYear}`,
+    Relations: relationsOf(s, g),
+    ...(g.wallTarget ? { 'Wall work': wallWork(s, g) } : {}),
     ...(g.cannotReproduceLogged ? { Warning: "Can't have children" } : {}),
   };
 }

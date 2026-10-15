@@ -9,7 +9,7 @@ import {
 import { chance } from '../../shared/rng';
 import type { Group, SimState } from '../state';
 import { hasActive, rebuildFrontier } from '../people/explore';
-import { logEvent, traitAverages } from '../people/groups';
+import { logEvent, population, traitAverages } from '../people/groups';
 
 const D = CONFIG.discoveries;
 
@@ -35,10 +35,35 @@ function tileFound(s: SimState, i: number): number {
   return m;
 }
 
-/** Everything the group's known tiles (and its history) have found, as Found bits. */
-export function foundMask(s: SimState, g: Group): number {
+// Found bits of every tile, worked out once per state and month (sim-local cache, never state:
+// it is a pure function of the tiles, so it can't change results).
+const tileCache = new WeakMap<SimState, { stamp: number; bits: Uint16Array }>();
+
+function tileFoundBits(s: SimState): Uint16Array {
+  const stamp = s.year * 13 + s.month; // the yearly steps run with month = 12
+  let c = tileCache.get(s);
+  if (!c || c.stamp !== stamp) {
+    const bits = c?.bits ?? new Uint16Array(s.width * s.height);
+    for (let i = 0; i < bits.length; i++) bits[i] = tileFound(s, i);
+    c = { stamp, bits };
+    tileCache.set(s, c);
+  }
+  return c.bits;
+}
+
+/** Forget the cached tile bits (tests that change tiles within one month). */
+export const invalidateFound = (s: SimState): void => { tileCache.delete(s); };
+
+/**
+ * Everything the group's known tiles (and its history) have found, as Found bits. Only the
+ * bits in `wanted` matter to the caller, so the scan stops once all of those are found.
+ */
+export function foundMask(s: SimState, g: Group, wanted = TILE_FOUND_ALL): number {
   let mask = g.hasHunted ? Found.Hunted : 0;
-  const n = s.width * s.height;
+  const want = wanted & TILE_FOUND_ALL;
+  if (want === 0) return mask;
+  const bits = tileFoundBits(s);
+  const n = bits.length;
   const known = g.known;
   for (let b = 0; b < known.length; b++) {
     const byte = known[b]!;
@@ -46,11 +71,18 @@ export function foundMask(s: SimState, g: Group): number {
     for (let k = 0; k < 8; k++) {
       const i = b * 8 + k;
       if (i >= n) break;
-      if ((byte >> k) & 1) mask |= tileFound(s, i);
+      if ((byte >> k) & 1) mask |= bits[i]!;
     }
-    if ((mask & TILE_FOUND_ALL) === TILE_FOUND_ALL) break;
+    if ((mask & want) === want) break;
   }
   return mask;
+}
+
+/** Found bits still useful to the group: needed by a discovery it doesn't own (optionally only those `other` owns). */
+export function wantedFound(g: Group, other = ~0): number {
+  let want = 0;
+  for (const def of DISCOVERIES) if (!has(g.discoveries, def.id) && has(other, def.id)) want |= def.needsFound;
+  return want;
 }
 
 /** Not owned yet, needed discoveries owned, requirements found, big enough (City). */
@@ -140,7 +172,7 @@ export function loseDiscovery(s: SimState, g: Group, d: number, reason: string):
  * years in a row, is lost — together with everything built on it.
  */
 export function forgetting(s: SimState, g: Group): void {
-  const pop = g.members.length;
+  const pop = population(g);
   const writing = has(g.discoveries, Discovery.writing);
   const lost: number[] = [];
   for (let d = 0; d < DISCOVERY_COUNT; d++) {
@@ -154,24 +186,26 @@ export function forgetting(s: SimState, g: Group): void {
 }
 
 /** Known tiles holding resource r, nearest to home first (ties → lowest index). */
-function knownResourceTiles(s: SimState, g: Group, r: number): number[] {
+function knownResourceTiles(s: SimState, g: Group, r: number, deposits: number[]): number[] {
   const out: Array<[number, number]> = [];
   const w = s.width;
-  const n = w * s.height;
-  for (let b = 0; b < g.known.length; b++) {
-    const byte = g.known[b]!;
-    if (byte === 0) continue;
-    for (let k = 0; k < 8; k++) {
-      const i = b * 8 + k;
-      if (i >= n || !((byte >> k) & 1)) continue;
-      if (s.resourceType[i] !== r || s.resourceAmount[i] === 0) continue;
-      const dx = (i % w) - g.homeX;
-      const dy = Math.floor(i / w) - g.homeY;
-      out.push([dx * dx + dy * dy, i]);
-    }
+  for (const i of deposits) {
+    if (s.resourceType[i] !== r || s.resourceAmount[i] === 0 || !isKnownTile(g, i)) continue;
+    const dx = (i % w) - g.homeX;
+    const dy = Math.floor(i / w) - g.homeY;
+    out.push([dx * dx + dy * dy, i]);
   }
   out.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   return out.map((e) => e[1]);
+}
+
+const isKnownTile = (g: Group, i: number): boolean => ((g.known[i >> 3]! >> (i & 7)) & 1) === 1;
+
+/** Every tile with a resource left, ascending (found once a year for all groups). */
+function resourceTiles(s: SimState): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < s.resourceAmount.length; i++) if (s.resourceAmount[i]! > 0) out.push(i);
+  return out;
 }
 
 /**
@@ -179,11 +213,11 @@ function knownResourceTiles(s: SimState, g: Group, r: number): number[] {
  * ceil(population / 50) units a year from the nearest known deposits. Without enough, the
  * discovery goes inactive (logged once) until a year when there is enough again.
  */
-export function useResources(s: SimState, g: Group): void {
-  const units = Math.ceil(g.members.length / D.resourceUsePer);
+export function useResources(s: SimState, g: Group, deposits = resourceTiles(s)): void {
+  const units = Math.ceil(population(g) / D.resourceUsePer);
   for (const def of DISCOVERIES) {
     if (def.uses === Resource.None || !has(g.discoveries, def.id)) continue;
-    const tiles = knownResourceTiles(s, g, def.uses);
+    const tiles = knownResourceTiles(s, g, def.uses, deposits);
     let available = 0;
     for (const i of tiles) available += s.resourceAmount[i]!;
     if (available >= units) {
@@ -206,8 +240,8 @@ export function useResources(s: SimState, g: Group): void {
 
 /** Rolls every discovery the group could make this year, in id order (§12.3). */
 export function rollDiscoveries(s: SimState, g: Group): void {
-  const pop = g.members.length;
-  const found = foundMask(s, g);
+  const pop = population(g);
+  const found = foundMask(s, g, wantedFound(g));
   const x: ChanceInputs = {
     avgInt: traitAverages(s, g).int,
     population: pop,
@@ -234,13 +268,14 @@ export function updateEra(s: SimState, g: Group): void {
 export function updateTeachBonus(g: Group): void {
   const T = CONFIG.people.teach;
   const teachers = g.teacherMonths / CONFIG.time.ticksPerYear;
-  g.teachBonus = 1 + Math.min(T.maxBonus, (T.perShare * teachers) / Math.max(1, g.members.length));
+  g.teachBonus = 1 + Math.min(T.maxBonus, (T.perShare * teachers) / Math.max(1, population(g)));
   g.teacherMonths = 0;
 }
 
 /** Yearly step 3 (§5.1): resources, every group in id order. */
 export function yearlyResources(s: SimState): void {
-  for (const g of s.groups) useResources(s, g);
+  const deposits = resourceTiles(s);
+  for (const g of s.groups) useResources(s, g, deposits);
 }
 
 /** Yearly step 4 (§5.1): forgetting, then new discoveries, then the era. */

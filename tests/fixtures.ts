@@ -152,3 +152,37 @@ export function scenarioB(seed = 48213): RunSetup {
   ];
   return run;
 }
+
+/**
+ * Scenario D — "Performance" (§26): three areas split by two River walls, all rich land,
+ * 6 founder groups (2 per area), strong drift.
+ */
+export function scenarioD(seed = 1): RunSetup {
+  const m = createMap();
+  fillRect(m, 0, 0, W - 1, H - 1, (i, x, y) => {
+    m.rain[i] = 65;
+    if (x === 0 || y === 0 || x === W - 1 || y === H - 1) { m.wall[i] = WallType.Sea; return; }
+    if (x === 53 || x === 54 || x === 106 || x === 107) { m.wall[i] = WallType.River; return; }
+    // Forest everywhere but a grass strip (herds and horses) in the middle of each area.
+    const local = x % 53;
+    if (local < 30 || local >= 45) { m.plantType[i] = Plant.Forest; m.plantDensity[i] = 255; m.animals[Species.Predator][i] = 13; }
+    else { m.plantType[i] = Plant.Grass; m.plantDensity[i] = 230; m.animals[Species.Herd][i] = 77; m.animals[Species.Riding][i] = 51; }
+    m.animals[Species.Prey][i] = 128;
+  });
+  for (const x0 of [5, 58, 111]) {
+    fillRect(m, x0 + 20, 40, x0 + 26, 46, (i) => { m.plantType[i] = Plant.FruitBushes; m.plantDensity[i] = 255; });
+    fillRect(m, x0 + 10, 10, x0 + 14, 14, (i) => { m.resourceType[i] = Resource.Stone; m.resourceAmount[i] = 255; });
+    fillRect(m, x0 + 30, 70, x0 + 34, 74, (i) => { m.resourceType[i] = Resource.Clay; m.resourceAmount[i] = 255; });
+    fillRect(m, x0 + 38, 20, x0 + 43, 25, (i) => {
+      m.ground[i] = Ground.Mountain; m.plantType[i] = Plant.None; m.plantDensity[i] = 0;
+      m.resourceType[i] = x0 === 58 ? Resource.Iron : Resource.Copper; m.resourceAmount[i] = 255;
+    });
+    // A lake in each area, for Raft, Irrigation and Boat.
+    disk(x0 + 12, 60, 3, (i) => { m.ground[i] = Ground.Water; m.plantType[i] = Plant.None; m.plantDensity[i] = 0; for (let s = 0; s < 4; s++) m.animals[s]![i] = 0; });
+  }
+  const run = runOf(m, seed, 'strong');
+  run.name = 'Scenario D — Performance';
+  const homes: Array<[number, number, string]> = [[15, 25, 'Red'], [20, 65, 'Blue'], [68, 25, 'Gold'], [73, 65, 'Violet'], [121, 25, 'Teal'], [126, 65, 'Amber']];
+  run.founders = homes.map(([x, y, name], k) => ({ id: k + 1, name, colorIndex: k, x, y, people: fourPeople(100) }));
+  return run;
+}

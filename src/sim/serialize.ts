@@ -1,7 +1,15 @@
 // SimState copies (keyframes) and the state hash used by determinism tests (§16.3).
 
-import type { Group, SimState } from './state';
+import type { Group, SimState, VillageData } from './state';
 import { POOL_ARRAYS, clonePool } from './people/persons';
+
+export function cloneVillage(v: VillageData): VillageData {
+  return {
+    ...v,
+    counts: v.counts.slice(),
+    sample: v.sample.map((m) => ({ ...m, pot: [...m.pot], act: [...m.act] })),
+  };
+}
 
 export function cloneGroup(g: Group): Group {
   return {
@@ -13,6 +21,7 @@ export function cloneGroup(g: Group): Group {
     farmTiles: g.farmTiles.slice(),
     wallTarget: g.wallTarget ? { ...g.wallTarget } : null,
     members: g.members.slice(),
+    village: g.village ? cloneVillage(g.village) : null,
   };
 }
 
@@ -50,6 +59,8 @@ export function cloneState(s: SimState): SimState {
     groups: s.groups.map(cloneGroup),
     lineages: s.lineages.map((l) => ({ ...l })),
     persons: clonePool(s.persons),
+    relations: s.relations.map((r) => ({ ...r })),
+    lineagesMet: s.lineagesMet.slice(),
     activeEvents: s.activeEvents.map((e) => ({ ...e })),
     log: [],
     logDropped: 0,
@@ -89,10 +100,11 @@ export function hashState(s: SimState): string {
   }
   const groups = s.groups.map((g) => ({
     ...g, known: undefined, belowLimitYears: undefined, fedHistory: undefined,
+    village: g.village ? { ...g.village, counts: Array.from(g.village.counts) } : null,
   }));
   const json = JSON.stringify({
     year: s.year, month: s.month, walls: s.wallSegments, events: s.activeEvents,
-    groups, lineages: s.lineages, nextGroupId: s.nextGroupId,
+    groups, lineages: s.lineages, nextGroupId: s.nextGroupId, relations: s.relations, met: s.lineagesMet,
     persons: { nextId: s.persons.nextId, free: s.persons.free, capacity: s.persons.capacity },
   });
   for (let k = 0; k < json.length; k++) mix(json.charCodeAt(k) & 255);

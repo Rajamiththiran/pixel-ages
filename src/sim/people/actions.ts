@@ -7,9 +7,10 @@ import { chance, int } from '../../shared/rng';
 import type { Group, SimState } from '../state';
 import type { BandContext } from './brain';
 import { frontierInRange, hasActive, revealAround, revealRadius } from './explore';
-import { gather, hunt } from './food';
+import { gather, hunt, yieldMult } from './food';
 import { ensureFarmTiles, farmWork, growHerd, herdWork, type HerdMonth } from './farming';
 import { strengthNow } from './inheritance';
+import { wearWall } from '../society/walls';
 
 const P = CONFIG.people;
 
@@ -42,7 +43,7 @@ export function doActions(s: SimState, g: Group, ctx: BandContext): ActionResult
         if (field >= 0) tile = field;
         break;
       }
-      case Action.Herd: tile = herdWork(s, g, slot, ctx.range, herdMonth); herders++; break;
+      case Action.Herd: tile = herdWork(s, g, yieldMult(s, g, slot), ctx.range, herdMonth); herders++; break;
       case Action.Explore: {
         const options = ctx.frontierInRange;
         if (options.length > 0) {
@@ -66,6 +67,12 @@ export function doActions(s: SimState, g: Group, ctx: BandContext): ActionResult
         }
         break;
       case Action.Teach: teachers++; break;
+      case Action.Wall:
+        if (g.wallTarget) {
+          wearWall(s, g, strengthNow(p, slot), 1);
+          tile = g.wallTarget.tile;
+        }
+        break;
       default: break; // Rest, Child: stay home
     }
     p.workTile[slot] = tile;

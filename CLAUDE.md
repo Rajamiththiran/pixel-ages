@@ -24,7 +24,8 @@ Code style: TypeScript `strict`, small pure functions, short comments that expla
 - Step 1 (map and brushes): approved.
 - Step 2 (living world): approved.
 - Step 3 (people, band mode): approved.
-- Step 4 (discoveries and eras): built, waiting for owner approval.
+- Step 4 (discoveries and eras): approved.
+- Step 5 (villages, walls, contact): built, waiting for owner approval.
 
 ## Notes
 

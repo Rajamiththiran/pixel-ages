@@ -49,6 +49,27 @@ export function rangeTiles(s: SimState, g: Group, cx = g.homeX, cy = g.homeY): n
   return out.sort((a, b) => a - b);
 }
 
+// Each group's home range, reused until something that shapes it changes (speed only: it is a
+// pure function of the state, kept outside it).
+const homeRanges = new WeakMap<Group, { key: string; tiles: number[] }>();
+
+/** Wall segments breached so far: crossings are the only way passability changes besides Raft. */
+const breachCount = (s: SimState): number => {
+  let n = 0;
+  for (const seg of s.wallSegments) if (seg.breached) n++;
+  return n;
+};
+
+/** rangeTiles around home, cached while known tiles, home, Raft and crossings stay the same. Don't mutate. */
+export function homeRange(s: SimState, g: Group): number[] {
+  const key = `${g.knownVersion}|${g.homeX},${g.homeY}|${hasActive(g, Discovery.raft) ? 1 : 0}|${breachCount(s)}`;
+  const c = homeRanges.get(g);
+  if (c && c.key === key) return c.tiles;
+  const tiles = rangeTiles(s, g);
+  homeRanges.set(g, { key, tiles });
+  return tiles;
+}
+
 /**
  * What a tile can give per month without running down (§11.5 sustainableYield). Prey only
  * count as much as the group can hunt them: half without Stone Tools (DECISIONS 3.4).
@@ -68,11 +89,15 @@ export function rangeSustainable(s: SimState, range: number[], g: Group): number
   return sy;
 }
 
-/** Updates need, H, PA, YA, sustainable yield and crowding for this month (§11.5). */
-export function computeSignals(s: SimState, g: Group, range: number[]): void {
-  const p = s.persons;
+/** A band's monthly food need: the sum of its members' needs. */
+export function bandNeed(s: SimState, g: Group): number {
   let need = 0;
-  for (const slot of g.members) need += needOf(p, slot);
+  for (const slot of g.members) need += needOf(s.persons, slot);
+  return need;
+}
+
+/** Updates need, H, PA, YA, sustainable yield and crowding for this month (§11.5). */
+export function computeSignals(s: SimState, g: Group, range: number[], need = bandNeed(s, g)): void {
   g.need = need;
 
   let plant = 0, prey = 0;
@@ -100,10 +125,15 @@ export function hungerOf(g: Group): number {
 
 /** Multiplier on all food a worker gains: cooking, copper tools, cleverness, trade. */
 export function yieldMult(s: SimState, g: Group, slot: number): number {
+  return yieldMultInt(g, s.persons.actInt[slot]!);
+}
+
+/** yieldMult for a worker of intelligence `int` (villages use the group average). */
+export function yieldMultInt(g: Group, int: number): number {
   return (hasActive(g, Discovery.fire) ? F.cookedMult : 1)
     * (hasActive(g, Discovery.copperWorking) ? F.copperMult : 1)
-    * (1 + (s.persons.actInt[slot]! - 100) / F.intYieldDivisor);
-  // × tradeMult while trading — step 5
+    * (1 + (int - 100) / F.intYieldDivisor)
+    * (g.trading ? F.tradeMult : 1);
 }
 
 /**

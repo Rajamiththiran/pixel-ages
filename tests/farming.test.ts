@@ -108,13 +108,13 @@ describe('herding (§11.5)', () => {
     expect(cap).toBeCloseTo(5 * range.length * (40 / 60), 5); // no plants: every range tile grazes
     const hm = { capacity: cap, tended: 0 };
     g.foodStock = 0;
-    expect(herdWork(s, g, g.members[0]!, range, hm)).toBe(wild);
+    expect(herdWork(s, g, 1, range, hm)).toBe(wild);
     expect(g.herd).toBeCloseTo(2);                            // min(2, 0.5 × 10)
     expect(s.animal[Species.Herd][wild]).toBeCloseTo(0.3);    // 2 / 10 taken
     expect(g.foodStock).toBeCloseTo(2 * 0.08);
     // A full herd catches nothing more.
     const hm2 = { capacity: g.herd, tended: 0 };
-    herdWork(s, g, g.members[0]!, range, hm2);
+    herdWork(s, g, 1, range, hm2);
     expect(g.herd).toBeCloseTo(2);
   });
 });

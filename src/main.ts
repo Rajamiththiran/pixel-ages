@@ -18,6 +18,8 @@ import { Layer, cloneMap, createMap } from './editor/mapState';
 import { RegionsPreview } from './editor/regionsPreview';
 import { Renderer, type SetupView } from './render/renderer';
 import { GROUP_COLORS } from './render/palette';
+import { AgeClass, personSprite } from './render/sprites';
+import type { WalkerSprite } from './render/decor';
 import { buildLayout, showToast } from './ui/layout';
 import { buildRunToolbar, buildToolbar, type RunToolbarApi, type ToolbarApi, type ViewMode } from './ui/toolbar';
 import { buildRunPanel, buildSetupPanel, type RunPanelApi, type SetupPanelActions, type SetupPanelApi, type SetupState } from './ui/setupPanel';
@@ -337,6 +339,9 @@ function clearSelection(): void {
   runPanel?.setInspect(null);
 }
 
+/** Village walkers are ordinary adults in the village colour (§18.5). */
+const walkerSprite: WalkerSprite = (look, frame) => personSprite({ ...look, ageClass: AgeClass.Adult }, frame);
+
 function startRun(): void {
   const runSetup: RunSetup = {
     version: 1,
@@ -358,6 +363,7 @@ function startRun(): void {
   renderer.people.clear();
   renderer.buildings.clear();
   renderer.camps.clear();
+  renderer.life.clear();
   renderer.fog.setKnown(null);
   session = new RunSession(runSetup, {
     started: () => {},
@@ -373,6 +379,7 @@ function startRun(): void {
       renderer.people.update(f.people, f.speed === 8, performance.now());
       renderer.buildings.update(session!.map, f.groups);
       renderer.camps.update(session!.map, f.groups);
+      renderer.life.update(session!.map, f.groups, walkerSprite);
       view.runGroups = f.groups.map((g) => ({
         name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup,
         sub: ERA_NAMES[g.era],
@@ -430,6 +437,7 @@ function stopRun(): void {
   renderer.people.clear();
   renderer.buildings.clear();
   renderer.camps.clear();
+  renderer.life.clear();
   mode = 'setup';
   setBanner(null);
   renderer.setCrossing(null);

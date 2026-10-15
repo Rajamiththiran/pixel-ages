@@ -83,3 +83,27 @@ Where [pixel-ages-blueprint.md](pixel-ages-blueprint.md) is silent or unclear, t
 | 4.17 | Herd goats and city buildings (§18.5) | Not drawn yet: §24 lists them under step 5's village visuals. The herd size shows in the inspector | Keeps to the build order |
 | 4.18 | Riders and facing (§19.1) | Riders face the way they move (flipped when going left) | Horses face right in the grid; a rider going left looked backwards |
 | 4.19 | §11.8 sets no minimum size for a split. Scenario B's 4 desert founders are crowded from year 1 and split 2 + 2, so neither half could ever have children (this already happened in step 3) | A band only splits if both parts keep at least 4 people including a man 16+ and a woman 16–40 (`split.minPeople`) — the same test §14.4 uses for refugees | Real bands don't split below a breeding core; a 2-person "band" is a death sentence, not a daughter group |
+
+## Step 5 — Villages, walls and contact
+
+| # | Gap | Decision | Why |
+|---|---|---|---|
+| 5.1 | Who works in a village | Adults 15–59, as §11.10 says; elders don't work (they still count for teaching) | The blueprint's labour definition |
+| 5.2 | Rebuilding individuals from a village (§11.10 "copies traits from a random sample member") | Sample members are dealt in shuffled rounds, so each is copied about equally often (still random). The "trait averages within 2%" test is checked on the average over 20 runs; one switch may be off by up to ~4% on a trait near 50, because the sample is 64 people | A single 64-person sample can't promise 2% on a trait where 2% is 1 point; dealing in rounds removes the extra noise from copying |
+| 5.3 | Ages for the open 70+ bucket when rebuilding individuals | 70–79 (`village.oldestSpanYears`) | With 15% yearly deaths, few people pass 80; 70–100 would make old people too old |
+| 5.4 | Village labour by score² lets a big shelter deficit put 90% of people on building, and the village starves | Support jobs (Explore, Care, Build) get the same falloff as in bands (DECISIONS 3.5), solved in a few damped rounds | Same rule as bands; food work is never crowded out |
+| 5.5 | Labour shares can exceed the fields or herd | Farmers beyond 10 per field, and herders beyond the herd, gather instead | The land can't take more farmers |
+| 5.6 | Adding people to a village ("sample merged and resized to 64") | The new sample takes members from each side in proportion to the people they stand for | 20 captives in a village of 1,000 should get ~1 sample place, not 20 |
+| 5.7 | A village's childhood nutrition and adversity (§11.4 needs cn and ca) | 15-year moving averages of the fed ratio and of hard months (starving; war adds 3 months) | Matches a childhood; used for new sample members and rebuilt children |
+| 5.8 | Village hunting "spread over the best tiles" | Each expected success hits the tile with the most prey at that moment | The same rule a band hunter follows, in expected values |
+| 5.9 | "Adults" in war power and battle deaths | Fighting age 15–59 (`contact.fightingAgeMax`) | Matches the village labour age; children and elders don't fight |
+| 5.10 | A group under pressure wore down the sea wall around the map edge — a breach there leads nowhere | A wall tile is only a target if a breach there would reach an area not yet connected to home | Nobody tunnels into the edge of the world; work goes to real barriers |
+| 5.11 | Trading's food × 1.05 "that year" — contact is resolved at the end of the year | A year of trade gives × 1.05 to the following year's food | The bonus can only apply after the trade has happened |
+| 5.12 | Village buildings vs. fields | Villages draw up to 30 buildings (city 2×3 first, then houses, then huts); fields are avoided unless there is no other room | Villages are surrounded by fields; their houses still need a place |
+| 5.13 | Where herd goats wander | Within 2 tiles of home (`render.herdRadiusTiles`); village walkers within 3 (§18.5) | "Near home" |
+| 5.14 | Refugees with no site 12+ tiles from the winner | They scatter (removed); founding a refugee group is logged as a movement entry "N people fled from X and founded Y" | Same viability rule as §14.4 |
+| 5.15 | People moving between a band and a village (captives, absorbed groups, splits) | Into a village: counted and added to the sample (5.6). Into a band: village people are rebuilt as individuals (5.2) | Each mode keeps its own representation |
+| 5.16 | Learned discoveries (trade, conquest, absorb) and eras | The era is recomputed at once | Otherwise the era would lag a year behind its discoveries |
+| 5.17 | "Shortage this year" in the sample update | Any month with fed below 1 | The plainest reading |
+| 5.18 | A group made by a split or by refugees with fewer than 150 people, coming from a village | Starts as a band of individuals | §11.8: only a group of 150+ starts as a village |
+| 5.19 | Speed: site searches, "found" checks and wall searches dominated late games | Exact branch-and-bound for split and migration sites, found bits cached once a month, fruitless wall searches skipped until something relevant changes | Same results, several times faster |

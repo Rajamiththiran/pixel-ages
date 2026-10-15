@@ -6,7 +6,9 @@ import type { FounderGroup, MapData } from '../shared/types';
 import type { AreaResult } from '../sim/world/regions';
 import { TerrainLayer } from './terrain';
 import { AreaOverlay, FogOverlay, RainOverlay, drawBrushPreview, drawHoverTile } from './overlays';
-import { BuildingLayer, CampLayer, WildAnimals, paintedDensities } from './decor';
+import { BuildingLayer, CampLayer, CampLife, WildAnimals, paintedDensities } from './decor';
+import { getSprite } from './sprites';
+import { WallType } from '../shared/ids';
 import { PeopleLayer, collectFounders, drawGroupLabels, type GroupLabel } from './people';
 import { Camera } from './camera';
 import { SpriteLayer } from './blit';
@@ -42,6 +44,8 @@ export class Renderer {
   readonly people = new PeopleLayer();
   readonly buildings = new BuildingLayer();
   readonly camps = new CampLayer();
+  readonly life = new CampLife();
+  private bridgeImg: HTMLCanvasElement | null = null;
   readonly fog: FogOverlay;
   private items: DrawItem[] = [];
   private itemCount = 0;
@@ -138,6 +142,7 @@ export class Renderer {
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.camera.apply(ctx);
     ctx.drawImage(this.terrain.canvas, 0, 0);
+    if (v.running) this.drawBridges(ctx);
 
     if (v.showAreas) ctx.drawImage(this.areas.canvas, 0, 0);
     if (v.hoverArea >= 0) this.areas.drawHover(ctx, v.hoverArea, v.map.width, v.map.height);
@@ -151,6 +156,8 @@ export class Renderer {
       this.people.collect(now, this.push);
       this.buildings.collect(this.push);
       this.camps.collect(now, this.push);
+      this.life.animate(now, dt);
+      this.life.collect(now, this.push);
     } else {
       collectFounders(v.founders, this.push);
     }
@@ -183,6 +190,21 @@ export class Renderer {
       if (v.brushSize !== null) drawBrushPreview(ctx, v.hover.x, v.hover.y, v.brushSize);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /** A bridge on every crossing of a River or Sea wall (§18.5), filling the tile (top-left anchored, §19.5). */
+  private drawBridges(ctx: CanvasRenderingContext2D): void {
+    const crossing = this.terrain.crossing;
+    if (!crossing) return;
+    const m = this.view.map;
+    const T = CONFIG.map.tilePx;
+    for (let i = 0; i < crossing.length; i++) {
+      if (crossing[i] !== 1) continue;
+      const wall = m.wall[i];
+      if (wall !== WallType.River && wall !== WallType.Sea) continue;
+      this.bridgeImg ??= getSprite('bridge');
+      ctx.drawImage(this.bridgeImg, (i % m.width) * T, Math.floor(i / m.width) * T);
+    }
   }
 
   /** Small white corner brackets around the selected person. */

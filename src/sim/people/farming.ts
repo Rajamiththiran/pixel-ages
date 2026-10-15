@@ -11,8 +11,21 @@ import { yieldMult } from './food';
 
 const F = CONFIG.people.food;
 
+// Water ground never changes and walls keep their type, so "near water" is fixed for a run.
+const nearWaterCache = new WeakMap<Uint8Array, Uint8Array>();
+
 /** Within irrigation distance (2 tiles) of Water ground or a River wall. */
 export function nearWater(s: SimState, i: number): boolean {
+  let c = nearWaterCache.get(s.ground);
+  if (!c) {
+    c = new Uint8Array(s.ground.length);
+    for (let k = 0; k < c.length; k++) c[k] = nearWaterScan(s, k) ? 1 : 0;
+    nearWaterCache.set(s.ground, c);
+  }
+  return c[i] === 1;
+}
+
+function nearWaterScan(s: SimState, i: number): boolean {
   const r = F.irrigationDistance;
   const w = s.width;
   const cx = i % w;
@@ -74,13 +87,18 @@ export function ensureFarmTiles(s: SimState, g: Group, farmers: number, candidat
 export function farmWork(s: SimState, g: Group, slot: number, k: number): number {
   const tile = g.farmTiles[Math.floor(k / F.farmersPerTile)];
   if (tile === undefined) return -1;
+  g.foodStock += fieldYield(s, g, tile, yieldMult(s, g, slot));
+  return tile;
+}
+
+/** One farmer-month on field `tile` (§11.5): 2 FU × season × rain (irrigated ≥ 1) × yield × Iron. Marks the field farmed. */
+export function fieldYield(s: SimState, g: Group, tile: number, mult: number): number {
   const rf = rainFactor(s.rainNow[tile]!);
   const irrigated = hasActive(g, Discovery.irrigation) && nearWater(s, tile);
   const season = CONFIG.seasonOfMonth[s.month]!;
-  g.foodStock += F.farmerCap * F.farmSeason[season]! * (irrigated ? Math.max(rf, 1) : rf)
-    * yieldMult(s, g, slot) * (hasActive(g, Discovery.ironWorking) ? F.ironFarmMult : 1);
   s.farmedThisYear[tile] = 1;
-  return tile;
+  return F.farmerCap * F.farmSeason[season]! * (irrigated ? Math.max(rf, 1) : rf)
+    * mult * (hasActive(g, Discovery.ironWorking) ? F.ironFarmMult : 1);
 }
 
 /** Yearly (§10.2): a field nobody farmed for 3 years turns back into grass. Groups drop lost fields. */
@@ -128,9 +146,10 @@ export interface HerdMonth { capacity: number; tended: number }
 
 /**
  * One herder (§11.5): while the herd is below capacity, catch up to 2 wild animals from the
- * range tile with the most; then tend up to 20 of the herd for food. Returns the work tile.
+ * range tile with the most; then tend up to 20 of the herd for food (× the herder's yield
+ * multiplier). Returns the work tile.
  */
-export function herdWork(s: SimState, g: Group, slot: number, range: number[], hm: HerdMonth): number {
+export function herdWork(s: SimState, g: Group, mult: number, range: number[], hm: HerdMonth): number {
   const wild = s.animal[Species.Herd];
   let best = -1;
   let bestD = 0;
@@ -144,7 +163,7 @@ export function herdWork(s: SimState, g: Group, slot: number, range: number[], h
   }
   const tend = Math.max(0, Math.min(F.herdPerHerder, g.herd - hm.tended));
   hm.tended += tend;
-  g.foodStock += tend * F.herdYieldPerAnimal * yieldMult(s, g, slot);
+  g.foodStock += tend * F.herdYieldPerAnimal * mult;
   return best >= 0 ? best : g.homeY * s.width + g.homeX;
 }
 

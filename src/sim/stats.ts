@@ -3,7 +3,7 @@
 import { CONFIG } from '../config';
 import type { YearStats } from '../shared/types';
 import type { SimState } from './state';
-import { traitAverages } from './people/groups';
+import { population, traitAverages } from './people/groups';
 
 export function recordYearStats(s: SimState): void {
   const row: YearStats = { year: s.year, perLineage: [] };
@@ -12,7 +12,7 @@ export function recordYearStats(s: SimState): void {
     let pop = 0, adults = 0, bestEra = 0, eraSum = 0, fed = 0, disc = 0;
     let int = 0, coop = 0, str = 0, pInt = 0, pCoop = 0, pStr = 0;
     for (const g of groups) {
-      const n = g.members.length;
+      const n = population(g);
       pop += n;
       bestEra = Math.max(bestEra, g.era);
       eraSum += g.era * n;

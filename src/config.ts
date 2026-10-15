@@ -136,7 +136,16 @@ export const CONFIG = {
       minPeople: 4,              // added in step 4: both halves of a split keep 4+ people incl. a man 16+ and a woman 16–40 (DECISIONS 4.19)
     },
     migrate: { hungerAbove: 60, months: 3, plantAvailBelow: 0.4, farmerHungerAbove: 80, farmerMonths: 12, logMinDistance: 10, distancePenalty: 0.5, sampleStep: 2 },
-    village: { sampleSize: 64, revealsPerExplorer: 0.2, birthIntervalMonths: 44, fertileShare: 25 / 35, traitHazardDivisor: 250 },
+    village: {
+      sampleSize: 64, revealsPerExplorer: 0.2, birthIntervalMonths: 44, fertileShare: 25 / 35, traitHazardDivisor: 250,
+      // Added in step 5 (numbers inside §11.10):
+      bucketYears: [5, 10, 35, 10, 10], // years in buckets 0–4; the 70+ bucket only loses people to death
+      oldestSpanYears: 10,       // a 70+ person rebuilt as an individual gets an age of 70–79 (DECISIONS 5.3)
+      traitHazardMid: 50,        // sample death × (1 + (50 − strength) / 250) × (shortage ? 1 + (coop − 50) / 250 : 1)
+      sampleNoiseShare: 0.5,     // copies of sample members get gaussian × mendelSd × 0.5 noise
+      labourFalloffRounds: 10,   // damped rounds of the support-job falloff when sharing village labour (DECISIONS 5.4)
+      hungryBirthMult: 0.5,      // expected births are halved when H > 60
+    },
     sustainable: { plantShare: 0.1, preyValue: 0.3 },   // plantShare = regenRate × 0.5
     // Added in step 3:
     founderFoodMonths: 2,        // founders arrive carrying this many months of food
@@ -191,6 +200,8 @@ export const CONFIG = {
     warAdversityMonths: 3,
     warMult: { riding: 1.3, copperWorking: 1.2, ironWorking: 1.4 },
     gridCell: 16,
+    // Added in step 5:
+    fightingAgeMax: 59,          // "adults" in war power and battle deaths are 15–59 (DECISIONS 5.9)
   },
 
   events: {
@@ -216,6 +227,7 @@ export const CONFIG = {
     walkSpeedPx: 24, fastWalkMult: 4, walkFrameMs: 250, idleStepMs: 2000, personOffsetPx: 3,
     maxHutsDrawnBand: 12, maxBuildingsDrawn: 30, cityShare: 0.3, maxCityDrawn: 12,
     herdPerSprite: 10, maxHerdDrawn: 12,
+    herdRadiusTiles: 2,          // added in step 5: herd goats wander within 2 tiles of home ("near home", §18.5)
     waterShimmerMs: 500, riverFlowMs: 300,
     fogAlpha: 0.6, rainOverlayAlpha: 0.6, areaHoverAlpha: 0.2,
     idleStepPx: 2,               // §18.6: idle people make a tiny random step of at most this many px

@@ -13,6 +13,9 @@ import { removeEmptyGroups } from './people/groups';
 import { recordYearStats } from './stats';
 import { farmlandIdle } from './people/farming';
 import { yearlyDiscoveries, yearlyResources } from './progress/discoveryRules';
+import { modeSwitches, updateVillage, yearlySample } from './people/village';
+import { breachChecks } from './society/walls';
+import { yearlyContact } from './society/contact';
 
 export function tick(s: SimState): void {
   // 1. Planned events start/end — step 6.
@@ -22,10 +25,16 @@ export function tick(s: SimState): void {
   regenPlants(s, CONFIG.seasonOfMonth[s.month]!);
   // 4. Animals: growth, predation, diffusion.
   updateAnimals(s);
-  // 5. Each group, in ascending id. Villages arrive in step 5.
-  for (const g of s.groups) if (g.mode === Mode.Band) updateBand(s, g);
+  // 5. Each group, in ascending id.
+  for (const g of s.groups) {
+    if (g.mode === Mode.Band) updateBand(s, g);
+    else updateVillage(s, g);
+  }
   removeEmptyGroups(s);
-  // 6–7. Wall breaches and band ↔ village switches — step 5.
+  // 6. Wall breaches.
+  breachChecks(s);
+  // 7. Band ↔ village switches (and the performance guard).
+  modeSwitches(s);
   // 8. Migration and split checks (new groups from splits are checked from next month).
   for (const g of s.groups.slice()) {
     if (!checkMigration(s, g)) checkSplit(s, g);
@@ -49,7 +58,10 @@ function yearly(s: SimState): void {
   yearlyResources(s);
   // 4. Discoveries: forgetting, new rolls (with this year's teaching), era.
   yearlyDiscoveries(s);
-  // 5–6. Contact and village samples — step 5.
+  // 5. Contact: meet, decide, trade, fight, absorb.
+  yearlyContact(s);
+  // 6. Village samples: deaths by trait, births, aging.
+  for (const g of s.groups) if (g.village) yearlySample(s, g);
   // 7. Yearly stats (the log is written as things happen).
   recordYearStats(s);
   // 8. Keyframes are stored by the timeline after the year rolls over (timeline.ts).
