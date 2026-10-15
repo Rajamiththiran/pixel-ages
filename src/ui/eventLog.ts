@@ -10,7 +10,7 @@ export const LOG_GROUPS: ReadonlyArray<readonly [string, readonly LogType[]]> = 
   ['Discoveries & eras', ['discovery', 'lostDiscovery', 'eraUp', 'eraDown', 'ranOut']],
   ['Movement', ['split', 'migrate', 'becameVillage', 'becameBand']],
   ['Contact', ['firstContact', 'tradeStart', 'war', 'conquered', 'absorbed']],
-  ['World', ['breach', 'event']],
+  ['World', ['breach', 'event', 'animalsGone']],
   ['Life', ['groupExtinct', 'lineageExtinct', 'cannotReproduce']],
   ['System', ['perf']],
 ];

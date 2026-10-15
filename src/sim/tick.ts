@@ -6,7 +6,8 @@ import { Mode } from '../shared/ids';
 import type { SimState } from './state';
 import { updateClimate, updateRainNow } from './world/climate';
 import { regenPlants, yearlyPlants } from './world/plants';
-import { updateAnimals } from './world/animals';
+import { updateAnimals, yearlyExtinction } from './world/animals';
+import { updateFish } from './world/fish';
 import { updateBand } from './people/band';
 import { checkMigration, checkSplit } from './people/movement';
 import { removeEmptyGroups } from './people/groups';
@@ -25,8 +26,9 @@ export function tick(s: SimState): void {
   updateRainNow(s);
   // 3. Plants regrow food stock (half as fast in a harsh winter).
   regenPlants(s, CONFIG.seasonOfMonth[s.month]!, harshWinterNow(s) ? CONFIG.events.harshWinterRegenMult : 1);
-  // 4. Animals: growth, predation, diffusion.
+  // 4. Animals: growth, predation, diffusion (seasonal drift, F3); fish (F3).
   updateAnimals(s);
+  updateFish(s);
   // 5. Each group, in ascending id.
   for (const g of s.groups) {
     if (g.mode === Mode.Band) updateBand(s, g);
@@ -53,8 +55,10 @@ export function tick(s: SimState): void {
 function yearly(s: SimState): void {
   // 1. Climate drift.
   updateClimate(s);
-  // 2. Plant growth/death/spread, ground change, idle fields back to grass.
+  // 2. Plant growth/death/spread, ground change, hunted-out animals die out locally (F3),
+  //    soil and salt, idle fields back to grass.
   yearlyPlants(s);
+  yearlyExtinction(s);
   farmlandIdle(s);
   // 3. Resources used up by discoveries.
   yearlyResources(s);

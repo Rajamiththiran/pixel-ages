@@ -1,8 +1,8 @@
 // Groups and lineages: creation, membership, averages and the event log.
 
 import { CONFIG } from '../../config';
-import { Mode } from '../../shared/ids';
-import { DISCOVERY_COUNT } from '../../shared/discoveries';
+import { HAZARD_COUNT, Mode, NEED_COUNT, PRACTICE_COUNT } from '../../shared/ids';
+import { DISCOVERY_COUNT, newMask } from '../../shared/discoveries';
 import type { LogType } from '../../shared/types';
 import type { Group, SimState } from '../state';
 import { freePerson } from './persons';
@@ -15,9 +15,12 @@ export function newGroup(s: SimState, id: number, name: string, lineageId: numbe
     id, name, lineageId, mode: Mode.Band, homeX, homeY, foundedYear: s.year,
     known: new Uint8Array(Math.ceil((s.width * s.height) / 8)), knownCount: 0, knownVersion: 0,
     frontier: [],
-    discoveries: 0, inactive: 0, era: 0, belowLimitYears: new Uint8Array(DISCOVERY_COUNT),
-    foodStock: 0, fedHistory: fed, fedIndex: 0,
-    herd: 0, herders: 0, farmTiles: [], hasHunted: false, huts: 0, houses: 0, buildProgress: 0,
+    discoveries: newMask(), inactive: newMask(), inactiveWhy: new Uint8Array(DISCOVERY_COUNT), era: 0, belowLimitYears: new Uint8Array(DISCOVERY_COUNT),
+    foodStock: 0, fedHistory: fed, fedIndex: 0, wood: 0, metal: 0, built: newMask(), boatYear: 0,
+    herd: 0, herders: 0, farmTiles: [], hasHunted: false,
+    practice: new Float32Array(PRACTICE_COUNT), practiceYear: new Float32Array(PRACTICE_COUNT), idleYears: new Uint16Array(PRACTICE_COUNT),
+    needAcc: new Float32Array(NEED_COUNT), needs: new Float32Array(NEED_COUNT), lessons: new Uint16Array(HAZARD_COUNT),
+    huts: 0, houses: 0, buildProgress: 0,
     hungryMonths: 0, crowdedMonths: 0, wantsSplit: false, wallTarget: null, wallScanKey: '',
     teachBonus: 1, teacherMonths: 0, carers: 0, cannotReproduceLogged: false, village: null, trading: false,
     members: [],

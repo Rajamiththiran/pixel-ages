@@ -3,7 +3,9 @@
 
 import type { MapData, RunSetup, FounderGroup, PlannedEvent, ClimateDrift } from './types';
 
-export const SAVE_VERSION = 1;
+// Version 2 (F1) adds the Tin and Salt resources; version 1 files are still valid and load as 2.
+export const SAVE_VERSION = 2;
+export const OLDEST_LOADABLE_VERSION = 1;
 export const WRONG_VERSION_MESSAGE = 'This file was made by a different version';
 
 export class SaveError extends Error {}
@@ -70,7 +72,8 @@ function layer(value: unknown, n: number, name: string): Uint8Array {
 function checkVersion(obj: unknown): Record<string, unknown> {
   if (typeof obj !== 'object' || obj === null) throw new SaveError('This is not a Pixel Ages file');
   const rec = obj as Record<string, unknown>;
-  if (rec.version !== SAVE_VERSION) throw new SaveError(WRONG_VERSION_MESSAGE);
+  const v = rec.version;
+  if (typeof v !== 'number' || v < OLDEST_LOADABLE_VERSION || v > SAVE_VERSION) throw new SaveError(WRONG_VERSION_MESSAGE);
   return rec;
 }
 
@@ -85,7 +88,7 @@ export function mapFromJson(obj: unknown): MapData {
   const animals = j.animals;
   if (!Array.isArray(animals) || animals.length !== 4) throw new SaveError('Map animal layers are missing');
   return {
-    version: 1,
+    version: 2,
     width,
     height,
     ground: layer(j.ground, n, 'ground'),
@@ -134,7 +137,7 @@ export function decodeRun(text: string): RunSetup {
   const seed = typeof j.seed === 'number' ? j.seed >>> 0 : 0;
   const drift = DRIFTS.includes(j.climateDrift as ClimateDrift) ? (j.climateDrift as ClimateDrift) : 'off';
   return {
-    version: 1,
+    version: 2,
     name: typeof j.name === 'string' ? j.name : '',
     map,
     founders: j.founders as FounderGroup[],

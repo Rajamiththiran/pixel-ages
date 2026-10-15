@@ -1,7 +1,7 @@
 // Food (§11.5): needs, range signals, gathering, hunting, spoilage, distribution, hunger.
 
 import { CONFIG } from '../../config';
-import { Species } from '../../shared/ids';
+import { Hazard, Species } from '../../shared/ids';
 import { Discovery } from '../../shared/discoveries';
 import { chance } from '../../shared/rng';
 import type { Group, SimState } from '../state';
@@ -10,6 +10,9 @@ import { hasActive, isKnown, passableFor } from './explore';
 import { strengthNow } from './inheritance';
 import { maxStock } from '../world/plants';
 import { harshWinterNow, plagued } from '../events';
+import { fishCatch, gatherCapOf, huntSuccess } from './foodJobs';
+import { learnLesson } from '../progress/discoveryRules';
+import { fishSustainable, fishTiles } from '../world/fish';
 import { forEach8Passable } from '../../shared/grid';
 
 const P = CONFIG.people;
@@ -90,6 +93,15 @@ export function rangeSustainable(s: SimState, range: number[], g: Group): number
   return sy;
 }
 
+/** Sustainable catch of the waters a group with Fishing can reach (F3); 0 without Fishing. */
+export function waterSustainable(s: SimState, g: Group): number {
+  if (!hasActive(g, Discovery.fishing)) return 0;
+  const nets = hasActive(g, Discovery.fishingNets) ? CONFIG.future.fish.netsMult : 1;
+  let sy = 0;
+  for (const i of fishTiles(s, g.homeX, g.homeY, g.known)) sy += fishSustainable(s, i);
+  return sy * nets;
+}
+
 /** A band's monthly food need: the sum of its members' needs. */
 export function bandNeed(s: SimState, g: Group): number {
   let need = 0;
@@ -108,7 +120,8 @@ export function computeSignals(s: SimState, g: Group, range: number[], need = ba
   // Wild food, plus fields (10 farmers × 2 FU each) and last month's tended herd (§11.5).
   g.sustainable = rangeSustainable(s, range, g)
     + g.farmTiles.length * F.farmersPerTile * F.farmerCap
-    + Math.min(g.herd, g.herders * F.herdPerHerder) * F.herdYieldPerAnimal;
+    + Math.min(g.herd, g.herders * F.herdPerHerder) * F.herdYieldPerAnimal
+    + waterSustainable(s, g);
   g.crowding = g.sustainable > 0 ? Math.min(P.crowdingMax, need / g.sustainable) : P.crowdingMax;
   g.hunger = hungerOf(g);
 }
@@ -137,6 +150,7 @@ export function yieldMult(s: SimState, g: Group, slot: number): number {
 export function yieldMultInt(s: SimState, g: Group, int: number): number {
   return (hasActive(g, Discovery.fire) ? F.cookedMult : 1)
     * (hasActive(g, Discovery.copperWorking) ? F.copperMult : 1)
+    * (hasActive(g, Discovery.bronzeWorking) ? CONFIG.future.bronze.foodMult : 1)
     * (1 + (int - 100) / F.intYieldDivisor)
     * (g.trading ? F.tradeMult : 1)
     * (harshWinterNow(s) ? CONFIG.events.harshWinterFoodMult : 1);
@@ -149,7 +163,7 @@ export function yieldMultInt(s: SimState, g: Group, int: number): number {
  * full forest range feed the 30–40 people §10.2 calibrates for. Returns the first tile.
  */
 export function gather(s: SimState, g: Group, slot: number, range: number[]): number {
-  let left = F.gatherCap * yieldMult(s, g, slot) * (hasActive(g, Discovery.stoneTools) ? F.stoneToolsGatherMult : 1);
+  let left = gatherCapOf(g, yieldMult(s, g, slot));
   let first = -1;
   for (let visits = 0; visits < F.gatherMaxTiles && left > 0; visits++) {
     let best = -1;
@@ -179,11 +193,7 @@ export function hunt(s: SimState, g: Group, slot: number, range: number[], avgCo
     if (d > bestD) { bestD = d; best = i; }
   }
   if (best < 0) return range.length > 0 ? range[0]! : g.homeY * s.width + g.homeX;
-  const success = Math.min(F.huntMaxSuccess,
-    F.huntBaseSuccess * (F.huntStrengthBase + strengthNow(s.persons, slot) / 100)
-    * (hasActive(g, Discovery.stoneTools) ? 1 : F.huntNoToolsMult)
-    * (hasActive(g, Discovery.spear) ? F.huntSpearMult : 1)
-    * (1 + avgCoop / F.huntCoopDivisor));
+  const success = huntSuccess(g, strengthNow(s.persons, slot), avgCoop);
   if (chance(s.rng, success)) {
     g.foodStock += F.huntYield * bestD * yieldMult(s, g, slot);
     prey[best] = Math.max(0, bestD - F.huntDepletion);
@@ -192,8 +202,42 @@ export function hunt(s: SimState, g: Group, slot: number, range: number[], avgCo
   return best;
 }
 
-export function spoil(g: Group): void {
-  g.foodStock *= 1 - (hasActive(g, Discovery.pottery) ? F.spoilagePottery : F.spoilage);
+/**
+ * One fisher-month (F3 §9.1): fish the richest water in range (ties → lowest index), taking
+ * 0.01 of its density. `part` < 1 is a village's part-time fisher. Returns the water tile, or
+ * home if there is none.
+ */
+export function fishWork(s: SimState, g: Group, mult: number, waters: readonly number[], part = 1): number {
+  let best = -1;
+  let bestD = 0;
+  for (const i of waters) if (s.fish[i]! > bestD) { bestD = s.fish[i]!; best = i; }
+  if (best < 0) return g.homeY * s.width + g.homeX;
+  g.foodStock += fishCatch(g, bestD, mult) * part;
+  s.fish[best] = Math.max(0, bestD - CONFIG.future.fish.depletion * part);
+  return best;
+}
+
+/**
+ * Monthly food loss (§11.5, F3 §9.6): 10% (6% with Pottery) × 0.8 with Salting. A Granary halves
+ * that for up to 12 months of need. Without Pottery or a Granary, food beyond 6 months of need
+ * also feeds pests: 5% of it a month — and the group learns from it (Pests lesson).
+ */
+export function spoil(s: SimState, g: Group): void {
+  const ST = CONFIG.future.store;
+  const pottery = hasActive(g, Discovery.pottery);
+  const granary = hasActive(g, Discovery.granary);
+  const rate = (pottery ? F.spoilagePottery : F.spoilage) * (hasActive(g, Discovery.salting) ? CONFIG.future.salting.spoilageMult : 1);
+  const stock = g.foodStock;
+  const stored = granary ? Math.min(stock, ST.granaryMonths * g.need) : 0;
+  let loss = stored * rate * ST.granarySpoilMult + (stock - stored) * rate;
+  if (!pottery && !granary) {
+    const pests = Math.max(0, stock - ST.pestAboveMonths * g.need) * ST.pestLoss;
+    if (pests > 0) {
+      loss += pests;
+      learnLesson(s, g, Hazard.Pests);
+    }
+  }
+  g.foodStock = Math.max(0, stock - loss);
 }
 
 /**

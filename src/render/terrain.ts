@@ -27,6 +27,8 @@ const RESOURCE_COLOR: Record<number, RGB> = {
   [Resource.Clay]: RGBS.clay,
   [Resource.Copper]: RGBS.copper,
   [Resource.Iron]: RGBS.iron,
+  [Resource.Tin]: RGBS.tin,
+  [Resource.Salt]: RGBS.salt,
 };
 
 const FARM_SEASON_COLOR: RGB[] = [RGBS.grassLight, RGBS.grass, RGBS.sand, RGBS.wood];

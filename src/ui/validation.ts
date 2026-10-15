@@ -31,6 +31,7 @@ export function validateRun(map: MapData, founders: readonly FounderGroup[], eve
     if (map.ground[i] === Ground.Water || map.wall[i] !== WallType.None) errors.push(`${g.name}'s home is on ${map.wall[i] ? 'a wall' : 'water'}. Move the group.`);
     const men = g.people.filter((p) => p.sex === Sex.Male).length;
     if (men === 0 || men === g.people.length) warnings.push(`${g.name} can't have children.`);
+    else if (g.people.length < CONFIG.ui.smallGroupWarnBelow) warnings.push(`${g.name} has only ${g.people.length} people: groups under ${CONFIG.ui.smallGroupWarnBelow} often die out by chance (real bands were 25–50).`);
     if (!hasFoodNear(map, g)) warnings.push(`${g.name} has no forest, fruit bushes, grass or prey within ${CONFIG.people.range.forage} tiles — it may starve quickly.`);
   }
   const meet = 2 * CONFIG.people.range.forage;

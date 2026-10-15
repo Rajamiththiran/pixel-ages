@@ -24,7 +24,7 @@ const isKin = (s: SimState, a: number, b: number): boolean => {
 
 /**
  * Unpaired women 16+, in id order, each pair with a random unpaired man 16+ who isn't close
- * kin and is at most 20 years older or 5 years younger than her (DECISIONS 3.2).
+ * kin and is at most 25 years older or 5 years younger than her (DECISIONS 3.2, TUNING pass 3).
  */
 export function pairing(s: SimState, g: Group): void {
   const p = s.persons;

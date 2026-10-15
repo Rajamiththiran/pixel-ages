@@ -3,7 +3,7 @@
 
 import { CONFIG } from '../../config';
 import { WallType, WALL_NAMES } from '../../shared/ids';
-import { Discovery } from '../../shared/discoveries';
+import { Discovery, isEmpty, maskKey } from '../../shared/discoveries';
 import type { Group, SimState } from '../state';
 import { findRoot, openCrossing } from '../world/regions';
 import { exploreRange, hasActive, isKnown, rebuildFrontier } from '../people/explore';
@@ -14,7 +14,7 @@ const W = CONFIG.walls;
 /** Pressure P (0–1): hunger, crowding, or a discovery that ran out of its resource. */
 export function pressure(g: Group): number {
   const crowd = Math.min(1, Math.max(0, (g.crowding - W.crowdingPressureStart) * W.crowdingPressureScale));
-  return Math.max(g.hunger / 100, crowd, g.inactive !== 0 ? W.inactivePressure : 0);
+  return Math.max(g.hunger / 100, crowd, !isEmpty(g.inactive) ? W.inactivePressure : 0);
 }
 
 /** Can the group work on this kind of wall: Boat for rivers and seas, Mining for mountains. */
@@ -55,7 +55,7 @@ export function updateWallTarget(s: SimState, g: Group): void {
   // discovery, moves, or a wall somewhere is breached; skip it until then (speed only).
   let breaches = 0;
   for (const seg of s.wallSegments) if (seg.breached) breaches++;
-  const key = `${g.knownVersion}|${g.discoveries}|${g.inactive}|${g.homeX},${g.homeY}|${range}|${breaches}`;
+  const key = `${g.knownVersion}|${maskKey(g.discoveries)}|${maskKey(g.inactive)}|${g.homeX},${g.homeY}|${range}|${breaches}`;
   if (g.wallTarget === null && g.wallScanKey === key) return;
 
   let best = -1;

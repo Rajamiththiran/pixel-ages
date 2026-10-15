@@ -97,7 +97,10 @@ export const CONFIG = {
       spoilage: 0.10, spoilagePottery: 0.06,
       gatherCap: 2.0, stoneToolsGatherMult: 1.2,
       huntBaseSuccess: 0.5, huntNoToolsMult: 0.5, huntSpearMult: 1.5, huntCoopDivisor: 200,
-      huntMaxSuccess: 0.95, huntYield: 3.0, huntDepletion: 0.01,
+      huntMaxSuccess: 0.95, huntDepletion: 0.01,
+      // Tuned in step 7 (TUNING.md pass 3): 3.0 → 5.0. A successful hunt beats a month of gathering, as real
+      // big-game hunting did; with tools and a spear a hunter brings ~2.8 FU, without tools ~0.9.
+      huntYield: 5.0,
       huntStrengthBase: 0.5,     // success = 0.5 × (0.5 + strength/100) × … (§11.5)
       gatherMaxTiles: 4,         // a gatherer visits at most this many tiles a month to fill their cap (DECISIONS 3.1)
       farmerCap: 2.0, farmersPerTile: 10, farmMinRain: 30, irrigationDistance: 2,
@@ -115,10 +118,15 @@ export const CONFIG = {
     reveal: { base: 2, intStart: 60, intStep: 40, min: 1, max: 5 },
     brain: {
       nudge: 10,
-      gatherBase: 15,
-      huntBase: 15, huntNoToolsMult: 0.5, huntSpearMult: 1.3,
-      farmBase: 25, farmHungerWeight: 0.8, farmSeasonBonus: 20,
-      herdBase: 20, herdHungerWeight: 0.5,
+      // Food jobs are scored by the food they would bring (future blueprint F0, DECISIONS 7.1):
+      // score = base + (H + hungerFloor) × expected FU / gatherCap. A full gatherer at H = 0 scores
+      // 15, like v1, so support jobs keep their balance.
+      food: {
+        hungerFloor: 10, gatherBase: 5, huntBase: 5, farmBase: 15, herdBase: 10,
+        herdInvestMonths: 12,    // a caught animal counts as a year of future herd food
+        preyMonthlyShare: 0.2,   // hunters can take up to ~20% of the range's prey food a month without emptying it
+        villageHunterShare: 0.25, // villages estimate a quarter of workers might hunt when sharing prey
+      },
       exploreBase: 10, exploreIntDivisor: 2, exploreCrowdWeight: 40, exploreCrowdStart: 0.9, exploreHungerWeight: 0.5,
       careKidsWeight: 40, careHungerWeight: 0.5,
       buildBase: 25, buildPerFamily: 5,
@@ -135,7 +143,14 @@ export const CONFIG = {
       crowdingAbove: 1.1, months: 12, bandChance: 0.10, villageChance: 0.05, coopBase: 1.2, bandShare: 0.4, villageShare: 0.3, minDistanceR: 2,
       minPeople: 4,              // added in step 4: both halves of a split keep 4+ people incl. a man 16+ and a woman 16–40 (DECISIONS 4.19)
     },
-    migrate: { hungerAbove: 60, months: 3, plantAvailBelow: 0.4, farmerHungerAbove: 80, farmerMonths: 12, logMinDistance: 10, distancePenalty: 0.5, sampleStep: 2 },
+    // Tuned in step 7 (F0): bands move sooner (H > 40 and PA < 0.5 for 2 months; v1: 60, 0.4, 3) and
+    // judge sites by the food there now as well as the long-run yield (DECISIONS 7.2).
+    migrate: {
+      hungerAbove: 40, months: 2, plantAvailBelow: 0.5, farmerHungerAbove: 80, farmerMonths: 12, logMinDistance: 10, distancePenalty: 0.5, sampleStep: 2,
+      nowWeight: 0.5,            // site score = (1 − w) × sustainable yield + w × food there now / campMonths
+      campMonths: 6,             // food on hand counts as feeding the next half year
+      preyFoodValue: 5.0,        // FU per unit of prey density on a tile (= food.huntYield)
+    },
     village: {
       sampleSize: 64, revealsPerExplorer: 0.2, birthIntervalMonths: 44, fertileShare: 25 / 35, traitHazardDivisor: 250,
       // Added in step 5 (numbers inside §11.10):
@@ -152,9 +167,9 @@ export const CONFIG = {
     crowdingMax: 10,             // crowding when the range can sustain nothing at all
     splitNameStart: 2,           // first split of "Desert" is "Desert 2"
     childMonths: 180,            // months of childhood used for cn / ca (§11.4)
-    // Age window for pairing (DECISIONS 3.2): the man may be up to 20 years older or 5 years
+    // Age window for pairing (DECISIONS 3.2): the man may be up to 25 years older or 5 years
     // younger. Without it, older widows pair for life with young men and young women find nobody.
-    pairMaxOlderMan: 20,
+    pairMaxOlderMan: 25,         // tuned in step 7 (TUNING.md pass 3): 20 → 25, so widowers can pair again
     pairMaxOlderWoman: 5,
   },
 
@@ -169,6 +184,84 @@ export const CONFIG = {
     spareFoodFrom: 0.5,          // spareFood = clamp((fed12 − 0.5) × 2, 0, 1)
     spareFoodScale: 2,
     popSqrtDivisor: 5,           // × sqrt(population) / 5
+  },
+
+  // Future updates (pixel-ages-future-blueprint.md §16). Starting values; tuned in F9.
+  future: {
+    // F1 — wood and materials (§7). Real basis: pre-industrial households burned ~1–2 m³ of wood a person a year.
+    wood: {
+      perFullTile: 100,          // wood units in a forest tile at density 255
+      perWorker: 4,              // units one woodcutter cuts a month (= 10 density points)
+      fireWinter: 0.08, fireOther: 0.02, // fuel per person per month with Fire; without it Fire goes inactive
+      hut: 6, house: 4,          // per building (a house also needs houseClay)
+      houseClay: 20,             // clay units per mud-brick house, from known deposits
+      raft: 10, boat: 30, cart: 15, // once per group; without the wood the discovery is inactive
+      boatLifeYears: 30,         // a boat wears out and must be rebuilt
+      kilnPer10: 0.5,            // Pottery: kiln wood per 10 people a year
+      cutBase: 0,                // CutWood score = cutBase + needWeight × shortage (0–1 of the next 12 months' need)
+      needWeight: 40,            // a full shortage beats gathering at low hunger (15), loses to it when hungry
+      fuelUrgentMonths: 2,       // with less fuel than 2 winter months, cutting is scored by the fire's cooking bonus
+    },
+    // Smelting (charcoal): wood per metal unit. Real iron ages stripped whole regions of forest.
+    smelt: {
+      copperWood: 4, bronzeWood: 6, ironWood: 10,
+      metalWearPerYear: 0.1,     // stored metal (tools, weapons) wears out; it covers years with no smelting
+    },
+    bronze: { foodMult: 1.05, warMult: 1.25 }, // Bronze Working: harder tools and weapons than copper
+
+    // F2 — inventions from practice (§8). Real basis: inventions came from people already doing
+    // the related work, under pressure; unused skills were lost (the Tasmanian case).
+    practice: {
+      decayPerYear: 0.02,        // practice fades 2% a year
+      full: 24,                  // practice / (24 × population) = 1 gives the full boost
+      weight: 1.0,               // chance × (1 + 1.0 × practice share): up to ×2
+      needWeight: 1.0,           // chance × (1 + 1.0 × need): up to ×2
+      // Activities without their own job (DECISIONS 9.3): share of workers' months that counts.
+      fireUseShare: 0.25,        // with Fire burning: cooking, heating, firing
+      clayWorkShare: 0.1,        // with Pottery or Mud Brick working
+      metalWorkShare: 0.05,      // with a metal discovery working
+      sailingShare: 0.05,        // with a raft or boat
+      fightingPerBattle: 1,      // each fighting adult in a battle: 1 month of fighting
+    },
+    needs: { warLossFull: 0.1 }, // losing 10% of the group in battles in a year is the full war need
+    lessons: { mult: 3, years: 30 }, // after a hazard, its prevention discoveries ×3 for 30 years (§4.5)
+    diffusion: {
+      contactLearnChance: 0.02,  // neighbours in contact learn each other's discoveries: 2% × int/100 a year
+      unusedForgetYears: 50,     // a discovery whose activity nobody practised for 50 years…
+      unusedForgetChance: 0.05,  // …is forgotten with 5% a year
+    },
+    eraShareNeeded: 0.6,         // an era needs at least 60% of its discoveries (was "all but one")
+    tools: { diggingStickGather: 1.1, bowHunt: 1.3, sickleFarm: 1.1, sailsExplore: 1.5 },
+    salting: { spoilageMult: 0.8 }, // Salt + Salting: food keeps longer
+    animals: { dogsHunt: 1.2 },  // Dogs: hunt success ×1.2 (their herd guarding comes in F6)
+
+    // F3 — food and environment (§9).
+    // Fish: density 0–1 on Water ground and River/Sea walls. Real basis: river and coastal foragers
+    // were often dense and settled (salmon rivers, shell middens).
+    fish: {
+      growth: 0.04,              // logistic growth a month
+      kRiver: 0.8, kLake: 0.6, kSea: 0.5, // capacity by water: River wall, Water ground, Sea wall
+      // FU per catch at density 1 (× yield multiplier). Tuned in F3 (TUNING.md pass 4): 2.0 → 5.0, like
+      // huntYield (pass 3); at 2.0 a shore band living off fish starved even next to a full sea.
+      yield: 5.0,
+      netsMult: 1.5,             // Fishing Nets
+      depletion: 0.01,           // density taken by one fisher-month
+      diffusion: 0.03,           // like land animals: 3% a month to water neighbours
+      fishBase: 5,               // Fish job score base (like hunting)
+    },
+    extinctBelow: 0.01,          // a tile's deer, goats or horses below 1% …
+    extinctYears: 5,             // … for 5 years in a row die out there; only neighbours bring them back
+    migrationBias: 0.5,          // spring: diffusion ×1.5 toward greener tiles, ×0.5 away (autumn: back)
+    soil: {
+      cropDrain: 0.04,           // fertility lost by a farmed field a year
+      fallowGain: 0.10,          // fertility regained by unfarmed land a year
+      manureGain: 0.02,          // fields of a group with a herd
+      siltGain: 0.15,            // flood silt (F5)
+      yieldBase: 0.4,            // farm yield × (0.4 + 0.6 × fertility)
+      rotationMult: 0.4,         // Crop Rotation: cropDrain × 0.4
+    },
+    salt: { rate: 0.01, drainage: 0.02, barrenAbove: 0.8 }, // irrigation without drainage salts the soil (Mesopotamia)
+    store: { granaryMonths: 12, granarySpoilMult: 0.5, pestLoss: 0.05, pestAboveMonths: 6 },
   },
 
   walls: {
@@ -314,5 +407,6 @@ export const CONFIG = {
       intelligence: 100, cooperation: 50, strength: 50,
       maxPeople: 40, nameMaxLength: 20,
     },
+    smallGroupWarnBelow: 10,     // setup warning: smaller founder groups often die out by chance (F0)
   },
 } as const;

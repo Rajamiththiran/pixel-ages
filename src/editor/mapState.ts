@@ -7,7 +7,7 @@ import type { MapData } from '../shared/types';
 export function createMap(width: number = CONFIG.map.width, height: number = CONFIG.map.height): MapData {
   const n = width * height;
   return {
-    version: 1,
+    version: 2,
     width,
     height,
     ground: new Uint8Array(n).fill(CONFIG.editor.newMap.ground),
@@ -23,7 +23,7 @@ export function createMap(width: number = CONFIG.map.width, height: number = CON
 
 export function cloneMap(m: MapData): MapData {
   return {
-    version: 1,
+    version: 2,
     width: m.width,
     height: m.height,
     ground: m.ground.slice(),

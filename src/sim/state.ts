@@ -3,10 +3,13 @@
 import { CONFIG } from '../config';
 import { WallType } from '../shared/ids';
 import type { LogEntry, PlannedEvent, RunSetup, YearStats } from '../shared/types';
+import type { Mask } from '../shared/discoveries';
 import { createRng, type RngState } from '../shared/rng';
 import { computeAreas, computeWallSegments } from './world/regions';
 import { initClimate, updateRainNow } from './world/climate';
 import { initPlantFood } from './world/plants';
+import { initFish } from './world/fish';
+import { initAreaAnimals } from './world/animals';
 import { createPool, type PersonPool } from './people/persons';
 import { createFounders } from './people/founders';
 
@@ -77,17 +80,29 @@ export interface Group {
   knownCount: number;
   knownVersion: number;          // +1 whenever known tiles change (fog updates)
   frontier: number[];            // tile indices, kept sorted ascending
-  discoveries: number;           // bitmask (bit = discovery id)
-  inactive: number;              // bitmask: owned but missing resource
+  discoveries: Mask;             // set of owned discoveries (2 words, F2)
+  inactive: Mask;                // owned but missing a resource or wood
+  inactiveWhy: Uint8Array;       // per discovery: what it lacks while inactive (Lack id)
   era: number;                   // 0–6
   belowLimitYears: Uint8Array;   // per discovery, years under forget limit
   foodStock: number;             // FU
   fedHistory: Float32Array;      // last 12 months of group average fed ratio (ring buffer)
   fedIndex: number;              // next write position in fedHistory
+  wood: number;                  // stored wood units (F1)
+  metal: number;                 // stored smelted metal units: tools and weapons (F1)
+  built: Mask;                   // raft, boat, cart built, by discovery id (F1)
+  boatYear: number;              // year the boat was built; it wears out (F1)
   herd: number;                  // owned herd animals
   herders: number;               // last month's herders (for sustainable yield, §11.5)
   farmTiles: number[];           // tile indices, in the order farmers fill them (best first)
   hasHunted: boolean;
+  // F2 (§8): practice in each activity (worker-months, fading), this year's gain, years with no gain.
+  practice: Float32Array;        // by Practice id
+  practiceYear: Float32Array;    // gained this year
+  idleYears: Uint16Array;        // years in a row with no practice gained
+  needAcc: Float32Array;         // this year's needs, summed month by month (Need id)
+  needs: Float32Array;           // last year's needs, 0–1 (Need id)
+  lessons: Uint16Array;          // by Hazard id: year until which its lesson lasts (0 = none)
   huts: number;
   houses: number;                // mud-brick houses
   buildProgress: number;         // worker-months toward the next building
@@ -142,7 +157,13 @@ export interface SimState {
   dryYears: Uint16Array;         // ground change counters
   wetYears: Uint16Array;
   farmIdleYears: Uint8Array;
-  farmedThisYear: Uint8Array;    // 1 if a farmer worked the tile this year (idle farmland rule, §10.2)
+  farmedThisYear: Uint8Array;    // Farmed flags this year (idle farmland rule §10.2; soil and salt, F3)
+  // F3 (§9): the land remembers how it was used.
+  fish: Float32Array;            // fish density 0–1 on water tiles
+  fertility: Float32Array;       // soil fertility 0–1 (fields wear out, rest restores)
+  salinity: Float32Array;        // salt 0–1 left by irrigation without drainage
+  animalLowYears: Uint8Array;    // [species × tiles]: years in a row below extinctBelow (deer, goats, horses)
+  areaAnimals: Uint8Array;       // [area × 4 + species]: 1 if the species lived in the area last year
   climate: Float32Array;       // cellsX × cellsY drift values
   driftMult: Float32Array;       // per tile, interpolated from `climate` once a year
 
@@ -211,6 +232,11 @@ export function createState(setup: RunSetup): SimState {
     wetYears: new Uint16Array(n),
     farmIdleYears: new Uint8Array(n),
     farmedThisYear: new Uint8Array(n),
+    fish: new Float32Array(n),
+    fertility: new Float32Array(n).fill(1),
+    salinity: new Float32Array(n),
+    animalLowYears: new Uint8Array(4 * n),
+    areaAnimals: new Uint8Array(4 * areas.count),
     climate: new Float32Array(CONFIG.climate.cellsX * CONFIG.climate.cellsY),
     driftMult: new Float32Array(n),
     groups: [],
@@ -228,6 +254,8 @@ export function createState(setup: RunSetup): SimState {
   updateRainNow(s);
   // Plants start full, as if the painted world had been growing for a long time.
   initPlantFood(s);
+  initFish(s);
+  initAreaAnimals(s);
   createFounders(s);
   return s;
 }

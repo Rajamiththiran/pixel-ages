@@ -3,7 +3,7 @@ import type { Sex, Species } from './ids';
 // Shared interfaces (§7.2). SimState and friends (§7.3) arrive in step 2+.
 
 export interface MapData {
-  version: 1;
+  version: 2;                    // 2 since F1 (Tin, Salt); version 1 files still load
   width: number;                 // 160
   height: number;                // 90
   ground: Uint8Array;            // Ground id per tile
@@ -61,7 +61,7 @@ export type LogType =
   | 'discovery' | 'lostDiscovery' | 'eraUp' | 'eraDown' | 'ranOut'
   | 'split' | 'migrate' | 'becameVillage' | 'becameBand'
   | 'firstContact' | 'tradeStart' | 'war' | 'conquered' | 'absorbed'
-  | 'breach' | 'event' | 'groupExtinct' | 'lineageExtinct' | 'cannotReproduce' | 'perf';
+  | 'breach' | 'event' | 'animalsGone' | 'groupExtinct' | 'lineageExtinct' | 'cannotReproduce' | 'perf';
 
 export interface YearStats {
   year: number;
@@ -75,12 +75,12 @@ export interface YearStats {
     coopActual: number; coopPotential: number;
     strActual: number;  strPotential: number;
     fed: number;                 // average fed ratio this year
-    discoveries: number;         // union bitmask across the lineage
+    discoveries: number[];       // union of the lineage's discovery sets (2 words, F2)
   }>;
 }
 
 export interface RunSetup {
-  version: 1;
+  version: 2;                    // 2 since F1 (Tin, Salt); version 1 files still load
   name: string;
   map: MapData;
   founders: FounderGroup[];

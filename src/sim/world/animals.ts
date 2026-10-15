@@ -1,9 +1,12 @@
 // Animals (§10.4): densities 0–1 per tile and species; logistic growth toward habitat
-// capacity, predator–prey, and diffusion to orthogonal neighbours.
+// capacity, predator–prey, and diffusion to orthogonal neighbours. F3 (§9.2–9.3): seasonal
+// drift toward greener land, and local extinction of hunted-out deer, goats and horses.
 
 import { CONFIG } from '../../config';
-import { Ground, Plant, Species, WallType } from '../../shared/ids';
+import { ANIMAL_NAMES, Ground, Plant, Season, Species, WallType } from '../../shared/ids';
 import type { SimState } from '../state';
+import { areaName } from './regions';
+import { logEvent } from '../people/groups';
 
 const A = CONFIG.animals;
 
@@ -32,6 +35,7 @@ const passable = (s: SimState, j: number): boolean =>
 
 // Scratch buffers, reused every tick (sim-local, never part of the state).
 let scratch = new Float32Array(0);
+let capScratch = [new Float32Array(0), new Float32Array(0), new Float32Array(0), new Float32Array(0)];
 let openDirs = new Uint8Array(0);   // bit 0 up, 1 left, 2 right, 3 down: neighbour accepts animals
 let openCount = new Uint8Array(0);
 
@@ -104,25 +108,119 @@ export function updateAnimals(s: SimState): void {
   const w = s.width;
   const share = A.diffusion / 4;
   const alive = [anyPrey, anyPred, anyHerd, anyRide];
+  // F3 (§9.3): in spring grazers drift toward greener tiles (higher capacity), in autumn back.
+  const season = CONFIG.seasonOfMonth[s.month]!;
+  const drift = season === Season.Spring ? 1 : season === Season.Autumn ? -1 : 0;
   for (let sp = 0; sp < 4; sp++) {
     if (!alive[sp]) continue;
     const arr = s.animal[sp]!;
     scratch.set(arr);
-    for (let i = 0; i < n; i++) {
-      const d = scratch[i]!;
-      if (d === 0) continue;
-      const bits = openDirs[i]!;
-      if (bits === 0) continue;
-      const give = d * share;
-      arr[i] = arr[i]! - give * openCount[i]!;
-      if (bits & N_UP) arr[i - w] = arr[i - w]! + give;
-      if (bits & N_LEFT) arr[i - 1] = arr[i - 1]! + give;
-      if (bits & N_RIGHT) arr[i + 1] = arr[i + 1]! + give;
-      if (bits & N_DOWN) arr[i + w] = arr[i + w]! + give;
+    if (drift !== 0 && sp !== Species.Predator) {
+      migrate(s, sp, arr, drift);
+    } else {
+      for (let i = 0; i < n; i++) {
+        const d = scratch[i]!;
+        if (d === 0) continue;
+        const bits = openDirs[i]!;
+        if (bits === 0) continue;
+        const give = d * share;
+        arr[i] = arr[i]! - give * openCount[i]!;
+        if (bits & N_UP) arr[i - w] = arr[i - w]! + give;
+        if (bits & N_LEFT) arr[i - 1] = arr[i - 1]! + give;
+        if (bits & N_RIGHT) arr[i + 1] = arr[i + 1]! + give;
+        if (bits & N_DOWN) arr[i + w] = arr[i + w]! + give;
+      }
     }
     for (let i = 0; i < n; i++) {
       const d = arr[i]!;
       if (d !== 0) arr[i] = d < A.minDensity ? 0 : d > 1 ? 1 : d;
+    }
+  }
+}
+
+/**
+ * Diffusion with a seasonal lean (F3 §9.3): the tile gives the same 3% as always, but each open
+ * neighbour's share is weighted 1 ± 0.5 by whether its capacity is higher or lower (spring:
+ * toward greener tiles; autumn: back). Reads `scratch` (the copy made by the caller).
+ */
+function migrate(s: SimState, sp: number, arr: Float32Array, drift: number): void {
+  const n = arr.length;
+  const w = s.width;
+  if (capScratch[sp]!.length !== n) capScratch[sp] = new Float32Array(n);
+  const K = capScratch[sp]!;
+  for (let i = 0; i < n; i++) K[i] = capacity(s, sp, i);
+  const bias = CONFIG.future.migrationBias;
+  const weight = (from: number, to: number): number => {
+    const dk = K[to]! - K[from]!;
+    return dk === 0 ? 1 : 1 + bias * drift * (dk > 0 ? 1 : -1);
+  };
+  const total = A.diffusion / 4;
+  for (let i = 0; i < n; i++) {
+    const d = scratch[i]!;
+    if (d === 0) continue;
+    const bits = openDirs[i]!;
+    if (bits === 0) continue;
+    const wu = bits & N_UP ? weight(i, i - w) : 0;
+    const wl = bits & N_LEFT ? weight(i, i - 1) : 0;
+    const wr = bits & N_RIGHT ? weight(i, i + 1) : 0;
+    const wd = bits & N_DOWN ? weight(i, i + w) : 0;
+    const sum = wu + wl + wr + wd;
+    // Same total as plain diffusion (3% × open sides / 4), split by the weights.
+    const give = (d * total * openCount[i]!) / sum;
+    arr[i] = arr[i]! - give * sum;
+    if (wu) arr[i - w] = arr[i - w]! + give * wu;
+    if (wl) arr[i - 1] = arr[i - 1]! + give * wl;
+    if (wr) arr[i + 1] = arr[i + 1]! + give * wr;
+    if (wd) arr[i + w] = arr[i + w]! + give * wd;
+  }
+}
+
+/** Species that die out locally when hunted or captured down (F3 §9.2); predators keep their v1 cycles. */
+const EXTINCTION_SPECIES = [Species.Prey, Species.Herd, Species.Riding] as const;
+
+/** Which species live in each painted area at the start. */
+export function initAreaAnimals(s: SimState): void {
+  const n = s.ground.length;
+  for (let i = 0; i < n; i++) {
+    const area = s.originalRegionId[i]!;
+    if (area < 0) continue;
+    for (let sp = 0; sp < 4; sp++) if (s.animal[sp]![i]! > 0) s.areaAnimals[area * 4 + sp] = 1;
+  }
+}
+
+/**
+ * Yearly (F3 §9.2): a tile whose deer, goats or horses stay below 1% for 5 years loses them
+ * (too few to breed); they can only come back from neighbouring tiles. When a species is gone
+ * from a whole painted area, the log says so.
+ */
+export function yearlyExtinction(s: SimState): void {
+  const n = s.ground.length;
+  const below = CONFIG.future.extinctBelow;
+  const years = CONFIG.future.extinctYears;
+  for (const sp of EXTINCTION_SPECIES) {
+    const arr = s.animal[sp]!;
+    const off = sp * n;
+    for (let i = 0; i < n; i++) {
+      const d = arr[i]!;
+      if (d === 0 || d >= below) { s.animalLowYears[off + i] = 0; continue; }
+      const y = s.animalLowYears[off + i]! + 1;
+      if (y >= years) { arr[i] = 0; s.animalLowYears[off + i] = 0; } else s.animalLowYears[off + i] = y;
+    }
+  }
+  const areas = s.areaAnimals.length / 4;
+  const present = new Uint8Array(areas * 4);
+  for (let i = 0; i < n; i++) {
+    const area = s.originalRegionId[i]!;
+    if (area < 0) continue;
+    for (const sp of EXTINCTION_SPECIES) if (s.animal[sp]![i]! > 0) present[area * 4 + sp] = 1;
+  }
+  for (let area = 0; area < areas; area++) {
+    for (const sp of EXTINCTION_SPECIES) {
+      const k = area * 4 + sp;
+      if (s.areaAnimals[k] === 1 && present[k] === 0) {
+        logEvent(s, 'animalsGone', `${ANIMAL_NAMES[sp]} are gone from ${areaName(area)}`);
+      }
+      s.areaAnimals[k] = present[k]!;
     }
   }
 }

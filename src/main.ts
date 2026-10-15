@@ -211,7 +211,7 @@ function loadExample(): void {
 
 function currentRun(): RunSetup {
   return {
-    version: 1,
+    version: 2,
     name: setup.name,
     map: editor.map,
     founders: setup.founders,
@@ -472,7 +472,7 @@ function startRun(): void {
     return;
   }
   const runSetup: RunSetup = {
-    version: 1,
+    version: 2,
     name: setup.name,
     map: cloneMap(editor.map),
     founders: structuredClone(setup.founders),

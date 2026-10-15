@@ -1,13 +1,13 @@
 ﻿// Migration and splitting (§11.8).
 
 import { CONFIG } from '../../config';
-import { Ground, Sex } from '../../shared/ids';
+import { Ground, Sex, Species } from '../../shared/ids';
 import { Discovery } from '../../shared/discoveries';
 import { chance, int } from '../../shared/rng';
 import type { Group, SimState } from '../state';
 import { tilesConnected } from '../world/regions';
 import { hasActive, isKnown, passableFor } from './explore';
-import { homeRange, huntFactor, rangeSustainable, rangeTiles, tileSustainable } from './food';
+import { homeRange, huntFactor, rangeTiles, tileSustainable } from './food';
 import { logEvent, population, traitAverages } from './groups';
 import { partySize, partyViable, shareOfCounts, spawnGroup, takeCounts, takeSlots, type Party } from './transfer';
 
@@ -34,10 +34,13 @@ export function checkMigration(s: SimState, g: Group): boolean {
   g.hungryMonths = hungry ? g.hungryMonths + 1 : 0;
   if (g.hungryMonths < (farmer ? MG.farmerMonths : MG.months)) return false;
 
-  // Best known site within migrate range: sustainable yield there minus 0.5 per tile of distance.
+  // Best known site within migrate range: its long-run yield blended with the food there now
+  // (a stripped range looks as poor as it is, DECISIONS 7.2), minus 0.5 per tile of distance.
   // Sampling every 2nd tile keeps this cheap; staying put is the baseline to beat.
   const range = migrateRange(g);
-  const here = rangeSustainable(s, homeRange(s, g), g);
+  const value = campValue(s, g);
+  let here = 0;
+  for (const i of homeRange(s, g)) here += value(i);
   // Don't settle on another band's range (DECISIONS 3.7): same 2R spacing as a split.
   const minD = SP.minDistanceR * P.range.forage;
   const others = s.groups.filter((o) => o.id !== g.id).map((o) => [o.homeX, o.homeY] as const);
@@ -56,7 +59,7 @@ export function checkMigration(s: SimState, g: Group): boolean {
       sites.push({ i, penalty: MG.distancePenalty * Math.sqrt(d2) });
     }
   }
-  const best = pickSite(s, g, sites, here);
+  const best = pickSite(s, g, sites, here, value);
   g.hungryMonths = 0;
   if (best < 0) return false;
 
@@ -179,6 +182,10 @@ function createSplit(s: SimState, parent: Group, party: Party, site: number, sha
   parent.herd -= g.herd;
   g.foodStock = parent.foodStock * share;
   parent.foodStock -= g.foodStock;
+  g.wood = parent.wood * share;
+  parent.wood -= g.wood;
+  g.metal = parent.metal * share;
+  parent.metal -= g.metal;
   parent.crowdedMonths = 0;
   parent.wantsSplit = false;
   const dist = Math.round(Math.sqrt((g.homeX - parent.homeX) ** 2 + (g.homeY - parent.homeY) ** 2));
@@ -199,30 +206,42 @@ export function bestSite(s: SimState, g: Group, homes: ReadonlyArray<readonly [n
       sites.push({ i, penalty: 0 });
     }
   }
-  return pickSite(s, g, sites, 0);
+  const hf = huntFactor(g);
+  return pickSite(s, g, sites, 0, (i) => tileSustainable(s, i, hf));
+}
+
+/**
+ * What a tile is worth to a band choosing a camp: (1 − w) × its long-run yield + w × the food
+ * on it now spread over the next half year (plants, plus prey at their hunting value).
+ */
+function campValue(s: SimState, g: Group): (i: number) => number {
+  const hf = huntFactor(g);
+  const prey = s.animal[Species.Prey];
+  return (i) => (1 - MG.nowWeight) * tileSustainable(s, i, hf)
+    + (MG.nowWeight * (s.plantFood[i]! + prey[i]! * MG.preyFoodValue * hf)) / MG.campMonths;
 }
 
 /** A candidate home: tile index and the score taken off its range yield (distance). */
 interface Site { i: number; penalty: number }
 
 /**
- * The site with the highest range yield − penalty that beats `floor`; on equal scores the
- * earliest site in the list (the old scan order). Exact, but fast: every site first gets a
- * cheap upper bound — the yield of all known walkable tiles in the square around it, from a
- * summed-area table — and the exact forage-range walk only runs while a site could still win.
+ * The site with the highest range value − penalty that beats `floor`, where a range's value is
+ * the sum of `value(tile)` over it; on equal scores the earliest site in the list (the old scan
+ * order). Exact, but fast: every site first gets a cheap upper bound — the value of all known
+ * walkable tiles in the square around it, from a summed-area table — and the exact
+ * forage-range walk only runs while a site could still win. `value` must never be negative.
  */
-function pickSite(s: SimState, g: Group, sites: Site[], floor: number): number {
+function pickSite(s: SimState, g: Group, sites: Site[], floor: number, value: (i: number) => number): number {
   if (sites.length === 0) return -1;
   const w = s.width;
   const h = s.height;
   const W1 = w + 1;
-  const hf = huntFactor(g);
   const t = new Float64Array(W1 * (h + 1));
   for (let y = 0; y < h; y++) {
     let row = 0;
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
-      if (isKnown(g, i) && passableFor(s, g, i)) row += tileSustainable(s, i, hf);
+      if (isKnown(g, i) && passableFor(s, g, i)) row += value(i);
       t[(y + 1) * W1 + x + 1] = t[y * W1 + x + 1]! + row;
     }
   }
@@ -242,7 +261,9 @@ function pickSite(s: SimState, g: Group, sites: Site[], floor: number): number {
   let bestK = Infinity;
   for (const c of order) {
     if (c.ub + EPS < bestScore) break;
-    const score = rangeSustainable(s, rangeTiles(s, g, c.i % w, Math.floor(c.i / w)), g) - c.penalty;
+    let sum = 0;
+    for (const i of rangeTiles(s, g, c.i % w, Math.floor(c.i / w))) sum += value(i);
+    const score = sum - c.penalty;
     if (score > bestScore || (best >= 0 && score === bestScore && c.k < bestK)) {
       best = c.i;
       bestScore = score;

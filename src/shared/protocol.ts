@@ -50,7 +50,8 @@ export interface Frame {
 
 export interface GroupView {
   id: number; name: string; lineageId: number; colourIndex: number; mode: number;
-  homeX: number; homeY: number; population: number; era: number; discoveries: number;
+  homeX: number; homeY: number; population: number; era: number;
+  discoveries: number[];         // the 2 words of the discovery set (F2); read with has()
   huts: number; houses: number; herd: number; range: number;
   farms: number;                 // added: field count, so buildings are re-laid off new fields
 }
