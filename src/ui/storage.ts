@@ -82,3 +82,14 @@ export function pickTextFile(accept: string): Promise<string | null> {
 /** File-name-safe version of a user-entered name. */
 export const safeFileName = (name: string): string =>
   name.trim().replace(/[^\w\- ]+/g, '').replace(/\s+/g, '-') || 'untitled';
+
+const TUTORIAL_KEY = 'pixelAges.tutorialSeen';
+
+/** True once the first-launch tutorial (§20.8) has been finished or skipped. Blocked storage counts as not seen. */
+export function tutorialSeen(): boolean {
+  try { return localStorage.getItem(TUTORIAL_KEY) === '1'; } catch { return false; }
+}
+
+export function markTutorialSeen(): void {
+  try { localStorage.setItem(TUTORIAL_KEY, '1'); } catch { /* storage blocked: the tutorial just shows again next time */ }
+}

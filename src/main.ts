@@ -32,6 +32,9 @@ import { buildBottomBar, yearLabel } from './ui/runControls';
 import { openPeopleDialog } from './ui/peopleDialog';
 import * as storage from './ui/storage';
 import { RunSession } from './runSession';
+import { openAbout, openTutorial } from './ui/tutorial';
+import { scenarioB } from './presets/scenarios';
+import { h } from './ui/layout';
 
 const TILE = CONFIG.map.tilePx;
 const SETUP_HINT = 'Setup — paint the world and place people, then press ▶ to start';
@@ -183,6 +186,29 @@ function replaceMap(m: MapData): boolean {
   return true;
 }
 
+/** Puts a whole run setup (map, groups, events, seed, drift) into the editor. */
+function applyRun(run: RunSetup): boolean {
+  if (!replaceMap(run.map)) return false;
+  setup.name = run.name || setup.name;
+  setup.founders.splice(0, setup.founders.length, ...run.founders);
+  renumberGroups();
+  setup.events = run.events;
+  setup.seed = run.seed;
+  setup.climateDrift = run.climateDrift;
+  panel.refresh();
+  return true;
+}
+
+/** The example from the tutorial (§20.8): Scenario B, "Smart desert vs rich forest", seed 48213. */
+function loadExample(): void {
+  if (mode === 'run') { showToast(ui.toast, 'Stop the run first (Stop run, top left).'); return; }
+  const busy = setup.founders.length > 0 || editor.canUndo;
+  if (busy && !confirm('Load the example? The current map, groups and events will be replaced.')) return;
+  applyRun(scenarioB());
+  panel.show('Run');
+  showToast(ui.toast, 'Example loaded: press Run ▶, then 8× to watch the two groups.');
+}
+
 function currentRun(): RunSetup {
   return {
     version: 1,
@@ -303,16 +329,7 @@ const panelActions: SetupPanelActions = {
     const text = await storage.pickTextFile('.json,application/json');
     if (text === null) return;
     try {
-      const run = decodeRun(text);
-      if (!replaceMap(run.map)) return;
-      setup.name = run.name || setup.name;
-      setup.founders.splice(0, setup.founders.length, ...run.founders);
-      renumberGroups();
-      setup.events = run.events;
-      setup.seed = run.seed;
-      setup.climateDrift = run.climateDrift;
-      panel.refresh();
-      panel.setStatus(`Run "${setup.name}" imported.`, 'ok');
+      if (applyRun(decodeRun(text))) panel.setStatus(`Run "${setup.name}" imported.`, 'ok');
     } catch (e) {
       panel.setStatus((e as Error).message, 'err');
     }
@@ -797,3 +814,8 @@ window.addEventListener('keydown', (e) => {
 buildSetupToolbar();
 syncView();
 renderer.start();
+
+// About (version, seeds, credits) and the first-launch tutorial (§20.8).
+const showTutorial = (): void => openTutorial(() => storage.markTutorialSeen(), () => { storage.markTutorialSeen(); loadExample(); });
+ui.bottom.append(h('button', { class: 'about-btn', text: 'About', title: 'Version, seeds, credits and the tutorial', onclick: () => openAbout(showTutorial, loadExample) }));
+if (!storage.tutorialSeen()) showTutorial();
