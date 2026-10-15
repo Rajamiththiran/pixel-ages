@@ -17,6 +17,16 @@ export function cloneGroup(g: Group): Group {
     known: g.known.slice(),
     frontier: g.frontier.slice(),
     belowLimitYears: g.belowLimitYears.slice(),
+    inactiveWhy: g.inactiveWhy.slice(),
+    discoveries: g.discoveries.slice(),
+    inactive: g.inactive.slice(),
+    built: g.built.slice(),
+    practice: g.practice.slice(),
+    practiceYear: g.practiceYear.slice(),
+    idleYears: g.idleYears.slice(),
+    needAcc: g.needAcc.slice(),
+    needs: g.needs.slice(),
+    lessons: g.lessons.slice(),
     fedHistory: g.fedHistory.slice(),
     farmTiles: g.farmTiles.slice(),
     wallTarget: g.wallTarget ? { ...g.wallTarget } : null,
@@ -54,6 +64,11 @@ export function cloneState(s: SimState): SimState {
     wetYears: s.wetYears.slice(),
     farmIdleYears: s.farmIdleYears.slice(),
     farmedThisYear: s.farmedThisYear.slice(),
+    fish: s.fish.slice(),
+    fertility: s.fertility.slice(),
+    salinity: s.salinity.slice(),
+    animalLowYears: s.animalLowYears.slice(),
+    areaAnimals: s.areaAnimals.slice(),
     climate: s.climate.slice(),
     driftMult: s.driftMult.slice(),
     groups: s.groups.map(cloneGroup),
@@ -68,15 +83,22 @@ export function cloneState(s: SimState): SimState {
   };
 }
 
+/** A group's typed arrays, in a fixed order (kept out of the JSON part of the hash). */
+const GROUP_ARRAYS = [
+  'known', 'belowLimitYears', 'fedHistory', 'inactiveWhy', 'discoveries', 'inactive', 'built',
+  'practice', 'practiceYear', 'idleYears', 'needAcc', 'needs', 'lessons',
+] as const;
+
 /** Typed arrays that make up the state, in a fixed order. */
 function stateArrays(s: SimState): ArrayBufferView[] {
   const out: ArrayBufferView[] = [
     s.rng, s.ground, s.plantType, s.plantDensity, s.plantFood, s.resourceType, s.resourceAmount,
     s.baseRain, s.rainNow, s.animal[0], s.animal[1], s.animal[2], s.animal[3], s.wall, s.crossing,
     s.regionId, s.regionParent, s.dryYears, s.wetYears, s.farmIdleYears, s.farmedThisYear, s.climate, s.driftMult,
+    s.fish, s.fertility, s.salinity, s.animalLowYears, s.areaAnimals,
   ];
   for (const k of POOL_ARRAYS) out.push(s.persons[k]);
-  for (const g of s.groups) out.push(g.known, g.belowLimitYears, g.fedHistory);
+  for (const g of s.groups) for (const k of GROUP_ARRAYS) out.push(g[k]);
   return out;
 }
 
@@ -99,7 +121,7 @@ export function hashState(s: SimState): string {
     for (let k = 0; k < bytes.length; k++) mix(bytes[k]!);
   }
   const groups = s.groups.map((g) => ({
-    ...g, known: undefined, belowLimitYears: undefined, fedHistory: undefined,
+    ...g, ...Object.fromEntries(GROUP_ARRAYS.map((k) => [k, undefined])),
     village: g.village ? { ...g.village, counts: Array.from(g.village.counts) } : null,
   }));
   const json = JSON.stringify({

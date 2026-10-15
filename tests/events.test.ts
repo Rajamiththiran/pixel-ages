@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMap } from '../src/editor/mapState';
 import { Plant, Species, WallType } from '../src/shared/ids';
-import { Discovery } from '../src/shared/discoveries';
+import { Discovery, maskOf } from '../src/shared/discoveries';
 import type { FounderPerson, PlannedEvent } from '../src/shared/types';
 import { decodeRun, encodeRun } from '../src/shared/save';
 import { createState } from '../src/sim/state';
@@ -63,7 +63,7 @@ describe('planned events (§15)', () => {
     const g = s.groups[0]!;
     // Band of 4, no Taming: 1 + (80/50) × clamp(4/150 → 0.2) = 1.32
     expect(eventDeathMult(s, g)).toBeCloseTo(1 + 1.6 * 0.2);
-    g.discoveries = 1 << Discovery.taming;
+    g.discoveries = maskOf(Discovery.taming);
     expect(eventDeathMult(s, g)).toBeCloseTo(1 + 1.6 * 0.2 * 1.5);
     // The same group as a village of 400 with Taming: 1 + 1.6 × 2 × 1.5 = 5.8
     for (let k = 0; k < 396; k++) g.members.push(g.members[k % 4]!);
@@ -108,7 +108,7 @@ describe('planned events (§15)', () => {
     s.month = 10;
     expect(harshWinterNow(s)).toBe(true);
     expect(eventDeathMult(s, g)).toBeCloseTo(1.5 * 1.2);
-    g.discoveries = (1 << Discovery.fire) | (1 << Discovery.clothing);
+    g.discoveries = maskOf(Discovery.fire, Discovery.clothing);
     expect(eventDeathMult(s, g)).toBe(1);
   });
 

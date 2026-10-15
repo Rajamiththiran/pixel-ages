@@ -186,6 +186,84 @@ export const CONFIG = {
     popSqrtDivisor: 5,           // × sqrt(population) / 5
   },
 
+  // Future updates (pixel-ages-future-blueprint.md §16). Starting values; tuned in F9.
+  future: {
+    // F1 — wood and materials (§7). Real basis: pre-industrial households burned ~1–2 m³ of wood a person a year.
+    wood: {
+      perFullTile: 100,          // wood units in a forest tile at density 255
+      perWorker: 4,              // units one woodcutter cuts a month (= 10 density points)
+      fireWinter: 0.08, fireOther: 0.02, // fuel per person per month with Fire; without it Fire goes inactive
+      hut: 6, house: 4,          // per building (a house also needs houseClay)
+      houseClay: 20,             // clay units per mud-brick house, from known deposits
+      raft: 10, boat: 30, cart: 15, // once per group; without the wood the discovery is inactive
+      boatLifeYears: 30,         // a boat wears out and must be rebuilt
+      kilnPer10: 0.5,            // Pottery: kiln wood per 10 people a year
+      cutBase: 0,                // CutWood score = cutBase + needWeight × shortage (0–1 of the next 12 months' need)
+      needWeight: 40,            // a full shortage beats gathering at low hunger (15), loses to it when hungry
+      fuelUrgentMonths: 2,       // with less fuel than 2 winter months, cutting is scored by the fire's cooking bonus
+    },
+    // Smelting (charcoal): wood per metal unit. Real iron ages stripped whole regions of forest.
+    smelt: {
+      copperWood: 4, bronzeWood: 6, ironWood: 10,
+      metalWearPerYear: 0.1,     // stored metal (tools, weapons) wears out; it covers years with no smelting
+    },
+    bronze: { foodMult: 1.05, warMult: 1.25 }, // Bronze Working: harder tools and weapons than copper
+
+    // F2 — inventions from practice (§8). Real basis: inventions came from people already doing
+    // the related work, under pressure; unused skills were lost (the Tasmanian case).
+    practice: {
+      decayPerYear: 0.02,        // practice fades 2% a year
+      full: 24,                  // practice / (24 × population) = 1 gives the full boost
+      weight: 1.0,               // chance × (1 + 1.0 × practice share): up to ×2
+      needWeight: 1.0,           // chance × (1 + 1.0 × need): up to ×2
+      // Activities without their own job (DECISIONS 9.3): share of workers' months that counts.
+      fireUseShare: 0.25,        // with Fire burning: cooking, heating, firing
+      clayWorkShare: 0.1,        // with Pottery or Mud Brick working
+      metalWorkShare: 0.05,      // with a metal discovery working
+      sailingShare: 0.05,        // with a raft or boat
+      fightingPerBattle: 1,      // each fighting adult in a battle: 1 month of fighting
+    },
+    needs: { warLossFull: 0.1 }, // losing 10% of the group in battles in a year is the full war need
+    lessons: { mult: 3, years: 30 }, // after a hazard, its prevention discoveries ×3 for 30 years (§4.5)
+    diffusion: {
+      contactLearnChance: 0.02,  // neighbours in contact learn each other's discoveries: 2% × int/100 a year
+      unusedForgetYears: 50,     // a discovery whose activity nobody practised for 50 years…
+      unusedForgetChance: 0.05,  // …is forgotten with 5% a year
+    },
+    eraShareNeeded: 0.6,         // an era needs at least 60% of its discoveries (was "all but one")
+    tools: { diggingStickGather: 1.1, bowHunt: 1.3, sickleFarm: 1.1, sailsExplore: 1.5 },
+    salting: { spoilageMult: 0.8 }, // Salt + Salting: food keeps longer
+    animals: { dogsHunt: 1.2 },  // Dogs: hunt success ×1.2 (their herd guarding comes in F6)
+
+    // F3 — food and environment (§9).
+    // Fish: density 0–1 on Water ground and River/Sea walls. Real basis: river and coastal foragers
+    // were often dense and settled (salmon rivers, shell middens).
+    fish: {
+      growth: 0.04,              // logistic growth a month
+      kRiver: 0.8, kLake: 0.6, kSea: 0.5, // capacity by water: River wall, Water ground, Sea wall
+      // FU per catch at density 1 (× yield multiplier). Tuned in F3 (TUNING.md pass 4): 2.0 → 5.0, like
+      // huntYield (pass 3); at 2.0 a shore band living off fish starved even next to a full sea.
+      yield: 5.0,
+      netsMult: 1.5,             // Fishing Nets
+      depletion: 0.01,           // density taken by one fisher-month
+      diffusion: 0.03,           // like land animals: 3% a month to water neighbours
+      fishBase: 5,               // Fish job score base (like hunting)
+    },
+    extinctBelow: 0.01,          // a tile's deer, goats or horses below 1% …
+    extinctYears: 5,             // … for 5 years in a row die out there; only neighbours bring them back
+    migrationBias: 0.5,          // spring: diffusion ×1.5 toward greener tiles, ×0.5 away (autumn: back)
+    soil: {
+      cropDrain: 0.04,           // fertility lost by a farmed field a year
+      fallowGain: 0.10,          // fertility regained by unfarmed land a year
+      manureGain: 0.02,          // fields of a group with a herd
+      siltGain: 0.15,            // flood silt (F5)
+      yieldBase: 0.4,            // farm yield × (0.4 + 0.6 × fertility)
+      rotationMult: 0.4,         // Crop Rotation: cropDrain × 0.4
+    },
+    salt: { rate: 0.01, drainage: 0.02, barrenAbove: 0.8 }, // irrigation without drainage salts the soil (Mesopotamia)
+    store: { granaryMonths: 12, granarySpoilMult: 0.5, pestLoss: 0.05, pestAboveMonths: 6 },
+  },
+
   walls: {
     health: { river: 100, mountain: 200, sea: 300 },
     minPressure: 0.4,

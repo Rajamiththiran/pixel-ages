@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMap } from '../src/editor/mapState';
 import { Ground, Plant, Species } from '../src/shared/ids';
-import { Discovery } from '../src/shared/discoveries';
+import { Discovery, maskOf } from '../src/shared/discoveries';
 import { createState } from '../src/sim/state';
 import { revealAround } from '../src/sim/people/explore';
 import { rangeTiles } from '../src/sim/people/food';
@@ -10,7 +10,7 @@ import {
 } from '../src/sim/people/farming';
 import { at, fourPeople, runOf } from './fixtures';
 
-const bits = (...ids: number[]): number => ids.reduce((m, d) => m | (1 << d), 0);
+const bits = maskOf;
 
 /** Grassland: rain 20 west of x = 50, rain 40 from x = 50; a pond at (44, 40) in the desert-ish west. */
 function farmWorld(): ReturnType<typeof createState> {

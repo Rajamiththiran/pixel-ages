@@ -8,7 +8,7 @@ import { Discovery } from '../../shared/discoveries';
 import { chance, float, gaussian, int, stochasticRound, type RngState } from '../../shared/rng';
 import type { Group, SampleMember, SimState, VillageData } from '../state';
 import { frontierInRange, hasActive, revealAround, revealRadius } from './explore';
-import { computeSignals, homeRange, spoil, yieldMultInt } from './food';
+import { computeSignals, fishWork, homeRange, spoil, yieldMultInt } from './food';
 import { ensureFarmTiles, farmCandidates, fieldYield, growHerd, herdCapacity, herdFoundInRange, herdWork } from './farming';
 import { BUCKETS, BUCKET_START, logEvent, population } from './groups';
 import { allocPerson, freePerson } from './persons';
@@ -16,8 +16,11 @@ import { pairing } from './lifecycle';
 import { actualFromChildhood, inheritTrait } from './inheritance';
 import { pressure, updateWallTarget, wearWall } from '../society/walls';
 import { fed12 } from '../progress/discoveryRules';
-import { expectedFarm, expectedGather, expectedHerd, expectedHunt, foodOutlook, foodScore, gatherCapOf, huntSuccess } from './foodJobs';
+import { fishTiles } from '../world/fish';
+import { expectedFish, expectedFarm, expectedGather, expectedHerd, expectedHunt, foodOutlook, foodScore, gatherCapOf, huntSuccess } from './foodJobs';
 import { eventDeathMult, plagued } from '../events';
+import { monthlyPractice } from './practice';
+import { bestForest, burnFuel, buildingWood, cutWood, cutWoodScore, fuelUrgent, payBuilding, woodNeedYear, woodShortage } from './wood';
 
 const P = CONFIG.people;
 const V = P.village;
@@ -258,7 +261,7 @@ export function modeSwitches(s: SimState): void {
 /** Village labour (§11.10): workers per action, shared ∝ score² with no nudge. */
 export interface Labour { [action: number]: number }
 
-const SUPPORT = [Action.Explore, Action.Care, Action.Build] as const;
+const SUPPORT = [Action.Explore, Action.Care, Action.Build, Action.CutWood] as const;
 
 /**
  * Shares ∝ score². Support jobs get the bands' diminishing returns (DECISIONS 3.5): their
@@ -296,7 +299,6 @@ export function updateVillage(s: SimState, g: Group): void {
   const avg = villageWorkers(g);
   const H = g.hunger;
   const season = CONFIG.seasonOfMonth[s.month]!;
-  const stoneTools = hasActive(g, Discovery.stoneTools);
   const mudBrick = hasActive(g, Discovery.mudBrick);
   const taming = hasActive(g, Discovery.taming);
   const P_ = pressure(g);
@@ -309,19 +311,24 @@ export function updateVillage(s: SimState, g: Group): void {
   const herdOk = taming && (g.herd > 0 || herdFoundInRange(s, range));
   const capacity = taming ? herdCapacity(s, g, range) : 0;
   const frontier = frontierInRange(s, g);
+  // Wood (F1): the year's need for fuel, kilns, smelting, boats and the buildings still wanted.
+  const shortage = woodShortage(g, woodNeedYear(g, pop, deficit * buildingWood(mudBrick)));
 
   // Scores: the band brain's formulas with group averages and no nudge (§11.10).
   const sc = new Map<number, number>();
   // Food jobs scored by expected food per worker (future blueprint F0); the range's plants and
   // prey are shared among everyone who might work them.
   const J = B.food;
-  const o = foodOutlook(s, g, range, cands);
+  const waters = hasActive(g, Discovery.fishing) ? fishTiles(s, g.homeX, g.homeY, g.known) : [];
+  const o = foodOutlook(s, g, range, cands, waters);
   const ymult = yieldMultInt(s, g, avg.int);
   sc.set(Action.Gather, foodScore(J.gatherBase, H, expectedGather(gatherCapOf(g, ymult), o, workers)));
   sc.set(Action.Hunt, foodScore(J.huntBase, H, expectedHunt(huntSuccess(g, avg.str, avg.coop), ymult, o, workers * J.villageHunterShare)));
   if (hasActive(g, Discovery.farming) && season !== Season.Winter && farmSlots > 0) {
     sc.set(Action.Farm, foodScore(J.farmBase, H, expectedFarm(s, g, o, ymult)));
   }
+  // Fish (F3): the catch is shared like prey, among the quarter of workers who might fish.
+  if (waters.length > 0) sc.set(Action.Fish, foodScore(CONFIG.future.fish.fishBase, H, expectedFish(g, ymult, o, workers * J.villageHunterShare)));
   if (herdOk) sc.set(Action.Herd, foodScore(J.herdBase, H, expectedHerd(g, o, capacity, 0, ymult)));
   if (frontier.length > 0) {
     sc.set(Action.Explore, B.exploreBase + (avg.int - 100) / B.exploreIntDivisor
@@ -331,8 +338,11 @@ export function updateVillage(s: SimState, g: Group): void {
     const kidsRatio = children / Math.max(1, adults);
     sc.set(Action.Care, (B.careKidsWeight * kidsRatio + B.careHungerWeight * 100 * (1 - v.fed)) * (avg.coop / 100));
   }
-  if (deficit > 0) sc.set(Action.Build, B.buildBase + B.buildPerFamily * deficit);
+  if (deficit > 0 && g.wood >= buildingWood(mudBrick)) sc.set(Action.Build, B.buildBase + B.buildPerFamily * deficit);
   if (g.wallTarget) sc.set(Action.Wall, B.wallWeight * P_ * (avg.str / 100));
+  if ((shortage > 0 || fuelUrgent(g, pop)) && bestForest(s, range) >= 0) {
+    sc.set(Action.CutWood, cutWoodScore(g, pop, shortage));
+  }
   const L = shareLabour(sc, workers);
   // Farmers and herders beyond what the land and herd can take gather instead (DECISIONS 5.5).
   const farmers = Math.min(L[Action.Farm] ?? 0, farmSlots);
@@ -344,7 +354,7 @@ export function updateVillage(s: SimState, g: Group): void {
   if (gatherers > 0) {
     let stock = 0;
     for (const i of range) stock += s.plantFood[i]!;
-    const want = gatherers * F.gatherCap * mult * (stoneTools ? F.stoneToolsGatherMult : 1);
+    const want = gatherers * gatherCapOf(g, mult);
     const take = Math.min(want, stock);
     if (take > 0) {
       const keep = 1 - take / stock;
@@ -376,6 +386,10 @@ export function updateVillage(s: SimState, g: Group): void {
       }
     }
   }
+  // Fish: each fisher-month on the richest water at that moment (like hunting).
+  const fishers = L[Action.Fish] ?? 0;
+  // A part-time fisher (the last fraction) brings part of a catch and takes part of the fish.
+  for (let left = fishers; left > 1e-9 && waters.length > 0; left -= 1) fishWork(s, g, mult, waters, Math.min(1, left));
   // Farm: 10 farmers per field, best field first.
   if (farmers > 0) {
     ensureFarmTiles(s, g, Math.ceil(farmers), cands);
@@ -408,6 +422,9 @@ export function updateVillage(s: SimState, g: Group): void {
     const tile = options[int(s.rng, options.length)]!;
     revealAround(s, g, tile % s.width, Math.floor(tile / s.width), revealRadius(avg.int));
   }
+  // Woodcutters thin the densest forest in range.
+  const cutters = L[Action.CutWood] ?? 0;
+  if (cutters > 0) cutWood(s, g, range, cutters);
   // Wall work at the average strength.
   wearWall(s, g, avg.str, L[Action.Wall] ?? 0);
   // Build toward the wanted number of buildings.
@@ -416,21 +433,26 @@ export function updateVillage(s: SimState, g: Group): void {
     const months = mudBrick ? P.build.houseMonths : P.build.hutMonths;
     g.buildProgress += builders;
     let missing = deficit;
-    while (missing > 0 && g.buildProgress >= months) {
+    while (missing > 0 && g.buildProgress >= months && payBuilding(s, g, mudBrick)) {
       g.buildProgress -= months;
       if (mudBrick) g.houses += 1; else g.huts += 1;
       missing--;
     }
-    if (missing === 0) g.buildProgress = Math.min(g.buildProgress, months);
+    // Nothing more wanted, or no wood (or clay) for the next one: the work waits.
+    g.buildProgress = Math.min(g.buildProgress, months);
   }
   g.carers = L[Action.Care] ?? 0;
+  // Practice (F2): farmers and herders beyond what the land takes counted as gatherers above.
+  const worked: Record<number, number> = { [Action.Gather]: gatherers, [Action.Farm]: farmers, [Action.Herd]: herders };
+  monthlyPractice(s, g, (a) => worked[a] ?? L[a] ?? 0, adults);
   // Teachers: people 50+ × (share of sample 50+ with intelligence ≥ 90) × 0.3.
   const T = P.teach;
   let old = 0, clever = 0;
   for (const m of v.sample) if (m.ageYears >= T.minAge) { old++; if (m.act[0] >= T.minInt) clever++; }
   g.teacherMonths += inBuckets(v, [3, 4, 5]) * (old > 0 ? clever / old : 0) * T.villageShare;
 
-  spoil(g);
+  burnFuel(s, g, pop);
+  spoil(s, g);
   distributeVillage(s, g);
   villageBirths(s, g);
   villageDeaths(s, g);

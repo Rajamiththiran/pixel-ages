@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { createMap } from '../src/editor/mapState';
 import { Plant, WallType } from '../src/shared/ids';
-import { Discovery } from '../src/shared/discoveries';
+import { Discovery, maskOf } from '../src/shared/discoveries';
 import { createState } from '../src/sim/state';
 import { tilesConnected } from '../src/sim/world/regions';
 import { isKnown } from '../src/sim/people/explore';
 import { breachChecks, pressure, updateWallTarget, wearWall } from '../src/sim/society/walls';
 import { at, fourPeople, runOf } from './fixtures';
 
-const bits = (...ids: number[]): number => ids.reduce((m, d) => m | (1 << d), 0);
+const bits = maskOf;
 
 /** A river wall (2 wide) at x = 60–61 and a mountain wall at x = 30; sea around the edge. One band at (57, 40). */
 function walled(): ReturnType<typeof createState> {

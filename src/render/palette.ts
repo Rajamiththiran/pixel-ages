@@ -22,6 +22,8 @@ export const PALETTE = {
   // accents
   copper: '#d07a2c',
   iron: '#6b3a3a',
+  tin: '#c3c9d1',                // F1: pale silver ore
+  salt: '#f3efe2',               // F1: white salt crust
   fruit: '#b8323a',
   fireOrange: '#e8833a',
   fireYellow: '#f4d35e',

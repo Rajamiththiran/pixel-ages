@@ -300,6 +300,8 @@ Bands without fields may keep **two camps** (summer and winter) and move between
 
 ## 7. Update F1 — Wood and materials
 
+> **Status (15 Oct 2026): built on the owner's request, before v1.0 was published** (DECISIONS 8.1–8.15). Awaiting the owner's approval.
+
 ### 7.1 Wood
 
 - **Source:** forest tiles. A forest tile at density 255 holds `woodPerFullTile` (100) wood units. Cutting one unit lowers density by `255 / woodPerFullTile`.
@@ -335,6 +337,8 @@ Bands without fields may keep **two camps** (summer and winter) and move between
 ---
 
 ## 8. Update F2 — Inventions from practice
+
+> **Status (15 Oct 2026): built on the owner's request** (DECISIONS 9.1–9.11): 40 discoveries, 2-word discovery sets, practice, needs, lessons (plague only until F5), contact diffusion, unused-skill decay, the 60% era rule. Awaiting the owner's approval.
 
 ### 8.1 Practice
 
@@ -378,6 +382,8 @@ Every new discovery gets: needs found, needs discoveries, effect, resource use, 
 ---
 
 ## 9. Update F3 — Food and environment
+
+> **Status (15 Oct 2026): built on the owner's request** (DECISIONS 10.1–10.10): fish and the Fish job, local extinction, seasonal drift, soil fertility, salinity, granaries and pests. Awaiting the owner's approval.
 
 ### 9.1 Fishing (new action, v1 §27 moved into scope)
 

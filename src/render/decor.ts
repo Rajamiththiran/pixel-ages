@@ -3,7 +3,7 @@
 
 import { CONFIG } from '../config';
 import { Ground, Mode, Plant, Species, WallType } from '../shared/ids';
-import { Discovery, has } from '../shared/discoveries';
+import { Discovery, has, maskKey } from '../shared/discoveries';
 import type { MapData } from '../shared/types';
 import { getSprite } from './sprites';
 
@@ -145,7 +145,7 @@ export function paintedDensities(map: MapData): Float32Array[] {
 }
 
 export interface BuildingGroup {
-  id: number; homeX: number; homeY: number; mode: number; discoveries: number;
+  id: number; homeX: number; homeY: number; mode: number; discoveries: ArrayLike<number>;
   huts: number; houses: number; farms: number;
 }
 
@@ -234,7 +234,7 @@ export class BuildingLayer {
 
 export interface LifeGroup {
   id: number; homeX: number; homeY: number; mode: number; population: number; herd: number; colourIndex: number;
-  discoveries: number;
+  discoveries: ArrayLike<number>;
 }
 
 /** Look of a decorative walker; the caller turns it into sprites (people.ts owns person sprites). */
@@ -346,7 +346,7 @@ export class CampLife {
   }
 }
 
-export interface CampGroup { id: number; homeX: number; homeY: number; discoveries: number }
+export interface CampGroup { id: number; homeX: number; homeY: number; discoveries: ArrayLike<number> }
 
 interface CampItem { kind: 'fire' | 'raft' | 'boat' | 'cart'; x: number; y: number }
 
@@ -360,7 +360,7 @@ export class CampLayer {
   private readonly imgs = new Map<string, HTMLCanvasElement>();
 
   update(map: MapData, groups: readonly CampGroup[]): void {
-    const key = groups.map((g) => `${g.id}:${g.homeX},${g.homeY},${g.discoveries}`).join('|');
+    const key = groups.map((g) => `${g.id}:${g.homeX},${g.homeY},${maskKey(g.discoveries)}`).join('|');
     if (key === this.key) return;
     this.key = key;
     this.items = [];

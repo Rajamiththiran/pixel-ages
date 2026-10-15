@@ -3,7 +3,8 @@
 
 import { CONFIG } from '../../config';
 import { Mode } from '../../shared/ids';
-import { Discovery, DISCOVERIES, has } from '../../shared/discoveries';
+import { Discovery, DISCOVERIES, has, sameMask } from '../../shared/discoveries';
+import { battlePractice } from '../people/practice';
 import { chance, float, int, stochasticRound } from '../../shared/rng';
 import type { Group, SimState } from '../state';
 import { tilesConnected } from '../world/regions';
@@ -46,6 +47,7 @@ export function forceOf(s: SimState, g: Group): Force {
   const W = C.warMult;
   const warMult = (hasActive(g, Discovery.riding) ? W.riding : 1)
     * (hasActive(g, Discovery.copperWorking) ? W.copperWorking : 1)
+    * (hasActive(g, Discovery.bronzeWorking) ? CONFIG.future.bronze.warMult : 1)
     * (hasActive(g, Discovery.ironWorking) ? W.ironWorking : 1);
   return { adults, str, power: adults * (C.powerStrBase + str / 100) * warMult };
 }
@@ -130,7 +132,7 @@ function inputsFor(s: SimState, a: Group, b: Group): DecisionInputs {
   return {
     coopA: traitAverages(s, a).coop, coopB: traitAverages(s, b).coop, sameLineage: a.lineageId === b.lineageId,
     pA: pressure(a), pB: pressure(b), hA: a.hunger, hB: b.hunger,
-    powerA: forceOf(s, a).power, powerB: forceOf(s, b).power, discoveriesDiffer: a.discoveries !== b.discoveries,
+    powerA: forceOf(s, a).power, powerB: forceOf(s, b).power, discoveriesDiffer: !sameMask(a.discoveries, b.discoveries),
   };
 }
 
@@ -228,10 +230,14 @@ export function battle(s: SimState, a: Group, b: Group): BattleResult {
   const aWins = effA > effB || (effA === effB && a.id < b.id);
   const [winner, loser, effW, effL, fw, fl] = aWins ? [a, b, effA, effB, fa, fb] : [b, a, effB, effA, fb, fa];
   const share = effW + effL > 0 ? effW / (effW + effL) : 0.5;
+  const popW = population(winner);
+  const popL = population(loser);
   const loserDeaths = killAdults(s, loser, stochasticRound(s.rng, (C.loserLossBase + C.loserLossScale * share) * fl.adults));
   const winnerDeaths = killAdults(s, winner, stochasticRound(s.rng, (C.winnerLossBase + C.winnerLossScale * (1 - share)) * fw.adults));
   warAdversity(s, a);
   warAdversity(s, b);
+  battlePractice(winner, fw.adults, winnerDeaths, popW);
+  battlePractice(loser, fl.adults, loserDeaths, popL);
   logEvent(s, 'war', `${winner.name} beat ${loser.name} (${loser.name} lost ${loserDeaths} people)`, winner, loser);
   const conquered = population(loser) < C.conquerMinPop || effL < C.conquerPowerShare * effW;
   return { winner, loser, effW, effL, share, loserDeaths, winnerDeaths, conquered };
@@ -306,6 +312,14 @@ export function absorb(s: SimState, strong: Group, weak: Group): void {
   addParty(s, strong, party);
   strong.foodStock += weak.foodStock;
   strong.herd += weak.herd;
+  strong.wood += weak.wood;
+  strong.metal += weak.metal;
+  // The newcomers bring their skills and memories of disasters (F2).
+  for (let k = 0; k < strong.practice.length; k++) {
+    strong.practice[k] = strong.practice[k]! + weak.practice[k]!;
+    strong.idleYears[k] = Math.min(strong.idleYears[k]!, weak.idleYears[k]!);
+  }
+  for (let k = 0; k < strong.lessons.length; k++) strong.lessons[k] = Math.max(strong.lessons[k]!, weak.lessons[k]!);
   addKnownTiles(s, strong, knownTiles(s, weak));
   learnFrom(s, strong, weak, 1);
   if (strong.mode === Mode.Band && strong.members.length >= P.groupSize.toVillageAt) toVillage(s, strong);
@@ -372,5 +386,17 @@ export function yearlyContact(s: SimState): void {
     } else if (rel!.kind === 'trade') {
       trade(s, a, b);
     }
+    if (rel!.kind !== 'war') diffuse(s, a, b);
   }
+}
+
+/**
+ * Ideas cross between neighbours in contact (F2 §8.4), trade or not: each learns each of the
+ * other's discoveries with 2% × its intelligence / 100 a year, if it meets the requirements.
+ * Real basis: ideas spread between neighbours through marriage and objects.
+ */
+export function diffuse(s: SimState, a: Group, b: Group): void {
+  const p = CONFIG.future.diffusion.contactLearnChance;
+  learnFrom(s, a, b, (p * traitAverages(s, a).int) / 100);
+  learnFrom(s, b, a, (p * traitAverages(s, b).int) / 100);
 }

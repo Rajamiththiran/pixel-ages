@@ -7,9 +7,20 @@ import { Discovery } from '../../shared/discoveries';
 import type { Group, SimState } from '../state';
 import { rainFactor } from '../world/climate';
 import { hasActive } from './explore';
+import { woodOfDensity } from './wood';
+import { farmToolMult } from './foodJobs';
 import { yieldMult } from './food';
 
 const F = CONFIG.people.food;
+const SO = CONFIG.future.soil;
+const SA = CONFIG.future.salt;
+
+/** Flags in `farmedThisYear` (F3): what kind of farming each tile saw this year. */
+export const Farmed = { Worked: 1, Irrigated: 2, Rotation: 4, Drained: 8 } as const;
+
+/** Soil quality of a field (F3 §9.4–9.5): yield × (0.4 + 0.6 × fertility) × (1 − salinity). */
+export const soilMult = (s: SimState, i: number): number =>
+  (SO.yieldBase + (1 - SO.yieldBase) * s.fertility[i]!) * (1 - s.salinity[i]!);
 
 // Water ground never changes and walls keep their type, so "near water" is fixed for a run.
 const nearWaterCache = new WeakMap<Uint8Array, Uint8Array>();
@@ -43,18 +54,21 @@ function nearWaterScan(s: SimState, i: number): boolean {
 /** Could tile i become a new field: Grassland with rain ≥ 30, or (Irrigation) dry land near water. */
 export function farmableTile(s: SimState, i: number, irrigation: boolean): boolean {
   if (s.wall[i] !== WallType.None || s.plantType[i] === Plant.Farmland) return false;
+  if (s.salinity[i]! > SA.barrenAbove) return false;    // salted land is barren (F3)
   const ground = s.ground[i];
   if (ground === Ground.Grassland && s.rainNow[i]! >= F.farmMinRain) return true;
   return irrigation && (ground === Ground.Grassland || ground === Ground.Desert) && nearWater(s, i);
 }
 
 /**
- * Field order: wettest first; then open land before forest or fruit bushes (clearing them
- * throws away foragers' food); then lowest index (DECISIONS 4.2).
+ * Field order: best rain × soil first (F3: worn-out and salty land last); then open land before
+ * forest or fruit bushes (clearing them throws away foragers' food); then lowest index
+ * (DECISIONS 4.2).
  */
 const plantValue = (s: SimState, i: number): number => CONFIG.plants.maxStock[s.plantType[i]!]! * s.plantDensity[i]!;
+const fieldQuality = (s: SimState, i: number): number => s.rainNow[i]! * soilMult(s, i);
 const fieldOrder = (s: SimState) => (a: number, b: number): number =>
-  s.rainNow[b]! - s.rainNow[a]! || plantValue(s, a) - plantValue(s, b) || a - b;
+  fieldQuality(s, b) - fieldQuality(s, a) || plantValue(s, a) - plantValue(s, b) || a - b;
 
 /** Tiles in the forage range that could become new fields, best first. The camp tile stays open. */
 export function farmCandidates(s: SimState, g: Group, range: number[]): number[] {
@@ -74,6 +88,8 @@ export function ensureFarmTiles(s: SimState, g: Group, farmers: number, candidat
   for (let k = 0; k < candidates.length && g.farmTiles.length < want; k++) {
     const i = candidates[k]!;
     if (s.plantType[i] === Plant.Farmland) continue;
+    // Clearing a forest for a field yields its wood (F1: wood cut is the density lost).
+    if (s.plantType[i] === Plant.Forest) g.wood += woodOfDensity(s.plantDensity[i]!);
     s.plantType[i] = Plant.Farmland;
     s.plantDensity[i] = 255;
     s.plantFood[i] = 0;
@@ -91,19 +107,57 @@ export function farmWork(s: SimState, g: Group, slot: number, k: number): number
   return tile;
 }
 
-/** One farmer-month on field `tile` (§11.5): 2 FU × season × rain (irrigated ≥ 1) × yield × Iron. Marks the field farmed. */
+/**
+ * One farmer-month on field `tile` (§11.5): 2 FU × season × rain (irrigated ≥ 1) × yield × tools
+ * × soil (F3). Marks how the field was farmed this year (soil and salt, F3).
+ */
 export function fieldYield(s: SimState, g: Group, tile: number, mult: number): number {
   const rf = rainFactor(s.rainNow[tile]!);
   const irrigated = hasActive(g, Discovery.irrigation) && nearWater(s, tile);
   const season = CONFIG.seasonOfMonth[s.month]!;
-  s.farmedThisYear[tile] = 1;
+  s.farmedThisYear[tile] = s.farmedThisYear[tile]! | Farmed.Worked
+    | (irrigated && rf < 1 ? Farmed.Irrigated : 0)            // water was actually brought in
+    | (hasActive(g, Discovery.cropRotation) ? Farmed.Rotation : 0)
+    | (hasActive(g, Discovery.drainage) ? Farmed.Drained : 0);
   return F.farmerCap * F.farmSeason[season]! * (irrigated ? Math.max(rf, 1) : rf)
-    * mult * (hasActive(g, Discovery.ironWorking) ? F.ironFarmMult : 1);
+    * mult * farmToolMult(g) * soilMult(s, tile);
+}
+
+/**
+ * Yearly soil and salt (F3 §9.4–9.5), before idle fields are counted:
+ * farmed fields lose fertility (less with Crop Rotation), all other land rests and regains it,
+ * fields of herding groups get manure; irrigation without drainage leaves salt, drainage
+ * washes it out; land above 0.8 salt is barren and abandoned.
+ */
+export function yearlySoil(s: SimState): void {
+  for (const g of s.groups) {
+    if (g.herd < 1) continue;
+    for (const i of g.farmTiles) s.fertility[i] = s.fertility[i]! + SO.manureGain;
+  }
+  for (let i = 0; i < s.fertility.length; i++) {
+    const flags = s.farmedThisYear[i]!;
+    let fert = s.fertility[i]!;
+    if (flags & Farmed.Worked) {
+      fert -= SO.cropDrain * (flags & Farmed.Rotation ? SO.rotationMult : 1);
+      if (flags & Farmed.Drained) s.salinity[i] = Math.max(0, s.salinity[i]! - SA.drainage);
+      else if (flags & Farmed.Irrigated) s.salinity[i] = Math.min(1, s.salinity[i]! + SA.rate);
+    } else {
+      fert += SO.fallowGain;
+    }
+    s.fertility[i] = Math.min(1, Math.max(0, fert));
+    if (s.plantType[i] === Plant.Farmland && s.salinity[i]! > SA.barrenAbove) {
+      s.plantType[i] = Plant.None;
+      s.plantDensity[i] = 0;
+      s.plantFood[i] = 0;
+      s.farmIdleYears[i] = 0;
+    }
+  }
 }
 
 /** Yearly (§10.2): a field nobody farmed for 3 years turns back into grass. Groups drop lost fields. */
 export function farmlandIdle(s: SimState): void {
   const P = CONFIG.plants;
+  yearlySoil(s);
   for (let i = 0; i < s.plantType.length; i++) {
     if (s.plantType[i] !== Plant.Farmland) continue;
     s.farmIdleYears[i] = s.farmedThisYear[i] ? 0 : Math.min(255, s.farmIdleYears[i]! + 1);

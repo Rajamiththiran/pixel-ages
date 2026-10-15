@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CONFIG } from '../src/config';
 import { createMap } from '../src/editor/mapState';
 import { Action, Plant, Species } from '../src/shared/ids';
-import { Discovery } from '../src/shared/discoveries';
+import { Discovery, maskOf } from '../src/shared/discoveries';
 import type { FounderPerson } from '../src/shared/types';
 import { createState } from '../src/sim/state';
 import { tick } from '../src/sim/tick';
@@ -13,7 +13,7 @@ import { revealAround } from '../src/sim/people/explore';
 import { checkMigration } from '../src/sim/people/movement';
 import { at, runOf } from './fixtures';
 
-const bits = (...ids: number[]): number => ids.reduce((m, d) => m | (1 << d), 0);
+const bits = maskOf;
 const adults = (n: number): FounderPerson[] =>
   Array.from({ length: n }, (_, k) => ({ sex: (k % 2) as 0 | 1, age: 25, intelligence: 100, cooperation: 50, strength: 50 }));
 
@@ -37,7 +37,7 @@ describe('food jobs scored by expected food (F0 §6.1)', () => {
   });
 
   it('gatherers share what the range has left; hunters are capped by the prey the range can give', () => {
-    const o: FoodOutlook = { plantFood: 3, prey: 30, bestPrey: 0.6, bestWildHerd: 0, fieldRain: 0 };
+    const o: FoodOutlook = { plantFood: 3, prey: 30, bestPrey: 0.6, bestWildHerd: 0, fieldRain: 0, fish: 0, bestFish: 0 };
     const share = CONFIG.people.brain.food.preyMonthlyShare;
     expect(expectedGather(2, o, 0)).toBe(2);
     expect(expectedGather(2, o, 2)).toBeCloseTo(1);

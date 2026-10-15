@@ -67,3 +67,21 @@ Each pass: what changed, why, and the results before and after.
 - New numbers for the F0 rules: `people.brain.food.*` and `people.migrate.nowWeight / campMonths / preyFoodValue`; migrate thresholds 60 → 40, 0.4 → 0.5, 3 → 2 months.
 
 **What is still open (next passes):** groups that die out are tiny bands without Stone Tools that run out of unrelated partners (F6 marriage between groups would help). Discovery pace and farming-era growth are still far too fast (era 6 by ~year 260–300, population 2,000–7,000 at year 300); see pass 2.
+
+## Pass 4 — F3 (fish), 15 Oct 2026
+
+**Goal (future blueprint §9.7):** "a river or coast group without much land can grow on fish."
+
+**Test world:** a 6-tile strip of grassland between a sea (left) and a mountain range (right), 8 founders on the shore, seeds 1–6, 150 years. Compared with and without Fishing.
+
+| Variant | Without Fishing | With Fishing |
+|---|---|---|
+| Blueprint numbers (yield 2.0), rain 25 | all dead by year 23–57 | all dead by year 20–36 (fishing 3–20% of work) |
+| yield 5.0, rain 25 (+ fish counted in sustainable food, DECISIONS 10.11) | all dead by year 23–57 | **alive in 6/6, 40–223 people, fishing 70–75% of work** |
+| yield 5.0, rain 40 | all dead by year 33–83 | **alive in 6/6, 80–276 people, fishing 32–45% of work** |
+
+**Change:** `future.fish.yield` 2.0 → 5.0 — the same step as `huntYield` in pass 3, for the same reason: at 2.0 a month of fishing a sea (density 0.5) brought 1 FU, half a gatherer's month, and a shore band starved next to a full sea.
+
+**Real basis:** coastal and river foragers were often among the densest and most settled (salmon rivers, shell middens). At 5.0 a sea tile gives at most ~0.6 FU a month for ever, a river tile ~1.6 FU — still less than a field (20 FU).
+
+**Still open (F3 acceptance, for F9):** "deer vanish from heavily hunted areas" is not reached. On a 20 × 20 island with up to ~200 spear hunters for 200 years, deer stayed at 106–122% of their start. Hunters take at most 20% of the range's prey food a month (`people.brain.food.preyMonthlyShare`, pass 3) and switch to other food as deer thin out, and one success takes only 1% of a tile's deer (`people.food.huntDepletion`), while deer regrow 3% a month. Levers: `huntDepletion`, `preyMonthlyShare`, `animals.prey.growth`. Not changed now because they are v1/F0 numbers.

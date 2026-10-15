@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMap } from '../src/editor/mapState';
 import { Plant, Resource, WallType } from '../src/shared/ids';
-import { Discovery, has } from '../src/shared/discoveries';
+import { Discovery, has, maskOf } from '../src/shared/discoveries';
 import type { FounderPerson } from '../src/shared/types';
 import { createState } from '../src/sim/state';
 import { runTicks } from '../src/sim/tick';
@@ -10,7 +10,7 @@ import { population } from '../src/sim/people/groups';
 import { absorb, battle, conquer, contactPairs, decisionScores, forceOf, trade } from '../src/sim/society/contact';
 import { at, runOf, scenarioD } from './fixtures';
 
-const bits = (...ids: number[]): number => ids.reduce((m, d) => m | (1 << d), 0);
+const bits = maskOf;
 
 function adults(n: number, strength = 50, intelligence = 100): FounderPerson[] {
   return Array.from({ length: n }, (_, k) => ({ sex: (k % 2) as 0 | 1, age: 20 + (k % 20), intelligence, cooperation: 50, strength }));

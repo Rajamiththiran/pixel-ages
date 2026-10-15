@@ -34,6 +34,8 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { name: 'Clay', tool: { kind: 'resource', value: Resource.Clay }, swatch: PALETTE.clay },
       { name: 'Copper', tool: { kind: 'resource', value: Resource.Copper }, swatch: PALETTE.copper },
       { name: 'Iron', tool: { kind: 'resource', value: Resource.Iron }, swatch: PALETTE.iron },
+      { name: 'Tin', tool: { kind: 'resource', value: Resource.Tin }, swatch: PALETTE.tin },
+      { name: 'Salt', tool: { kind: 'resource', value: Resource.Salt }, swatch: PALETTE.salt },
       { name: 'Resource eraser', tool: { kind: 'resource', value: Resource.None }, swatch: 'eraser' },
     ],
   },

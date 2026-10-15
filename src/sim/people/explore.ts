@@ -33,7 +33,8 @@ export function exploreRange(g: Group): number {
   const r = CONFIG.people.range;
   const cart = hasActive(g, Discovery.cart);
   const riding = hasActive(g, Discovery.riding);
-  const normal = r.explore * (cart ? r.cartExploreMult : 1) * (riding ? r.ridingExploreMult : 1);
+  const normal = r.explore * (cart ? r.cartExploreMult : 1) * (riding ? r.ridingExploreMult : 1)
+    * (hasActive(g, Discovery.sails) ? CONFIG.future.tools.sailsExplore : 1);
   if (!g.wantsSplit && g.hungryMonths === 0) return normal;
   const far = r.migrate * (cart ? r.cartMigrateMult : 1) * (riding ? r.ridingMigrateMult : 1);
   return Math.max(normal, far);

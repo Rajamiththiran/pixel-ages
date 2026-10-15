@@ -125,8 +125,10 @@ export function spawnGroup(s: SimState, source: Group, party: Party, site: numbe
   g.known.set(source.known);
   g.knownCount = source.knownCount;
   g.frontier = source.frontier.slice();
-  g.discoveries = source.discoveries;
-  g.inactive = source.inactive;
+  g.discoveries.set(source.discoveries);
+  g.inactive.set(source.inactive);
+  g.inactiveWhy.set(source.inactiveWhy);
+  // Rafts, boats and carts stay with the old group (built = 0): the new one builds its own (F1).
   g.era = source.era;
   g.belowLimitYears.set(source.belowLimitYears);
   g.hasHunted = source.hasHunted;
@@ -134,6 +136,16 @@ export function spawnGroup(s: SimState, source: Group, party: Party, site: numbe
   g.fedIndex = source.fedIndex;
   g.teachBonus = source.teachBonus;
   const size = partySize(party);
+  // Practice goes with the people (F2): the party takes its share, so practice per person stays
+  // the same in both groups. The party has already left `source`.
+  const share = size / Math.max(1, size + population(source));
+  for (let k = 0; k < g.practice.length; k++) {
+    g.practice[k] = source.practice[k]! * share;
+    source.practice[k] = source.practice[k]! - g.practice[k]!;
+  }
+  g.idleYears.set(source.idleYears);
+  g.needs.set(source.needs);
+  g.lessons.set(source.lessons);
   if (size >= P.groupSize.toVillageAt && party.slots.length === 0) {
     // A village from a village: keep counts and sample as they are.
     g.mode = Mode.Village;

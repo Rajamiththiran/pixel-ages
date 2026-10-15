@@ -13,6 +13,10 @@ import { Discovery } from '../../shared/discoveries';
 import { aging, births, checkCanReproduce, deaths, pairing, updateHealth } from './lifecycle';
 import { buryDead, traitAverages } from './groups';
 import { pressure, updateWallTarget } from '../society/walls';
+import { ACTION_NAMES } from '../../shared/ids';
+import { bestForest, burnFuel, buildingWood, woodNeedYear, woodShortage } from './wood';
+import { monthlyPractice } from './practice';
+import { fishTiles } from '../world/fish';
 
 const P = CONFIG.people;
 
@@ -27,8 +31,10 @@ export function updateBand(s: SimState, g: Group): void {
   for (const slot of g.members) p.action[slot] = chooseAction(s, g, ctx, slot);
   const { carers, killed } = doActions(s, g, ctx);
   buryDead(s, g, killed);
+  burnFuel(s, g, g.members.length);
+  monthlyPractice(s, g, (a) => ctx.chosen[a] ?? 0, ctx.adults);
 
-  spoil(g);
+  spoil(s, g);
   distribute(s, g, ctx.avgCoop, carers);
   births(s, g);
   buryDead(s, g, deaths(s, g));
@@ -66,21 +72,30 @@ function bandContext(s: SimState, g: Group, range: number[]): BandContext {
   const sheltered = g.huts * P.build.familiesPerHut + g.houses * P.build.familiesPerHouse;
   const farmCands = farmCandidates(s, g, range);
   const taming = hasActive(g, Discovery.taming);
+  // Waters to fish (F3): only worth working out with Fishing.
+  const waters = hasActive(g, Discovery.fishing) ? fishTiles(s, g.homeX, g.homeY, g.known) : [];
+  const families = Math.max(0, countFamilies(s, g) - sheltered);
+  const house = hasActive(g, Discovery.mudBrick);
+  // Wood still needed for shelters: a hut per family, or a mud-brick house per 3 families.
+  const shelterWood = buildingWood(house) * (house ? Math.ceil(families / P.build.familiesPerHouse) : families);
   return {
     farmCandidates: farmCands,
     farmSlots: P.food.farmersPerTile * (g.farmTiles.length + farmCands.length),
     herdOk: taming && (g.herd > 0 || herdFoundInRange(s, range)),
     herdCapacity: taming ? herdCapacity(s, g, range) : 0,
     pressure: pressure(g),
-    outlook: foodOutlook(s, g, range, farmCands),
+    outlook: foodOutlook(s, g, range, farmCands, waters),
+    waters,
     range,
     frontierInRange: frontierInRange(s, g),
     kidsRatio: children / Math.max(1, adults),
     children,
     avgCoop: traitAverages(s, g).coop,
-    familiesWithoutShelter: Math.max(0, countFamilies(s, g) - sheltered),
+    familiesWithoutShelter: families,
     hungriest: 100 * (1 - g.lowestFed),
     adults,
-    chosen: new Int32Array(12),
+    chosen: new Int32Array(ACTION_NAMES.length),
+    woodShortage: woodShortage(g, woodNeedYear(g, g.members.length, shelterWood)),
+    hasForest: bestForest(s, range) >= 0,
   };
 }

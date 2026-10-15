@@ -3,13 +3,15 @@
 import { CONFIG } from '../config';
 import type { YearStats } from '../shared/types';
 import type { SimState } from './state';
+import { newMask, orInto } from '../shared/discoveries';
 import { population, traitAverages } from './people/groups';
 
 export function recordYearStats(s: SimState): void {
   const row: YearStats = { year: s.year, perLineage: [] };
   for (const lin of s.lineages) {
     const groups = s.groups.filter((g) => g.lineageId === lin.id);
-    let pop = 0, adults = 0, bestEra = 0, eraSum = 0, fed = 0, disc = 0;
+    let pop = 0, adults = 0, bestEra = 0, eraSum = 0, fed = 0;
+    const disc = newMask();
     let int = 0, coop = 0, str = 0, pInt = 0, pCoop = 0, pStr = 0;
     for (const g of groups) {
       const n = population(g);
@@ -17,7 +19,7 @@ export function recordYearStats(s: SimState): void {
       bestEra = Math.max(bestEra, g.era);
       eraSum += g.era * n;
       fed += (g.fedYearSum / CONFIG.time.ticksPerYear) * n;
-      disc |= g.discoveries;
+      orInto(disc, g.discoveries);
       const t = traitAverages(s, g);
       adults += t.adults;
       int += t.int * t.adults; coop += t.coop * t.adults; str += t.str * t.adults;
@@ -31,7 +33,7 @@ export function recordYearStats(s: SimState): void {
       intActual: int / a, intPotential: pInt / a,
       coopActual: coop / a, coopPotential: pCoop / a,
       strActual: str / a, strPotential: pStr / a,
-      fed: fed / q, discoveries: disc,
+      fed: fed / q, discoveries: Array.from(disc),
     });
   }
   s.stats.push(row);

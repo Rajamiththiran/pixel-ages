@@ -182,6 +182,10 @@ function createSplit(s: SimState, parent: Group, party: Party, site: number, sha
   parent.herd -= g.herd;
   g.foodStock = parent.foodStock * share;
   parent.foodStock -= g.foodStock;
+  g.wood = parent.wood * share;
+  parent.wood -= g.wood;
+  g.metal = parent.metal * share;
+  parent.metal -= g.metal;
   parent.crowdedMonths = 0;
   parent.wantsSplit = false;
   const dist = Math.round(Math.sqrt((g.homeX - parent.homeX) ** 2 + (g.homeY - parent.homeY) ** 2));

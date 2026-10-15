@@ -9,8 +9,9 @@ import type { Group, SimState } from '../state';
 import { hasActive } from './explore';
 import { strengthNow } from './inheritance';
 import { yieldMult } from './food';
+import { buildingWood, cutWoodScore, fuelUrgent } from './wood';
 import {
-  expectedFarm, expectedGather, expectedHerd, expectedHunt, foodScore, gatherCapOf, huntSuccess, type FoodOutlook,
+  expectedFarm, expectedFish, expectedGather, expectedHerd, expectedHunt, foodScore, gatherCapOf, huntSuccess, type FoodOutlook,
 } from './foodJobs';
 
 const B = CONFIG.people.brain;
@@ -33,6 +34,9 @@ export interface BandContext {
   herdCapacity: number;
   pressure: number;              // P (§13), for wall work
   outlook: FoodOutlook;          // food the range offers this month (food job scores)
+  waters: number[];              // F3: water tiles in range to fish (empty without Fishing)
+  woodShortage: number;          // 0–1 of the next 12 months' wood need not yet in store (F1)
+  hasForest: boolean;            // a forest tile in range to cut (F1)
 }
 
 /** Diminishing returns for support jobs: the more already do it, the less the next one adds. */
@@ -61,7 +65,7 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
   };
 
   // In id order: Gather 1, Hunt 2, Farm 3, Herd 4, Explore 5, Care 6, Build 7, Wall 8,
-  // Rest 9, Teach 10. Elders (60+) only Gather, Care, Rest, Teach.
+  // Rest 9, Teach 10, Fish 12, CutWood 13. Elders (60+) only Gather, Care, Rest, Teach.
   // Food jobs: scored by the food each would bring this month (future blueprint F0).
   const o = ctx.outlook;
   consider(Action.Gather, foodScore(J.gatherBase, H, expectedGather(gatherCapOf(g, mult), o, ctx.chosen[Action.Gather]!)));
@@ -85,7 +89,8 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
     consider(Action.Care, (B.careKidsWeight * ctx.kidsRatio + B.careHungerWeight * ctx.hungriest) * (coop / 100)
       * crowdFactor(ctx, Action.Care));
   }
-  if (!elder && ctx.familiesWithoutShelter > 0) {
+  // Building needs the wood for the next hut or house in store (F1).
+  if (!elder && ctx.familiesWithoutShelter > 0 && g.wood >= buildingWood(hasActive(g, Discovery.mudBrick))) {
     consider(Action.Build, (B.buildBase + B.buildPerFamily * ctx.familiesWithoutShelter) * crowdFactor(ctx, Action.Build));
   }
   if (!elder && g.wallTarget !== null) consider(Action.Wall, B.wallWeight * ctx.pressure * (str / 100));
@@ -95,6 +100,14 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
   if (age >= CONFIG.people.teach.minAge && int >= CONFIG.people.teach.minInt) {
     consider(Action.Teach, (B.teachBase + (int - 100) / B.teachIntDivisor + B.teachKidsWeight * ctx.kidsRatio)
       * crowdFactor(ctx, Action.Teach));
+  }
+  // Fish (F3, needs Fishing): scored by the catch, like hunting.
+  if (!elder && age <= A.hunterMaxAge && ctx.waters.length > 0) {
+    consider(Action.Fish, foodScore(CONFIG.future.fish.fishBase, H, expectedFish(g, mult, o, ctx.chosen[Action.Fish]!)));
+  }
+  // Cut wood (F1): worth more the less of the year's need is in store; a support job, so it falls off as more cut.
+  if (!elder && ctx.hasForest && (ctx.woodShortage > 0 || fuelUrgent(g, g.members.length))) {
+    consider(Action.CutWood, cutWoodScore(g, g.members.length, ctx.woodShortage) * crowdFactor(ctx, Action.CutWood));
   }
   ctx.chosen[best] = ctx.chosen[best]! + 1;
   return best;

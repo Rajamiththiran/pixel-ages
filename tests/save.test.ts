@@ -14,7 +14,7 @@ function busyMap(): MapData {
     m.ground[i] = i % 4;
     m.plantType[i] = (i * 7) % 4;
     m.plantDensity[i] = (i * 13) % 256;
-    m.resourceType[i] = (i * 3) % 5;
+    m.resourceType[i] = (i * 3) % 7;          // includes Tin and Salt (F1)
     m.resourceAmount[i] = (i * 31) % 256;
     m.rain[i] = (i * 17) % 101;
     for (let s = 0; s < 4; s++) m.animals[s]![i] = (i * (s + 5)) % 256;
@@ -24,7 +24,7 @@ function busyMap(): MapData {
 }
 
 function expectSameMap(a: MapData, b: MapData): void {
-  expect(b.version).toBe(1);
+  expect(b.version).toBe(2);
   expect([b.width, b.height]).toEqual([a.width, a.height]);
   expect(b.ground).toEqual(a.ground);
   expect(b.plantType).toEqual(a.plantType);
@@ -70,7 +70,7 @@ describe('save', () => {
 
   it('run round trip keeps map, founders, events, seed and drift', () => {
     const run: RunSetup = {
-      version: 1,
+      version: 2,
       name: 'Smart desert vs rich forest',
       map: busyMap(),
       founders: [{
@@ -92,9 +92,21 @@ describe('save', () => {
     expect(encodeRun(back)).toBe(text);
   });
 
+  it('loads version 1 files (v1.0) as version 2, unchanged (future blueprint §5.5)', () => {
+    const m = busyMap();
+    const j = JSON.parse(encodeMap(m));
+    expect(j.version).toBe(2);
+    j.version = 1;
+    expectSameMap(m, decodeMap(JSON.stringify(j)));
+    const r = JSON.parse(encodeRun({ version: 2, name: 'old', map: m, founders: [], events: [], seed: 7, climateDrift: 'off' }));
+    r.version = 1;
+    r.map.version = 1;
+    expect(decodeRun(JSON.stringify(r)).seed).toBe(7);
+  });
+
   it('rejects unknown versions with the §17.4 message', () => {
     const j = JSON.parse(encodeMap(createMap()));
-    j.version = 2;
+    j.version = 3;
     expect(() => decodeMap(JSON.stringify(j))).toThrow(WRONG_VERSION_MESSAGE);
     expect(() => decodeMap('not json')).toThrow(SaveError);
   });

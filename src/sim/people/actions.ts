@@ -7,10 +7,11 @@ import { chance, int } from '../../shared/rng';
 import type { Group, SimState } from '../state';
 import type { BandContext } from './brain';
 import { frontierInRange, hasActive, revealAround, revealRadius } from './explore';
-import { gather, hunt, yieldMult } from './food';
+import { fishWork, gather, hunt, yieldMult } from './food';
 import { ensureFarmTiles, farmWork, growHerd, herdWork, type HerdMonth } from './farming';
 import { strengthNow } from './inheritance';
 import { wearWall } from '../society/walls';
+import { cutWood, payBuilding } from './wood';
 
 const P = CONFIG.people;
 
@@ -56,17 +57,24 @@ export function doActions(s: SimState, g: Group, ctx: BandContext): ActionResult
       }
       case Action.Care: carers.add(slot); break;
       case Action.Build:
-        // A hut takes 2 worker-months; with Mud Brick a house (3 families) takes 6.
+      {
+        // A hut takes 2 worker-months; with Mud Brick a house (3 families) takes 6. Each needs its
+        // wood (and a house its clay) when it is finished; until then the work waits (F1).
+        const months = mudBrick ? P.build.houseMonths : P.build.hutMonths;
         g.buildProgress += 1;
-        if (mudBrick && g.buildProgress >= P.build.houseMonths) {
-          g.buildProgress -= P.build.houseMonths;
-          g.houses += 1;
-        } else if (!mudBrick && g.buildProgress >= P.build.hutMonths) {
-          g.buildProgress -= P.build.hutMonths;
-          g.huts += 1;
-        }
+        if (g.buildProgress >= months && payBuilding(s, g, mudBrick)) {
+          g.buildProgress -= months;
+          if (mudBrick) g.houses += 1; else g.huts += 1;
+        } else g.buildProgress = Math.min(g.buildProgress, months);
         break;
+      }
       case Action.Teach: teachers++; break;
+      case Action.Fish: tile = fishWork(s, g, yieldMult(s, g, slot), ctx.waters); break;
+      case Action.CutWood: {
+        const cut = cutWood(s, g, ctx.range);
+        if (cut >= 0) tile = cut;
+        break;
+      }
       case Action.Wall:
         if (g.wallTarget) {
           wearWall(s, g, strengthNow(p, slot), 1);
@@ -78,7 +86,8 @@ export function doActions(s: SimState, g: Group, ctx: BandContext): ActionResult
     p.workTile[slot] = tile;
 
     // Predators attack people working out in the land (§11.6).
-    if (action === Action.Gather || action === Action.Hunt || action === Action.Herd || action === Action.Explore) {
+    if (action === Action.Gather || action === Action.Hunt || action === Action.Herd || action === Action.Explore
+      || action === Action.CutWood) {
       const pred = s.animal[Species.Predator][tile]!;
       if (pred > 0) {
         const Pr = P.predators;
