@@ -1,7 +1,7 @@
 // Carrying out this month's actions (§11.6), in person id order, then predator attacks.
 
 import { CONFIG } from '../../config';
-import { Action, Species } from '../../shared/ids';
+import { Action, Plant, Species } from '../../shared/ids';
 import { Discovery } from '../../shared/discoveries';
 import { chance, int } from '../../shared/rng';
 import type { Group, SimState } from '../state';
@@ -12,6 +12,8 @@ import { ensureFarmTiles, farmWork, growHerd, herdWork, type HerdMonth } from '.
 import { strengthNow } from './inheritance';
 import { wearWall } from '../society/walls';
 import { cutWood, payBuilding } from './wood';
+import { burnTile, walk } from '../world/landscape';
+import { herdPredation, maintain, queueBurn } from '../world/hazards';
 
 const P = CONFIG.people;
 
@@ -69,6 +71,13 @@ export function doActions(s: SimState, g: Group, ctx: BandContext): ActionResult
         break;
       }
       case Action.Teach: teachers++; break;
+      case Action.Burn: {
+        const t = ctx.burnTile;
+        if (t >= 0 && s.plantType[t] === Plant.Forest) { burnTile(s, t); queueBurn(s, t, g.id); tile = t; }
+        ctx.burnTile = -1;
+        break;
+      }
+      case Action.Maintain: maintain(g, 1); break;   // F5: upkeep of canals, levees and drains
       case Action.Fish: tile = fishWork(s, g, yieldMult(s, g, slot), ctx.waters); break;
       case Action.CutWood: {
         const cut = cutWood(s, g, ctx.range);
@@ -84,6 +93,7 @@ export function doActions(s: SimState, g: Group, ctx: BandContext): ActionResult
       default: break; // Rest, Child: stay home
     }
     p.workTile[slot] = tile;
+    walk(s, g, tile);                  // F4: daily walks wear paths
 
     // Predators attack people working out in the land (§11.6).
     if (action === Action.Gather || action === Action.Hunt || action === Action.Herd || action === Action.Explore
@@ -110,6 +120,7 @@ export function doActions(s: SimState, g: Group, ctx: BandContext): ActionResult
   g.teacherMonths += teachers;
   g.herders = herders;
   if (hasActive(g, Discovery.taming)) growHerd(g, ctx.herdCapacity);
+  herdPredation(s, g, ctx.range);        // F5: wolves take herd animals
   for (const slot of killed) p.alive[slot] = 0;
   return { carers, killed };
 }

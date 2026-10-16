@@ -13,10 +13,11 @@ import { Discovery } from '../../shared/discoveries';
 import { aging, births, checkCanReproduce, deaths, pairing, updateHealth } from './lifecycle';
 import { buryDead, traitAverages } from './groups';
 import { pressure, updateWallTarget } from '../society/walls';
-import { ACTION_NAMES } from '../../shared/ids';
+import { ACTION_NAMES, Season } from '../../shared/ids';
 import { bestForest, burnFuel, buildingWood, woodNeedYear, woodShortage } from './wood';
 import { monthlyPractice } from './practice';
 import { fishTiles } from '../world/fish';
+import { burnTarget } from '../world/landscape';
 
 const P = CONFIG.people;
 
@@ -86,6 +87,8 @@ function bandContext(s: SimState, g: Group, range: number[]): BandContext {
     pressure: pressure(g),
     outlook: foodOutlook(s, g, range, farmCands, waters),
     waters,
+    // Burning (F4) happens in spring, with Fire Safety, on the forest edge nearest home.
+    burnTile: CONFIG.seasonOfMonth[s.month] === Season.Spring && hasActive(g, Discovery.fireSafety) ? burnTarget(s, g, range) : -1,
     range,
     frontierInRange: frontierInRange(s, g),
     kidsRatio: children / Math.max(1, adults),

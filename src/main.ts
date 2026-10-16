@@ -62,6 +62,7 @@ const editor = new Editor(
     renderer.markTiles(c.tiles);
     if (c.layers.has(Layer.Wall)) regions.schedule();
     if (c.layers.has(Layer.Rain)) renderer.invalidateRain();
+    if (c.layers.has(Layer.Elevation)) renderer.invalidateElevation();
     for (let s = 0; s < 4; s++) if (c.layers.has(Layer.Animal0 + s)) animalsDirty = true;
   },
   () => toolbar?.refresh(),
@@ -72,6 +73,8 @@ const view: SetupView = {
   founders: setup.founders,
   hover: null,
   showRain: false,
+  showElevation: false,
+  showRisk: null,
   showAreas: true,
   brushSize: editor.brushSize,
   hoverArea: -1,
@@ -96,6 +99,7 @@ function flushAnimals(): void {
 function syncView(): void {
   if (mode !== 'setup') return;
   view.showRain = editor.tool.kind === 'rain';
+  view.showElevation = editor.tool.kind === 'elevation';
   view.brushSize = editor.tool.kind === 'people' || editor.fillMode ? null : editor.brushSize;
   ui.canvas.classList.toggle('place', editor.tool.kind === 'people' || movingGroupId !== null);
 }
@@ -211,7 +215,7 @@ function loadExample(): void {
 
 function currentRun(): RunSetup {
   return {
-    version: 2,
+    version: 3,
     name: setup.name,
     map: editor.map,
     founders: setup.founders,
@@ -388,6 +392,10 @@ const territoryOn = (): boolean => runView === 'territory' || runView === 'follo
 function setRunView(m: ViewMode): void {
   runView = m;
   view.showRain = m === 'rain';
+  // F5 risk views: the worker sends the layer each year while one is shown.
+  const risk = m === 'fireRisk' || m === 'floodRisk' ? m : null;
+  view.showRisk = risk;
+  session?.send({ type: 'layer', layer: risk });
   view.showFog = fogOn();
   updateTerritory();
   runToolbar?.refresh(runView, renderer.camera.zoom > 1);
@@ -472,7 +480,7 @@ function startRun(): void {
     return;
   }
   const runSetup: RunSetup = {
-    version: 2,
+    version: 3,
     name: setup.name,
     map: cloneMap(editor.map),
     founders: structuredClone(setup.founders),
@@ -535,9 +543,11 @@ function startRun(): void {
       runPanel?.statsChanged();
     },
     inspect: (result) => runPanel?.setInspect(result),
+    layer: (kind, data) => renderer.setRisk(kind, data),
   });
   renderer.setMap(session.map);
   renderer.setCrossing(session.crossing);
+  renderer.setMarks(session.marks, session.hazards);
   renderer.terrainBudgetMs = CONFIG.render.terrainBudgetMs;
   // During a run, people come from the simulation, not from the setup.
   view.founders = NO_FOUNDERS;
@@ -586,6 +596,7 @@ function stopRun(): void {
   mode = 'setup';
   setBanner(null);
   renderer.setCrossing(null);
+  renderer.setMarks(null);
   renderer.terrainBudgetMs = Infinity;
   renderer.setMap(editor.map);
   view.founders = setup.founders;
@@ -730,6 +741,8 @@ function tileInfo(x: number, y: number): string {
     parts.push(`${RESOURCE_NAMES[m.resourceType[i]!]} ${Math.round((m.resourceAmount[i]! / 255) * 100)}%`);
   }
   parts.push(`Rain ${m.rain[i]}${session ? ' now' : ''}`);
+  // Height never changes during a run, so the painted map always has it.
+  if (editor.map.elevation[i]! > 0) parts.push(`Height ${editor.map.elevation[i]}`);
   for (let s = 0; s < 4; s++) {
     const d = runAnimals ? runAnimals[s]![i]! : m.animals[s]![i]! / 255;
     if (d > 0) parts.push(`${SPECIES_NAMES[s]} ${Math.round(d * 100)}%`);

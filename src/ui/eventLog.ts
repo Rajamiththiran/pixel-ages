@@ -9,8 +9,9 @@ import { h } from './layout';
 export const LOG_GROUPS: ReadonlyArray<readonly [string, readonly LogType[]]> = [
   ['Discoveries & eras', ['discovery', 'lostDiscovery', 'eraUp', 'eraDown', 'ranOut']],
   ['Movement', ['split', 'migrate', 'becameVillage', 'becameBand']],
-  ['Contact', ['firstContact', 'tradeStart', 'war', 'conquered', 'absorbed']],
-  ['World', ['breach', 'event', 'animalsGone']],
+  ['Contact', ['firstContact', 'tradeStart', 'war', 'conquered', 'absorbed', 'raid', 'alliance']],
+  ['Society', ['society']],
+  ['World', ['breach', 'event', 'animalsGone', 'hazard']],
   ['Life', ['groupExtinct', 'lineageExtinct', 'cannotReproduce']],
   ['System', ['perf']],
 ];

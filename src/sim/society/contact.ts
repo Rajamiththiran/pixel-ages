@@ -1,12 +1,14 @@
 // Contact between groups (§14), yearly: groups whose homes are close and connected meet, then
-// coexist, trade, fight or absorb, decided from their pressure, cooperation and power.
+// coexist, trade, fight or absorb, decided from their pressure, cooperation and power. F6 (§12)
+// adds weapons and walls, culture, language, inequality, raids, alliances and intermarriage.
 
 import { CONFIG } from '../../config';
-import { Mode } from '../../shared/ids';
+import { Culture, Mode } from '../../shared/ids';
 import { Discovery, DISCOVERIES, has, sameMask } from '../../shared/discoveries';
 import { battlePractice } from '../people/practice';
+import { addWear, roadBetween } from '../world/landscape';
 import { chance, float, int, stochasticRound } from '../../shared/rng';
-import type { Group, SimState } from '../state';
+import type { Alliance, Group, SimState } from '../state';
 import { tilesConnected } from '../world/regions';
 import { addKnownTiles, hasActive, isKnown } from '../people/explore';
 import { BUCKETS, buryDead, logEvent, population, removeGroups, traitAverages } from '../people/groups';
@@ -17,15 +19,23 @@ import { addParty, partySize, partyViable, takeAll, takeCounts, takeSlots, share
 import { resizeSample, toVillage, villageWorkers } from '../people/village';
 import { canDiscover, foundMask, gainDiscovery, updateEra, wantedFound } from '../progress/discoveryRules';
 import { pressure } from './walls';
+import {
+  blendCulture, craftMult, fortMult, intermarry, learnMult, mixCulture, noteContact, noteWin, outsidersJoined, pairCulture,
+  rollRaid, sameLanguage, understand, weaponMult, workingAnimals,
+} from './society';
 
 const C = CONFIG.contact;
 const P = CONFIG.people;
+const SO = CONFIG.future.society;
 
 // ---------- power ----------
 
 export interface Force { adults: number; str: number; power: number }
 
-/** Fighting adults (15–59), their average strength now, and power = adults × (0.5 + str/100) × warMult (§14.2). */
+/**
+ * Fighting adults (15–59), their average strength now, and power = adults × (0.5 + str/100) ×
+ * riding × the best weapon they can equip × craftspeople's quality (§14.2, F6 §12.1, §12.6).
+ */
 export function forceOf(s: SimState, g: Group): Force {
   let adults = 0;
   let str = 0;
@@ -44,11 +54,7 @@ export function forceOf(s: SimState, g: Group): Force {
     }
     str = adults > 0 ? sum / adults : 0;
   }
-  const W = C.warMult;
-  const warMult = (hasActive(g, Discovery.riding) ? W.riding : 1)
-    * (hasActive(g, Discovery.copperWorking) ? W.copperWorking : 1)
-    * (hasActive(g, Discovery.bronzeWorking) ? CONFIG.future.bronze.warMult : 1)
-    * (hasActive(g, Discovery.ironWorking) ? W.ironWorking : 1);
+  const warMult = (hasActive(g, Discovery.riding) ? C.warMult.riding : 1) * weaponMult(g, adults) * craftMult(g);
   return { adults, str, power: adults * (C.powerStrBase + str / 100) * warMult };
 }
 
@@ -56,10 +62,14 @@ export function forceOf(s: SimState, g: Group): Force {
 
 /**
  * Pairs of groups whose homes are within R_a + R_b (12 tiles) and connected (§14.1), found
- * with a 16-tile grid, sorted by (lower id, higher id).
+ * with a 16-tile grid, sorted by (lower id, higher id). Working animals on either side (F6) and a
+ * road between the homes (F4) each stretch that 1.5×.
  */
 export function contactPairs(s: SimState): Array<[Group, Group]> {
   const maxD = 2 * P.range.forage;
+  const animalMult = CONFIG.future.workAnimals.tradeMult;
+  const roadMult = CONFIG.future.wear.roadTradeMult;
+  const roadD = maxD * roadMult * animalMult;
   const cellOf = (g: Group): [number, number] => [Math.floor(g.homeX / C.gridCell), Math.floor(g.homeY / C.gridCell)];
   const grid = new Map<number, Group[]>();
   const key = (cx: number, cy: number): number => cy * 1024 + cx;
@@ -68,7 +78,7 @@ export function contactPairs(s: SimState): Array<[Group, Group]> {
     const list = grid.get(key(cx, cy));
     if (list) list.push(g); else grid.set(key(cx, cy), [g]);
   }
-  const reach = Math.ceil(maxD / C.gridCell);
+  const reach = Math.ceil(roadD / C.gridCell);
   const pairs: Array<[Group, Group]> = [];
   for (const a of s.groups) {
     const [cx, cy] = cellOf(a);
@@ -77,7 +87,11 @@ export function contactPairs(s: SimState): Array<[Group, Group]> {
         for (const b of grid.get(key(cx + dx, cy + dy)) ?? []) {
           if (b.id <= a.id) continue;
           const d2 = (a.homeX - b.homeX) ** 2 + (a.homeY - b.homeY) ** 2;
-          if (d2 > maxD * maxD) continue;
+          if (d2 > roadD * roadD) continue;
+          if (d2 > maxD * maxD) {
+            const reach = maxD * (workingAnimals(a) || workingAnimals(b) ? animalMult : 1);
+            if (d2 > reach * reach && (d2 > (reach * roadMult) ** 2 || !roadBetween(s, a, b))) continue;
+          }
           if (!tilesConnected(s.regionId, s.regionParent, a.homeY * s.width + a.homeX, b.homeY * s.width + b.homeX)) continue;
           pairs.push([a, b]);
         }
@@ -95,21 +109,35 @@ export interface DecisionInputs {
   coopA: number; coopB: number; sameLineage: boolean;
   pA: number; pB: number; hA: number; hB: number;
   powerA: number; powerB: number; discoveriesDiffer: boolean;
+  // F6 (§12.2–12.5); left out = neutral (the v1 scores).
+  sameLanguage?: boolean;
+  inequality?: number;           // pair average 0–1
+  warlike?: number;              // pair average 0–100
+  openness?: number;             // pair average 0–100
 }
 
-/** The four scores before the random nudge. Absorb is only possible when one side is 3× stronger. */
+/**
+ * The four scores before the random nudge. Absorb is only possible when one side is 3× stronger.
+ * F6: inequality raises war and lowers trade and absorb; warlike and open cultures lean to war
+ * and to trade; groups without a shared language coexist less easily.
+ */
 export function decisionScores(x: DecisionInputs): Record<Choice, number | null> {
   const coopAvg = Math.min(100, (x.coopA + x.coopB) / 2 + (x.sameLineage ? C.sameLineageCoopBonus : 0));
   const pPair = (x.pA + x.pB) / 2;
   const ratio = Math.max(x.powerA, x.powerB) / Math.max(1, Math.min(x.powerA, x.powerB));
   const hWeaker = x.powerA < x.powerB ? x.hA : x.powerB < x.powerA ? x.hB : Math.max(x.hA, x.hB);
+  const ineq = x.inequality ?? 0;
+  const warlike = (x.warlike ?? SO.cultureStart) - SO.cultureStart;
+  const open = (x.openness ?? SO.cultureStart) - SO.cultureStart;
   return {
-    coexist: C.coexistScore,
+    coexist: C.coexistScore + (x.sameLanguage === false ? SO.languageCoexist : 0),
     trade: C.tradeCoopWeight * coopAvg + (x.hA < C.tradeFedBelowH && x.hB < C.tradeFedBelowH ? C.tradeFedBonus : 0)
-      + (x.discoveriesDiffer ? C.tradeDiffBonus : 0),
-    war: C.warPressureWeight * pPair + C.warCoopWeight * (100 - coopAvg) + (ratio >= C.warRatioBonusAt ? C.warRatioBonus : 0),
+      + (x.discoveriesDiffer ? C.tradeDiffBonus : 0) - SO.inequalityTradeWeight * ineq + SO.opennessWeight * open,
+    war: C.warPressureWeight * pPair + C.warCoopWeight * (100 - coopAvg) + (ratio >= C.warRatioBonusAt ? C.warRatioBonus : 0)
+      + SO.inequalityWarWeight * ineq + SO.warlikeWeight * warlike,
     absorb: ratio >= C.absorbRatio
       ? C.absorbBase + C.absorbRatioWeight * Math.min(ratio, C.absorbRatioCap) + C.absorbHungerWeight * hWeaker
+        - SO.inequalityAbsorbWeight * ineq
       : null,
   };
 }
@@ -129,10 +157,14 @@ export function decide(s: SimState, x: DecisionInputs): Choice {
 }
 
 function inputsFor(s: SimState, a: Group, b: Group): DecisionInputs {
+  const lang = sameLanguage(a, b);
   return {
-    coopA: traitAverages(s, a).coop, coopB: traitAverages(s, b).coop, sameLineage: a.lineageId === b.lineageId,
+    // Kin who no longer share a language are strangers (F6 §12.5).
+    coopA: traitAverages(s, a).coop, coopB: traitAverages(s, b).coop, sameLineage: a.lineageId === b.lineageId && lang,
     pA: pressure(a), pB: pressure(b), hA: a.hunger, hB: b.hunger,
     powerA: forceOf(s, a).power, powerB: forceOf(s, b).power, discoveriesDiffer: !sameMask(a.discoveries, b.discoveries),
+    sameLanguage: understand(a, b), inequality: (a.inequality + b.inequality) / 2,
+    warlike: pairCulture(a, b, Culture.warlike), openness: pairCulture(a, b, Culture.openness),
   };
 }
 
@@ -221,26 +253,92 @@ function warAdversity(s: SimState, g: Group): void {
   }
 }
 
-/** One battle (§14.4). Conquest, if it happens, is resolved by the caller. */
-export function battle(s: SimState, a: Group, b: Group): BattleResult {
+/**
+ * The side that attacks: the one under more pressure (ties → the lower id). The other defends
+ * behind its walls (F6, DECISIONS 13.9).
+ */
+export const attackerOf = (a: Group, b: Group): Group => (pressure(b) > pressure(a) ? b : a);
+
+/**
+ * One battle (§14.4). Conquest, if it happens, is resolved by the caller. F6: the defender's
+ * power counts × its walls; allies' power adds to their side and they share its losses.
+ */
+export function battle(s: SimState, a: Group, b: Group, alliesA: Group[] = [], alliesB: Group[] = []): BattleResult {
   const fa = forceOf(s, a);
   const fb = forceOf(s, b);
-  const effA = fa.power * (C.battleBase + C.battleRandom * float(s.rng));
-  const effB = fb.power * (C.battleBase + C.battleRandom * float(s.rng));
+  const help = (gs: Group[]): Array<{ g: Group; f: Force }> => gs.map((g) => ({ g, f: forceOf(s, g) }));
+  const helpA = help(alliesA);
+  const helpB = help(alliesB);
+  const defender = attackerOf(a, b) === a ? b : a;
+  const sideA = (fa.power + helpA.reduce((t, x) => t + x.f.power, 0)) * (defender === a ? fortMult(a) : 1);
+  const sideB = (fb.power + helpB.reduce((t, x) => t + x.f.power, 0)) * (defender === b ? fortMult(b) : 1);
+  const effA = sideA * (C.battleBase + C.battleRandom * float(s.rng));
+  const effB = sideB * (C.battleBase + C.battleRandom * float(s.rng));
   const aWins = effA > effB || (effA === effB && a.id < b.id);
   const [winner, loser, effW, effL, fw, fl] = aWins ? [a, b, effA, effB, fa, fb] : [b, a, effB, effA, fb, fa];
+  const [helpW, helpL] = aWins ? [helpA, helpB] : [helpB, helpA];
   const share = effW + effL > 0 ? effW / (effW + effL) : 0.5;
+  const loseRate = C.loserLossBase + C.loserLossScale * share;
+  const winRate = C.winnerLossBase + C.winnerLossScale * (1 - share);
   const popW = population(winner);
   const popL = population(loser);
-  const loserDeaths = killAdults(s, loser, stochasticRound(s.rng, (C.loserLossBase + C.loserLossScale * share) * fl.adults));
-  const winnerDeaths = killAdults(s, winner, stochasticRound(s.rng, (C.winnerLossBase + C.winnerLossScale * (1 - share)) * fw.adults));
+  const loserDeaths = killAdults(s, loser, stochasticRound(s.rng, loseRate * fl.adults));
+  const winnerDeaths = killAdults(s, winner, stochasticRound(s.rng, winRate * fw.adults));
+  for (const [list, rate] of [[helpL, loseRate], [helpW, winRate]] as const) {
+    for (const { g, f } of list) {
+      const pop = population(g);
+      battlePractice(g, f.adults, killAdults(s, g, stochasticRound(s.rng, rate * f.adults)), pop);
+      warAdversity(s, g);
+      g.underThreat = true;
+    }
+  }
   warAdversity(s, a);
   warAdversity(s, b);
   battlePractice(winner, fw.adults, winnerDeaths, popW);
   battlePractice(loser, fl.adults, loserDeaths, popL);
-  logEvent(s, 'war', `${winner.name} beat ${loser.name} (${loser.name} lost ${loserDeaths} people)`, winner, loser);
+  noteWin(winner);
+  for (const { g } of helpW) noteWin(g);
+  const withAllies = (list: ReadonlyArray<{ g: Group }>): string => (list.length ? ` (with ${list.map((x) => x.g.name).join(', ')})` : '');
+  logEvent(s, 'war', `${winner.name}${withAllies(helpW)} beat ${loser.name}${withAllies(helpL)} (${loser.name} lost ${loserDeaths} people)`, winner, loser);
   const conquered = population(loser) < C.conquerMinPop || effL < C.conquerPowerShare * effW;
   return { winner, loser, effW, effL, share, loserDeaths, winnerDeaths, conquered };
+}
+
+/**
+ * A raid (F6 §12.7): a hungry group strikes a neighbour's store instead of making war. It wins
+ * with power / (power + defender's power × walls); then it takes 20% of the store (and of the
+ * herd, if it can keep animals). Few die: 3% of the losing side's fighters, 1% of the winners'.
+ */
+export function raid(s: SimState, raider: Group, target: Group): boolean {
+  const fr = forceOf(s, raider);
+  const ft = forceOf(s, target);
+  const pr = fr.power;
+  const pt = ft.power * fortMult(target);
+  const success = pr > 0 && float(s.rng) < pr / (pr + pt);
+  const [win, lose, fw, fl] = success ? [raider, target, fr, ft] : [target, raider, ft, fr];
+  const popW = population(win);
+  const popL = population(lose);
+  const lost = killAdults(s, lose, stochasticRound(s.rng, SO.raidLossLose * fl.adults));
+  battlePractice(win, fw.adults, killAdults(s, win, stochasticRound(s.rng, SO.raidLossWin * fw.adults)), popW);
+  battlePractice(lose, fl.adults, lost, popL);
+  noteWin(win);
+  target.underThreat = true;
+  if (!success) {
+    logEvent(s, 'raid', `${target.name} drove off raiders from ${raider.name} (${lost} of them died)`, target, raider);
+    return false;
+  }
+  const food = target.foodStock * SO.raidShare;
+  target.foodStock -= food;
+  raider.foodStock += food;
+  let herd = 0;
+  if (target.herd > 0 && hasActive(raider, Discovery.taming)) {
+    herd = target.herd * SO.raidShare;
+    target.herd -= herd;
+    raider.herd += herd;
+  }
+  const animals = herd >= 1 ? ` and ${Math.floor(herd)} animals` : '';
+  logEvent(s, 'raid', `${raider.name} raided ${target.name} and took ${Math.round(food)} food${animals} (${lost} died)`, raider, target);
+  return true;
 }
 
 /**
@@ -267,6 +365,11 @@ export function conquer(s: SimState, winner: Group, loser: Group): void {
     captives = taken.length;
     addParty(s, winner, takeSlots(loser, taken));
   }
+  // Captives bring their ways and their blood (F6).
+  if (captives > 0) {
+    mixCulture(winner, loser, captives / Math.max(1, population(winner)));
+    outsidersJoined(winner);
+  }
   // 2. Refugees.
   const rest = takeAll(loser);
   if (partyViable(s, rest)) {
@@ -291,8 +394,12 @@ export function conquer(s: SimState, winner: Group, loser: Group): void {
 
 /** A trading year (§14.5): each side may learn the other's discoveries and maps; both eat a little better. */
 export function trade(s: SimState, a: Group, b: Group): void {
+  // Traders wear the route between the homes (F4): a path, a road once someone has the Wheel.
+  addWear(s, a.homeX, a.homeY, b.homeX, b.homeY, CONFIG.future.wear.tradePerYear,
+    hasActive(a, Discovery.wheel) || hasActive(b, Discovery.wheel));
   for (const [x, y] of [[a, b], [b, a]] as const) {
-    learnFrom(s, x, y, (C.tradeLearnChance * traitAverages(s, x).int) / 100);
+    // F6: open cultures learn more; a foreign language halves it.
+    learnFrom(s, x, y, ((C.tradeLearnChance * traitAverages(s, x).int) / 100) * learnMult(x, y));
     const home = x.homeY * s.width + x.homeX;
     const share: number[] = [];
     for (const i of knownTiles(s, y)) {
@@ -310,6 +417,8 @@ export function absorb(s: SimState, strong: Group, weak: Group): void {
   const party = takeAll(weak);
   const n = partySize(party);
   addParty(s, strong, party);
+  mixCulture(strong, weak, n / Math.max(1, population(strong)));   // F6: the newcomers' ways mix in
+  if (n > 0) outsidersJoined(strong);
   strong.foodStock += weak.foodStock;
   strong.herd += weak.herd;
   strong.wood += weak.wood;
@@ -331,16 +440,78 @@ export function absorb(s: SimState, strong: Group, weak: Group): void {
 
 const pairKey = (x: number, y: number): number => Math.min(x, y) * 65536 + Math.max(x, y);
 
+/**
+ * Alliances (F6 §12.7), recomputed each year before the battles: two groups at peace (coexist or
+ * trade) that are both in contact with a third at least 2× stronger than either of them stand
+ * together against it. New alliances are logged; ones whose threat is gone end quietly.
+ */
+export function updateAlliances(s: SimState, pairs: ReadonlyArray<readonly [Group, Group]>): void {
+  const near = new Map<number, Set<number>>();
+  const link = (x: number, y: number): void => {
+    const set = near.get(x);
+    if (set) set.add(y); else near.set(x, new Set([y]));
+  };
+  for (const [a, b] of pairs) { link(a.id, b.id); link(b.id, a.id); }
+  const power = new Map<number, number>();
+  const powerOf = (id: number): number => {
+    let v = power.get(id);
+    if (v === undefined) {
+      const g = s.groups.find((o) => o.id === id);
+      v = g ? forceOf(s, g).power : 0;
+      power.set(id, v);
+    }
+    return v;
+  };
+  const next: Alliance[] = [];
+  for (const r of s.relations) {
+    if (r.kind === 'war') continue;
+    const na = near.get(r.a);
+    const nb = near.get(r.b);
+    if (!na || !nb) continue;
+    const strongest = Math.max(powerOf(r.a), powerOf(r.b));
+    for (const c of [...na].sort((x, y) => x - y)) {
+      if (c === r.b || !nb.has(c)) continue;
+      if (strongest <= 0 || powerOf(c) < SO.allianceRatio * strongest) continue;
+      const old = s.alliances.find((x) => x.a === r.a && x.b === r.b && x.against === c);
+      next.push({ a: r.a, b: r.b, against: c, sinceYear: old?.sinceYear ?? s.year });
+      if (!old) {
+        const [ga, gb, gc] = [r.a, r.b, c].map((id) => s.groups.find((o) => o.id === id)!);
+        logEvent(s, 'alliance', `${ga!.name} and ${gb!.name} allied against ${gc!.name}`, ga!, gb!);
+      }
+    }
+  }
+  s.alliances = next.sort((x, y) => x.a - y.a || x.b - y.b || x.against - y.against);
+}
+
+/** Groups allied with `g` against `enemy` this year that are still on the map. */
+function alliesOf(s: SimState, g: Group, enemy: Group, gone: ReadonlySet<number>): Group[] {
+  const out: Group[] = [];
+  for (const al of s.alliances) {
+    if (al.against !== enemy.id || (al.a !== g.id && al.b !== g.id)) continue;
+    const id = al.a === g.id ? al.b : al.a;
+    if (gone.has(id) || id === enemy.id) continue;
+    const ally = s.groups.find((o) => o.id === id);
+    if (ally && population(ally) > 0 && !out.includes(ally)) out.push(ally);
+  }
+  return out;
+}
+
 /** Yearly step 5 (§5.1): detect contacts, decide or continue relations, resolve them. */
 export function yearlyContact(s: SimState): void {
-  for (const g of s.groups) g.trading = false;
+  for (const g of s.groups) {
+    g.trading = false;
+    g.underThreat = false;
+    g.isolationYears += 1;         // F6: until outsiders join again
+  }
   const pairs = contactPairs(s);
   const inContact = new Set(pairs.map(([a, b]) => a.id * 65536 + b.id));
   s.relations = s.relations.filter((r) => inContact.has(r.a * 65536 + r.b));
+  updateAlliances(s, pairs);
   const gone = new Set<number>();
 
   for (const [a, b] of pairs) {
     if (gone.has(a.id) || gone.has(b.id)) continue;
+    noteContact(s, a, b);          // F6: speakers of one language who meet keep it one language
     if (a.lineageId !== b.lineageId) {
       const k = pairKey(a.lineageId, b.lineageId);
       if (!s.lineagesMet.includes(k)) {
@@ -378,15 +549,32 @@ export function yearlyContact(s: SimState): void {
       rel.pb = pb;
     }
     if (rel!.kind === 'war') {
-      const r = battle(s, a, b);
+      a.underThreat = true;
+      b.underThreat = true;
+      // A hungry attacker may raid the enemy's stores this year instead of a full battle (F6 §12.7).
+      const attacker = attackerOf(a, b);
+      if (attacker.hungerPeak > SO.raidHunger && rollRaid(s, attacker)) {
+        raid(s, attacker, attacker === a ? b : a);
+        continue;
+      }
+      const r = battle(s, a, b, alliesOf(s, a, b, gone), alliesOf(s, b, a, gone));
       if (r.conquered) {
         conquer(s, r.winner, r.loser);
         gone.add(r.loser.id);
       }
-    } else if (rel!.kind === 'trade') {
-      trade(s, a, b);
+      continue;
     }
-    if (rel!.kind !== 'war') diffuse(s, a, b);
+    if (rel!.kind === 'trade') trade(s, a, b);
+    diffuse(s, a, b);
+    // F6: neighbours at peace grow alike and marry each other's young people.
+    blendCulture(a, b);
+    intermarry(s, a, b);
+    // Neighbours who went hungry this year and don't trade may raid instead of making war.
+    if (rel!.kind === 'coexist') {
+      for (const [x, y] of [[a, b], [b, a]] as const) {
+        if (x.hungerPeak > SO.raidHunger && population(x) > 0 && population(y) > 0 && rollRaid(s, x)) raid(s, x, y);
+      }
+    }
   }
 }
 
@@ -397,6 +585,6 @@ export function yearlyContact(s: SimState): void {
  */
 export function diffuse(s: SimState, a: Group, b: Group): void {
   const p = CONFIG.future.diffusion.contactLearnChance;
-  learnFrom(s, a, b, (p * traitAverages(s, a).int) / 100);
-  learnFrom(s, b, a, (p * traitAverages(s, b).int) / 100);
+  learnFrom(s, a, b, ((p * traitAverages(s, a).int) / 100) * learnMult(a, b));
+  learnFrom(s, b, a, ((p * traitAverages(s, b).int) / 100) * learnMult(b, a));
 }

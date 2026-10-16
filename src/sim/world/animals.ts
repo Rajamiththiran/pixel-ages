@@ -9,6 +9,7 @@ import { areaName } from './regions';
 import { logEvent } from '../people/groups';
 
 const A = CONFIG.animals;
+const ASH_BONUS = 1 + CONFIG.future.burn.ashPreyBonus;
 
 interface Habitat { ground: readonly number[]; forest: number; growth: number }
 const HABITAT: Record<number, Habitat> = {
@@ -26,7 +27,7 @@ export function capacity(s: SimState, species: number, i: number): number {
   const forest = s.plantType[i] === Plant.Forest && s.plantDensity[i]! >= A.forestMinDensity;
   const suit = forest ? h.forest : h.ground[s.ground[i]!]!;
   const rainTerm = Math.min(1, Math.max(A.capacityRainBase, A.capacityRainBase + s.rainNow[i]! / 100));
-  return suit * rainTerm;
+  return suit * rainTerm * (s.ash[i] !== 0 ? ASH_BONUS : 1);
 }
 
 /** Tiles animals can diffuse into: not Water, not an intact wall. */
@@ -85,8 +86,10 @@ export function updateAnimals(s: SimState): void {
       if (s.plantType[i] === Plant.Forest && s.plantDensity[i]! >= A.forestMinDensity) {
         ky = P.forest * rainTerm; kh = Hd.forest * rainTerm; kr = R.forest * rainTerm;
       } else {
+        // Fresh growth on ash (F4 burning) feeds more grazers.
         const g = s.ground[i]!;
-        ky = P.ground[g]! * rainTerm; kh = Hd.ground[g]! * rainTerm; kr = R.ground[g]! * rainTerm;
+        const t = rainTerm * (s.ash[i] !== 0 ? ASH_BONUS : 1);
+        ky = P.ground[g]! * t; kh = Hd.ground[g]! * t; kr = R.ground[g]! * t;
       }
     }
     let y = yv;

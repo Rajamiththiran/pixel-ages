@@ -120,6 +120,71 @@ export class RainOverlay {
   }
 }
 
+/**
+ * Height view (F4): while the Elevation brush is selected, each tile is shaded from dark
+ * (height 0, see-through) to snow white (height 9). One pixel per tile, scaled up.
+ */
+export class ElevationOverlay {
+  readonly canvas: HTMLCanvasElement;
+  private dirty = true;
+
+  constructor(width: number, height: number) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = width;
+    this.canvas.height = height;
+  }
+
+  invalidate(): void { this.dirty = true; }
+
+  draw(ctx: CanvasRenderingContext2D, map: MapData): void {
+    if (this.dirty) {
+      this.dirty = false;
+      const c = this.canvas.getContext('2d')!;
+      const img = c.createImageData(map.width, map.height);
+      const lo = RGBS.mountainDark;
+      const hi = RGBS.snow;
+      const max = CONFIG.editor.maxElevation;
+      for (let i = 0; i < map.elevation.length; i++) {
+        const t = map.elevation[i]! / max;
+        img.data[i * 4] = lo[0] + (hi[0] - lo[0]) * t;
+        img.data[i * 4 + 1] = lo[1] + (hi[1] - lo[1]) * t;
+        img.data[i * 4 + 2] = lo[2] + (hi[2] - lo[2]) * t;
+        img.data[i * 4 + 3] = map.elevation[i] === 0 ? 0 : Math.round(255 * R.elevationOverlayAlpha);
+      }
+      c.putImageData(img, 0, 0);
+    }
+    ctx.drawImage(this.canvas, 0, 0, map.width * TILE, map.height * TILE);
+  }
+}
+
+/** Risk view (F5): fire risk in flame orange, flood risk in water blue; alpha = risk. */
+export class RiskOverlay {
+  readonly canvas: HTMLCanvasElement;
+
+  constructor(width: number, height: number) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = width;
+    this.canvas.height = height;
+  }
+
+  set(kind: 'fireRisk' | 'floodRisk', data: Uint8Array, width: number, height: number): void {
+    const c = this.canvas.getContext('2d')!;
+    const img = c.createImageData(width, height);
+    const [r, g, b] = kind === 'fireRisk' ? RGBS.fireOrange : RGBS.waterLight;
+    for (let i = 0; i < data.length; i++) {
+      img.data[i * 4] = r;
+      img.data[i * 4 + 1] = g;
+      img.data[i * 4 + 2] = b;
+      img.data[i * 4 + 3] = Math.round(data[i]! * R.riskOverlayAlpha);
+    }
+    c.putImageData(img, 0, 0);
+  }
+
+  draw(ctx: CanvasRenderingContext2D, map: MapData): void {
+    ctx.drawImage(this.canvas, 0, 0, map.width * TILE, map.height * TILE);
+  }
+}
+
 export function drawHoverTile(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   ctx.strokeStyle = `rgba(255, 255, 255, ${R.hoverOutlineAlpha})`;
   ctx.lineWidth = 1;

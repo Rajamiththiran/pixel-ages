@@ -10,6 +10,7 @@ import { hasActive } from './explore';
 import { strengthNow } from './inheritance';
 import { yieldMult } from './food';
 import { buildingWood, cutWoodScore, fuelUrgent } from './wood';
+import { maintainScore } from '../world/hazards';
 import {
   expectedFarm, expectedFish, expectedGather, expectedHerd, expectedHunt, foodScore, gatherCapOf, huntSuccess, type FoodOutlook,
 } from './foodJobs';
@@ -35,6 +36,7 @@ export interface BandContext {
   pressure: number;              // P (§13), for wall work
   outlook: FoodOutlook;          // food the range offers this month (food job scores)
   waters: number[];              // F3: water tiles in range to fish (empty without Fishing)
+  burnTile: number;              // F4: the forest edge to burn this spring month, −1 if none
   woodShortage: number;          // 0–1 of the next 12 months' wood need not yet in store (F1)
   hasForest: boolean;            // a forest tile in range to cut (F1)
 }
@@ -65,7 +67,7 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
   };
 
   // In id order: Gather 1, Hunt 2, Farm 3, Herd 4, Explore 5, Care 6, Build 7, Wall 8,
-  // Rest 9, Teach 10, Fish 12, CutWood 13. Elders (60+) only Gather, Care, Rest, Teach.
+  // Rest 9, Teach 10, Fish 12, CutWood 13, Maintain 15, Burn 16. Elders (60+) only Gather, Care, Rest, Teach.
   // Food jobs: scored by the food each would bring this month (future blueprint F0).
   const o = ctx.outlook;
   consider(Action.Gather, foodScore(J.gatherBase, H, expectedGather(gatherCapOf(g, mult), o, ctx.chosen[Action.Gather]!)));
@@ -108,6 +110,14 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
   // Cut wood (F1): worth more the less of the year's need is in store; a support job, so it falls off as more cut.
   if (!elder && ctx.hasForest && (ctx.woodShortage > 0 || fuelUrgent(g, g.members.length))) {
     consider(Action.CutWood, cutWoodScore(g, g.members.length, ctx.woodShortage) * crowdFactor(ctx, Action.CutWood));
+  }
+  // Maintain canals, levees and drains (F5): only with such works; a support job.
+  const upkeep = maintainScore(g);
+  if (!elder && upkeep > 0) consider(Action.Maintain, upkeep * crowdFactor(ctx, Action.Maintain));
+  // Burn a forest edge (F4, Fire Safety, spring): worth more when game is scarce; one burner a month.
+  const Bn = CONFIG.future.burn;
+  if (!elder && ctx.burnTile >= 0 && ctx.chosen[Action.Burn]! < Bn.maxPerMonth) {
+    consider(Action.Burn, Bn.base + Bn.preyWeight * (1 - g.preyAvail));
   }
   ctx.chosen[best] = ctx.chosen[best]! + 1;
   return best;

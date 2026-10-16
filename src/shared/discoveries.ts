@@ -176,24 +176,24 @@ export const DISCOVERIES: readonly DiscoveryDef[] = [
   def('bronzeWorking', 'Bronze Working', 5, F.Tin, [D.copperWorking], 'All food ×1.05 (better tools), war ×1.25', { uses: Resource.Tin, practice: P.metalWork, need: N.war }),
   // ---- F2 (§8.3) ----
   def('diggingStick', 'Digging Stick', 1, F.Forest, [], 'Gather ×1.1 (roots and tubers)', { practice: P.gathering, need: N.hunger }),
-  def('dogs', 'Dogs', 1, F.Predators | F.Hunted, [], 'Hunt success ×1.2 (guarding herds: F6)', { practice: P.hunting, need: N.hunger }),
+  def('dogs', 'Dogs', 1, F.Predators | F.Hunted, [], 'Hunt success ×1.2; wolves take 70% fewer herd animals', { practice: P.hunting, need: N.hunger }),
   def('bow', 'Bow', 2, F.Forest, [D.spear], 'Hunt success ×1.3', { practice: P.hunting, need: N.hunger }),
   // Shore gathering leads to hooks; once people fish, fishing practice leads to nets (F3).
   def('fishing', 'Fishing', 2, F.Water, [D.stoneTools], 'Hooks: fish lakes, rivers and coasts', { practice: P.gathering, need: N.hunger }),
-  def('fireSafety', 'Fire Safety', 2, F.Forest, [D.fire], 'Clearings and controlled burning (F4, F5)', { practice: P.fireUse, need: N.fires }),
+  def('fireSafety', 'Fire Safety', 2, F.Forest, [D.fire], 'Burns forest edges in spring for fresh grazing; 80% fewer wildfires from its own fires', { practice: P.fireUse, need: N.fires }),
   def('sickle', 'Sickle', 3, 0, [D.farming, D.stoneTools], 'Farm yield ×1.1', { practice: P.farming, need: N.hunger }),
   def('granary', 'Granary', 3, 0, [D.farming], 'Stored food spoils half as fast (up to 12 months of need); no pests', { practice: P.farming, need: N.hunger }),
-  def('wells', 'Wells', 3, 0, [D.diggingStick, D.farming], 'Clean water: less disease (F5)', { practice: P.building, need: N.hunger }),
+  def('wells', 'Wells', 3, 0, [D.diggingStick, D.farming], 'Clean water: endemic disease halved', { practice: P.building, need: N.hunger }),
   def('salting', 'Salting', 3, F.Salt, [D.pottery], 'Food spoils ×0.8', { uses: Resource.Salt, practice: P.hunting, need: N.hunger }),
-  def('drainage', 'Drainage', 4, F.Water, [D.irrigation], 'Washes salt out of fields (town drains: F5)', { practice: P.farming, need: N.floods }),
+  def('drainage', 'Drainage', 4, F.Water, [D.irrigation], 'Washes salt out of fields; town drains against flash floods', { practice: P.farming, need: N.floods }),
   def('fishingNets', 'Fishing Nets', 4, F.Water, [D.fishing], 'Fish catch ×1.5', { practice: P.fishing, need: N.hunger }),
-  def('firebreaks', 'Firebreaks', 4, 0, [D.fireSafety, D.farming], 'Town fires spread less (F5)', { practice: P.building, need: N.fires }),
-  def('palisade', 'Palisade', 4, F.Forest, [D.farming, D.spear], 'Wooden walls: defence ×1.3 (F6)', { practice: P.woodWork, need: N.war }),
-  def('plough', 'Plough', 5, 0, [D.farming, D.taming], 'Oxen plough: farm yield ×1.5 with a herd (F6)', { practice: P.farming, need: N.hunger }),
-  def('levees', 'Levees', 5, F.Water, [D.irrigation, D.mudBrick], 'River floods held back (F5)', { practice: P.building, need: N.floods }),
-  def('terraces', 'Terraces', 5, F.Mountain, [D.farming], 'Slopes farmed without erosion (F4)', { practice: P.farming, need: N.hunger }),
-  def('stoneBuilding', 'Stone Building', 6, F.Stone, [D.mudBrick, D.copperWorking], 'Stone houses and walls (F6)', { practice: P.building, need: N.war }),
-  def('sewers', 'Sewers', 6, 0, [D.drainage, D.mudBrick], 'Clean towns: less disease and flash floods (F5)', { practice: P.building, need: N.floods }),
+  def('firebreaks', 'Firebreaks', 4, 0, [D.fireSafety, D.farming], 'Town fires halved', { practice: P.building, need: N.fires }),
+  def('palisade', 'Palisade', 4, F.Forest, [D.farming, D.spear], 'Wooden walls (200 wood) when threatened: defence ×1.3', { practice: P.woodWork, need: N.war }),
+  def('plough', 'Plough', 5, 0, [D.farming, D.taming], 'Oxen plough: farm yield up to ×1.5 with 2 herd animals a field', { practice: P.farming, need: N.hunger }),
+  def('levees', 'Levees', 5, F.Water, [D.irrigation, D.mudBrick], 'River floods held back while kept up', { practice: P.building, need: N.floods }),
+  def('terraces', 'Terraces', 5, F.Mountain, [D.farming], 'Farmed slopes keep their soil (terraces)', { practice: P.farming, need: N.hunger }),
+  def('stoneBuilding', 'Stone Building', 6, F.Stone, [D.mudBrick, D.copperWorking], 'Stone houses; stone walls (500 stone) when threatened: defence ×1.8; town fires halved', { practice: P.building, need: N.war }),
+  def('sewers', 'Sewers', 6, 0, [D.drainage, D.mudBrick], 'Clean towns: endemic disease halved; drains against flash floods', { practice: P.building, need: N.floods }),
   def('cropRotation', 'Crop Rotation', 6, 0, [D.plough], 'Fields wear out 60% slower', { practice: P.farming, need: N.hunger }),
   def('sails', 'Sails', 6, F.Water, [D.boat], 'Explore range ×1.5', { practice: P.sailing }),
 ];
@@ -210,7 +210,7 @@ export const ERA_NAMES = [
 
 /**
  * Prevention discoveries for each hazard (§11.1): after a hazard strikes, these get a lesson
- * boost (§4.5). Hazards themselves arrive in F5; the planned Plague already teaches.
+ * boost (§4.5). Hazards strike from F5; the planned Plague teaches too.
  */
 export const HAZARD_PREVENTION: Readonly<Record<number, readonly number[]>> = {
   [Hazard.Wildfire]: [D.fireSafety],

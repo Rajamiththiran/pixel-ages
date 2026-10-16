@@ -16,7 +16,7 @@ export function fillRect(
 }
 
 export function runOf(map: MapData, seed = 1, climateDrift: ClimateDrift = 'off'): RunSetup {
-  return { version: 2, name: 'test', map, founders: [], events: [], seed, climateDrift };
+  return { version: 3, name: 'test', map, founders: [], events: [], seed, climateDrift };
 }
 
 /** 2 men + 2 women with fixed ages (18–30), the given intelligence, cooperation 50, strength 50. */

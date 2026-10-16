@@ -2,7 +2,7 @@
 
 import { CONFIG } from '../config';
 import { Ground, Plant, Resource, Species, WallType } from '../shared/ids';
-import { ANIMAL_ERASER, type Tool } from '../editor/brushes';
+import { ANIMAL_ERASER, type Tool, strengthToHeight } from '../editor/brushes';
 import type { Editor } from '../editor/editor';
 import { PALETTE } from '../render/palette';
 import { AgeClass, personSprite } from '../render/sprites';
@@ -45,6 +45,11 @@ export const TOOL_GROUPS: ToolGroup[] = [
     ],
   },
   {
+    label: 'Height', tools: [
+      { name: 'Elevation (strength = height 0–9)', tool: { kind: 'elevation' }, swatch: PALETTE.stoneLight },
+    ],
+  },
+  {
     label: 'Animals', tools: [
       { name: 'Prey (deer)', tool: { kind: 'animal', species: Species.Prey }, swatch: PALETTE.mudBrick },
       { name: 'Predator (wolves)', tool: { kind: 'animal', species: Species.Predator }, swatch: PALETTE.stone },
@@ -69,7 +74,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
 ];
 
 /** Run view modes (§18.7). 'follow' = fog + territory for the followed group (§21.1). */
-export type ViewMode = 'normal' | 'rain' | 'fog' | 'territory' | 'follow';
+export type ViewMode = 'normal' | 'rain' | 'fog' | 'territory' | 'follow' | 'fireRisk' | 'floodRisk';
 
 export interface RunToolbarApi {
   refresh(mode: ViewMode, zoomed: boolean): void;
@@ -87,7 +92,9 @@ export function buildRunToolbar(
   const rain = h('button', { text: 'Rain', title: 'Show rain right now', onclick: () => onView('rain') });
   const fog = h('button', { text: 'Fog', title: 'Darken what the selected group has not explored (click a group first)', onclick: () => onView('fog') });
   const territory = h('button', { text: 'Territory', title: 'Dotted range circles around every home of the selected lineage (click a group first)', onclick: () => onView('territory') });
-  views.append(normal, rain, fog, territory);
+  const fire = h('button', { text: 'Fire risk', title: 'How likely each tile is to burn: summer dryness × fuel (F5)', onclick: () => onView('fireRisk') });
+  const flood = h('button', { text: 'Flood risk', title: 'River floodplains: more in a wet year, less behind kept-up levees (F5)', onclick: () => onView('floodRisk') });
+  views.append(normal, rain, fog, territory, fire, flood);
   root.append(views);
   root.append(h('div', { class: 'tb-group-label', text: 'Zoom' }));
   const zoom = h('button', { class: 'tb-opt', text: 'Zoom 2×', title: 'Zoom 2× on the cursor (Z). Pan with right-drag or arrows/WASD', onclick: onZoom });
@@ -99,6 +106,8 @@ export function buildRunToolbar(
       rain.classList.toggle('selected', mode === 'rain');
       fog.classList.toggle('selected', mode === 'fog' || mode === 'follow');
       territory.classList.toggle('selected', mode === 'territory' || mode === 'follow');
+      fire.classList.toggle('selected', mode === 'fireRisk');
+      flood.classList.toggle('selected', mode === 'floodRisk');
       zoom.classList.toggle('selected', zoomed);
     },
   };
@@ -153,7 +162,7 @@ export function buildToolbar(
   root.append(sizes);
 
   const strengthLabel = h('div', { class: 'tb-strength-label' });
-  const strength = h('input', { type: 'range', min: 0, max: 100, step: 1, class: 'tb-strength', title: 'Strength: plant density, resource amount, rain value, animal density' });
+  const strength = h('input', { type: 'range', min: 0, max: 100, step: 1, class: 'tb-strength', title: 'Strength: plant density, resource amount, rain value, height, animal density' });
   strength.value = String(editor.strength);
   strength.addEventListener('input', () => { editor.strength = Number(strength.value); refresh(); });
   root.append(strength, strengthLabel);
@@ -169,7 +178,8 @@ export function buildToolbar(
     for (const [b, t] of toolButtons) b.classList.toggle('selected', sameTool(t, editor.tool));
     for (const [b, s] of sizeButtons) b.classList.toggle('selected', s === editor.brushSize);
     strength.value = String(editor.strength);
-    strengthLabel.textContent = editor.tool.kind === 'rain' ? `Rain ${editor.strength}` : `Strength ${editor.strength}%`;
+    strengthLabel.textContent = editor.tool.kind === 'rain' ? `Rain ${editor.strength}`
+      : editor.tool.kind === 'elevation' ? `Height ${strengthToHeight(editor.strength)}` : `Strength ${editor.strength}%`;
     fill.classList.toggle('selected', editor.fillMode);
     fill.disabled = editor.tool.kind === 'people';
     undo.disabled = !editor.canUndo;

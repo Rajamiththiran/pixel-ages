@@ -3,7 +3,7 @@
 
 import { CONFIG } from '../config';
 import {
-  Action, ACTION_NAMES, GROUND_NAMES, HAZARD_NAMES, Mode, NEED_NAMES, Plant, PLANT_NAMES, PRACTICE_NAMES, Resource, RESOURCE_NAMES, Sex,
+  Action, ACTION_NAMES, FORTIFICATION_NAMES, GROUND_NAMES, HAZARD_NAMES, Mode, NEED_NAMES, Plant, PLANT_NAMES, PRACTICE_NAMES, Resource, RESOURCE_NAMES, Sex,
   SPECIES_NAMES, WallType, WALL_NAMES,
 } from '../shared/ids';
 import { Discovery, DISCOVERIES, ERA_NAMES, has } from '../shared/discoveries';
@@ -15,6 +15,10 @@ import { countMembers, groupColor, population, traitAverages } from './people/gr
 import { hasActive, isKnown } from './people/explore';
 import { Lack } from './people/wood';
 import { fishCapacity } from './world/fish';
+import { cellOf, slopes } from './world/landscape';
+import { floodplains, hasWorks, hazardName } from './world/hazards';
+import { cultureText, inbreedMult, weaponMult } from './society/society';
+import { forceOf } from './society/contact';
 
 /** Discoveries that smelt metal into the group's stock (F1). */
 const SMELTING = [Discovery.copperWorking, Discovery.bronzeWorking, Discovery.ironWorking];
@@ -84,6 +88,22 @@ export function inspect(s: SimState, x: number, y: number, personId: number | nu
   if (fishCapacity(s, i) > 0) tile.Fish = pct(s.fish[i]!);
   if (s.fertility[i]! < 1 || s.plantType[i] === Plant.Farmland) tile.Fertility = pct(s.fertility[i]!);
   if (s.salinity[i]! > 0) tile.Salt = `${pct(s.salinity[i]!)}${s.salinity[i]! > CONFIG.future.salt.barrenAbove ? ' (barren)' : ''}`;
+  // F4: height and what people left on the land.
+  const slope = slopes(s)[i]!;
+  if (s.elevation[i]! > 0 || slope > 0) tile.Height = `${s.elevation[i]}${slope > 0 ? ` (slope ${slope})` : ''}`;
+  const WR = CONFIG.future.wear;
+  if (s.wear[i]! >= WR.path) tile.Way = s.wear[i]! >= WR.road && s.roadOK[i] ? 'Road' : 'Path';
+  if (s.ruinAge[i]! > 0) tile.Ruin = `${s.ruinAge[i]} years old`;
+  if (s.quarry[i]) tile.Pit = 'a used-up deposit';
+  if (s.canal[i]) tile.Canal = 'irrigation';
+  if (s.terrace[i]) tile.Terraces = 'yes';
+  if (s.ash[i]) tile.Ash = `burned (${s.ash[i]} more year${s.ash[i] === 1 ? '' : 's'})`;
+  if (s.bareYears[i]! > 0) tile['Grazed bare'] = `${s.bareYears[i]} years`;
+  // F5: what is happening here now, and the flood plain.
+  if (s.fireState[i]) tile.Fire = 'burning';
+  if (s.floodMonths[i]) tile.Flood = `under water (${s.floodMonths[i]} more month${s.floodMonths[i] === 1 ? '' : 's'})`;
+  if (floodplains(s).stretch[i]! >= 0) tile.Floodplain = 'yes';
+  if (s.dryCells[cellOf(x, y, s.width, s.height)]) tile.Climate = 'drier: the forest around was cut';
   for (let sp = 0; sp < 4; sp++) {
     const d = s.animal[sp]![i]!;
     if (d > 0) tile[SPECIES_NAMES[sp]!] = pct(d);
@@ -171,6 +191,47 @@ function practiceCard(s: SimState, g: Group): Record<string, string> {
   };
 }
 
+/** F5: upkeep of canals, levees and drains, and hazards still running (outbreak, blight). */
+function hazardCard(s: SimState, g: Group): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (hasWorks(g)) out.Upkeep = pct(g.maintenance);
+  const running = s.hazardsActive
+    .filter((h) => h.groupId === g.id && s.year < h.endYear)
+    .map((h) => `${hazardName(h.kind)} (until year ${h.endYear})`);
+  if (running.length) out.Hazards = running.join(', ');
+  return out;
+}
+
+/** F6: craftspeople, chief, inequality, culture, language, walls, weapons, herd breeding, allies. */
+function societyCard(s: SimState, g: Group): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (g.specialists > 0) out.Specialists = `${pct(g.specialists)} of workers craft`;
+  if (g.chief || g.inequality >= 0.01) out.Leadership = `${g.chief ? 'a chief' : 'no chief'} · inequality ${pct(g.inequality)}`;
+  out.Culture = cultureText(g);
+  const lang = s.languages.find((l) => l.id === g.languageId);
+  if (lang) {
+    const parent = lang.parentId >= 0 ? s.languages.find((l) => l.id === lang.parentId) : undefined;
+    out.Language = parent ? `${lang.name} (grew apart from ${parent.name} in year ${lang.sinceYear})` : lang.name;
+  }
+  const pop = population(g);
+  if (pop < CONFIG.future.society.inbreedBelowPop || g.isolationYears >= 50) {
+    const mult = inbreedMult(g, pop);
+    out.Outsiders = `last joined ${g.isolationYears} years ago${mult < 1 ? ` (births ×${mult.toFixed(2)})` : ''}`;
+  }
+  if (g.fortification > 0) out.Walls = FORTIFICATION_NAMES[g.fortification]!;
+  const fighters = forceOf(s, g).adults;
+  const w = weaponMult(g, fighters);
+  if (w > 1) out.Weapons = `war power ×${w.toFixed(2)}`;
+  if (g.domestication > 0) out['Herd breeding'] = `yield +${pct(g.domestication)}`;
+  const allies = s.alliances.filter((x) => x.a === g.id || x.b === g.id).map((x) => {
+    const other = s.groups.find((o) => o.id === (x.a === g.id ? x.b : x.a));
+    const enemy = s.groups.find((o) => o.id === x.against);
+    return `${other?.name ?? '?'} against ${enemy?.name ?? '?'}`;
+  });
+  if (allies.length) out.Allies = allies.join('; ');
+  return out;
+}
+
 function groupCard(s: SimState, g: Group): Record<string, unknown> {
   const c = countMembers(s, g);
   const t = traitAverages(s, g);
@@ -199,6 +260,8 @@ function groupCard(s: SimState, g: Group): Record<string, unknown> {
     Era: `${g.era} · ${ERA_NAMES[g.era] ?? '—'}`,
     Discoveries: owned.length ? owned.join(', ') : 'none yet',
     ...practiceCard(s, g),
+    ...hazardCard(s, g),
+    ...societyCard(s, g),
     'Intelligence (potential → actual)': `${t.potInt.toFixed(0)} → ${t.int.toFixed(0)}`,
     'Cooperation (potential → actual)': `${t.potCoop.toFixed(0)} → ${t.coop.toFixed(0)}`,
     'Strength (potential → actual)': `${t.potStr.toFixed(0)} → ${t.str.toFixed(0)}`,

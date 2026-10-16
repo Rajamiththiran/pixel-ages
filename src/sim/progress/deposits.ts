@@ -40,7 +40,8 @@ export function takeUnits(s: SimState, tiles: readonly number[], units: number):
     if (left <= 0) break;
     const take = Math.min(left, s.resourceAmount[i]!);
     s.resourceAmount[i] = s.resourceAmount[i]! - take;
-    if (s.resourceAmount[i] === 0) s.resourceType[i] = Resource.None;
+    // An emptied deposit is gone from the map and leaves a quarry or mine pit (F4 §10.5).
+    if (s.resourceAmount[i] === 0) { s.resourceType[i] = Resource.None; s.quarry[i] = 1; }
     left -= take;
   }
 }

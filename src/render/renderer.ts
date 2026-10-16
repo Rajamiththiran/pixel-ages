@@ -5,7 +5,7 @@ import { CONFIG } from '../config';
 import type { FounderGroup, MapData } from '../shared/types';
 import type { AreaResult } from '../sim/world/regions';
 import { TerrainLayer } from './terrain';
-import { AreaOverlay, FogOverlay, RainOverlay, drawBrushPreview, drawHoverTile } from './overlays';
+import { AreaOverlay, ElevationOverlay, FogOverlay, RainOverlay, RiskOverlay, drawBrushPreview, drawHoverTile } from './overlays';
 import { BuildingLayer, CampLayer, CampLife, WildAnimals, paintedDensities } from './decor';
 import { getSprite } from './sprites';
 import { WallType } from '../shared/ids';
@@ -19,6 +19,8 @@ export interface SetupView {
   founders: readonly FounderGroup[];
   hover: { x: number; y: number } | null;
   showRain: boolean;
+  showElevation: boolean;        // F4: height view while the Elevation brush is selected
+  showRisk: 'fireRisk' | 'floodRisk' | null; // F5: risk view in a run
   showAreas: boolean;
   brushSize: number | null;      // null = no brush preview
   hoverArea: number;             // region to highlight, -1 for none
@@ -42,6 +44,8 @@ export class Renderer {
   readonly areas: AreaOverlay;
   readonly camera: Camera;
   private readonly rain: RainOverlay;
+  private readonly elevation: ElevationOverlay;
+  private readonly risk: RiskOverlay;
   private readonly animals = new WildAnimals();
   readonly people = new PeopleLayer();
   readonly buildings = new BuildingLayer();
@@ -67,6 +71,8 @@ export class Renderer {
     this.terrain = new TerrainLayer(view.map);
     this.areas = new AreaOverlay(view.map.width, view.map.height);
     this.rain = new RainOverlay(view.map.width, view.map.height);
+    this.elevation = new ElevationOverlay(view.map.width, view.map.height);
+    this.risk = new RiskOverlay(view.map.width, view.map.height);
     this.fog = new FogOverlay(view.map.width, view.map.height);
     this.sprites = new SpriteLayer(canvas.width, canvas.height);
     this.camera = new Camera(canvas.width, canvas.height);
@@ -89,6 +95,13 @@ export class Renderer {
     this.terrain.setMap(this.view.map);
   }
 
+  /** F4 marks (run mode); null in setup. Redraws everything when it changes. */
+  setMarks(marks: Uint8Array | null, hazards: Uint8Array | null = null): void {
+    this.terrain.marks = marks;
+    this.terrain.hazards = hazards;
+    this.terrain.setMap(this.view.map);
+  }
+
   /** Breached wall tiles (run mode); null in setup. */
   setCrossing(crossing: Uint8Array | null): void {
     this.terrain.crossing = crossing;
@@ -99,6 +112,8 @@ export class Renderer {
   }
 
   invalidateRain(): void { this.rain.invalidate(); }
+  invalidateElevation(): void { this.elevation.invalidate(); }
+  setRisk(kind: 'fireRisk' | 'floodRisk', data: Uint8Array): void { this.risk.set(kind, data, this.view.map.width, this.view.map.height); }
 
   setAreas(a: AreaResult): void {
     this.areas.setAreas(a, this.view.map.width, this.view.map.height);
@@ -188,6 +203,8 @@ export class Renderer {
     }
 
     if (v.showRain) this.rain.draw(ctx, v.map.rain, v.map);
+    if (v.showElevation) this.elevation.draw(ctx, v.map);
+    if (v.showRisk) this.risk.draw(ctx, v.map);
     if (v.hover) {
       drawHoverTile(ctx, v.hover.x, v.hover.y);
       if (v.brushSize !== null) drawBrushPreview(ctx, v.hover.x, v.hover.y, v.brushSize);

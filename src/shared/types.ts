@@ -3,7 +3,7 @@ import type { Sex, Species } from './ids';
 // Shared interfaces (§7.2). SimState and friends (§7.3) arrive in step 2+.
 
 export interface MapData {
-  version: 2;                    // 2 since F1 (Tin, Salt); version 1 files still load
+  version: 3;                    // 3 since F4 (elevation); 2 added Tin and Salt (F1); older files still load
   width: number;                 // 160
   height: number;                // 90
   ground: Uint8Array;            // Ground id per tile
@@ -14,6 +14,7 @@ export interface MapData {
   rain: Uint8Array;              // 0–100, base rain as painted
   animals: [Uint8Array, Uint8Array, Uint8Array, Uint8Array]; // painted density 0–255 per Species
   wall: Uint8Array;              // WallType id
+  elevation: Uint8Array;         // F4 (D7): height 0–9, painted; 0 everywhere in older files
 }
 
 export interface FounderPerson {
@@ -60,8 +61,8 @@ export interface LogEntry {
 export type LogType =
   | 'discovery' | 'lostDiscovery' | 'eraUp' | 'eraDown' | 'ranOut'
   | 'split' | 'migrate' | 'becameVillage' | 'becameBand'
-  | 'firstContact' | 'tradeStart' | 'war' | 'conquered' | 'absorbed'
-  | 'breach' | 'event' | 'animalsGone' | 'groupExtinct' | 'lineageExtinct' | 'cannotReproduce' | 'perf';
+  | 'firstContact' | 'tradeStart' | 'war' | 'conquered' | 'absorbed' | 'raid' | 'alliance' | 'society'
+  | 'breach' | 'event' | 'animalsGone' | 'hazard' | 'groupExtinct' | 'lineageExtinct' | 'cannotReproduce' | 'perf';
 
 export interface YearStats {
   year: number;
@@ -80,7 +81,7 @@ export interface YearStats {
 }
 
 export interface RunSetup {
-  version: 2;                    // 2 since F1 (Tin, Salt); version 1 files still load
+  version: 3;                    // see MapData.version
   name: string;
   map: MapData;
   founders: FounderGroup[];

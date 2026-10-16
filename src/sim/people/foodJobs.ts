@@ -14,6 +14,7 @@ import type { Group, SimState } from '../state';
 import { rainFactor } from '../world/climate';
 import { hasActive } from './explore';
 import { nearWater, soilMult } from './farming';
+import { domesticMult, ploughMult } from '../society/society';
 
 const F = CONFIG.people.food;
 const J = CONFIG.people.brain.food;
@@ -72,9 +73,9 @@ export const gatherCapOf = (g: Group, mult: number): number =>
   F.gatherCap * mult * (hasActive(g, Discovery.stoneTools) ? F.stoneToolsGatherMult : 1)
   * (hasActive(g, Discovery.diggingStick) ? T.diggingStickGather : 1);
 
-/** Farm tools: Iron Working ×1.2, Sickle ×1.1 (F2). */
+/** Farm tools: Iron Working ×1.2, Sickle ×1.1 (F2); Plough with oxen up to ×1.5 (F6). */
 export const farmToolMult = (g: Group): number =>
-  (hasActive(g, Discovery.ironWorking) ? F.ironFarmMult : 1) * (hasActive(g, Discovery.sickle) ? T.sickleFarm : 1);
+  (hasActive(g, Discovery.ironWorking) ? F.ironFarmMult : 1) * (hasActive(g, Discovery.sickle) ? T.sickleFarm : 1) * ploughMult(g);
 
 /** One more gatherer: their cap, but never more than the plant food left per gatherer. */
 export const expectedGather = (cap: number, o: FoodOutlook, gatherers: number): number =>
@@ -100,7 +101,7 @@ export function expectedFarm(s: SimState, g: Group, o: FoodOutlook, mult: number
 export function expectedHerd(g: Group, o: FoodOutlook, capacity: number, herders: number, mult: number): number {
   const tend = Math.max(0, Math.min(F.herdPerHerder, g.herd - herders * F.herdPerHerder));
   const catchNow = g.herd < capacity ? Math.min(F.herdCapturePerHerder, o.bestWildHerd * F.herdAnimalsPerDensity) : 0;
-  return (tend + catchNow * J.herdInvestMonths) * F.herdYieldPerAnimal * mult;
+  return (tend * domesticMult(g) + catchNow * J.herdInvestMonths) * F.herdYieldPerAnimal * mult;
 }
 
 /** One fisher's catch at density d (F3 §9.1): 2 FU × d × yield × (Nets ? 1.5 : 1). */

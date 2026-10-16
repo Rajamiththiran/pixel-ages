@@ -4,6 +4,13 @@
 import { CONFIG } from '../config';
 import { nowMs } from '../shared/clock';
 import { packTile, TILE_BYTES, TILE_UPDATE_BYTES, type Frame, type FromWorker, type Speed, type ToWorker } from '../shared/protocol';
+import { computeMarks } from './world/landscape';
+import { computeHazardMarks, riskLayer } from './world/hazards';
+import type { RiskLayer } from '../shared/protocol';
+
+// F5 risk view: which layer the UI shows, and the year (and past/live) it was last sent for.
+let riskLayerKind: RiskLayer | null = null;
+let riskKey = '';
 import { createState, type SimState } from './state';
 import { tick } from './tick';
 import { cloneState } from './serialize';
@@ -98,6 +105,11 @@ function handle(msg: ToWorker): void {
     case 'select':
       selectedGroup = msg.groupId;
       lastKnownVersion = -1;
+      sendFrame();
+      return;
+    case 'layer':
+      riskLayerKind = msg.layer;
+      riskKey = '';
       sendFrame();
       return;
     case 'stop':
@@ -231,7 +243,9 @@ function sendFrame(): void {
   if (needFull || lastSent.length !== n * TILE_BYTES) {
     needFull = false;
     const full = new Uint8Array(n * TILE_BYTES);
-    for (let i = 0; i < n; i++) packTile(s, s.rainNow, s.crossing, i, full, i * TILE_BYTES);
+    const marks = computeMarks(s, marksScratch(n));
+    const hz = computeHazardMarks(s, hazardScratch(n));
+    for (let i = 0; i < n; i++) packTile(s, s.rainNow, s.crossing, marks, hz, i, full, i * TILE_BYTES);
     lastSent = full.slice();
     frame.fullTiles = full;
     transfer.push(full.buffer);
@@ -252,6 +266,13 @@ function sendFrame(): void {
     transfer.push(dens.buffer);
   }
   post({ type: 'frame', frame }, transfer);
+  // The risk view follows the year on screen.
+  const key = `${s.year}|${view ? 1 : 0}`;
+  if (riskLayerKind && key !== riskKey) {
+    riskKey = key;
+    const data = riskLayer(s, riskLayerKind);
+    post({ type: 'layer', layer: riskLayerKind, data }, [data.buffer]);
+  }
 
   // New live log entries. A replayed past makes the same entries again, so only live ones go out.
   const total = live.logDropped + live.log.length;
@@ -268,13 +289,19 @@ function sendFrame(): void {
 }
 
 const scratchTile = new Uint8Array(TILE_BYTES);
+let marksBuf = new Uint8Array(0);
+const marksScratch = (n: number): Uint8Array => (marksBuf.length === n ? marksBuf : (marksBuf = new Uint8Array(n)));
+let hazardBuf = new Uint8Array(0);
+const hazardScratch = (n: number): Uint8Array => (hazardBuf.length === n ? hazardBuf : (hazardBuf = new Uint8Array(n)));
 
-/** Changed tiles since the last frame, as [index lo, index hi, 7 bytes] records. */
+/** Changed tiles since the last frame, as [index lo, index hi, 9 bytes] records. */
 function tileDiff(s: SimState): Uint8Array | undefined {
   const n = s.width * s.height;
+  const marks = computeMarks(s, marksScratch(n));
+  const hz = computeHazardMarks(s, hazardScratch(n));
   const changed: number[] = [];
   for (let i = 0; i < n; i++) {
-    packTile(s, s.rainNow, s.crossing, i, scratchTile, 0);
+    packTile(s, s.rainNow, s.crossing, marks, hz, i, scratchTile, 0);
     const o = i * TILE_BYTES;
     for (let k = 0; k < TILE_BYTES; k++) {
       if (scratchTile[k] !== lastSent[o + k]) { changed.push(i); break; }
@@ -286,7 +313,7 @@ function tileDiff(s: SimState): Uint8Array | undefined {
     const o = k * TILE_UPDATE_BYTES;
     out[o] = i & 255;
     out[o + 1] = i >> 8;
-    packTile(s, s.rainNow, s.crossing, i, out, o + 2);
+    packTile(s, s.rainNow, s.crossing, marks, hz, i, out, o + 2);
     lastSent.set(out.subarray(o + 2, o + 2 + TILE_BYTES), i * TILE_BYTES);
   });
   return out;

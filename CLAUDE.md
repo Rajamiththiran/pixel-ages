@@ -30,7 +30,10 @@ Code style: TypeScript `strict`, small pure functions, short comments that expla
 - Step 7 (tune and publish): in progress (F0 done; discovery-pace tuning and the itch.io zip still open).
 - F1 (wood and materials, future blueprint §7): built on the owner's request before v1.0 shipped.
 - F2 (inventions from practice, §8): built on the owner's request.
-- F3 (food and environment, §9): built on the owner's request; awaiting the owner's approval.
+- F3 (food and environment, §9): built on the owner's request.
+- F4 (people change the landscape, §10; D7 elevation layer added): built on the owner's request.
+- F5 (elements and hazards, §11): built on the owner's request.
+- F6 (society, conflict and animals, §12): built on the owner's request; awaiting the owner's approval.
 
 ## Notes
 

@@ -37,6 +37,7 @@ export function layerValueFn(map: MapData, tool: Tool): (i: number) => number {
     case 'plant': return (i) => map.plantType[i]!;
     case 'resource': return (i) => map.resourceType[i]!;
     case 'rain': return (i) => map.rain[i]!;
+    case 'elevation': return (i) => map.elevation[i]!;
     case 'wall': return (i) => map.wall[i]!;
     case 'animal': {
       if (tool.species === ANIMAL_ERASER) {

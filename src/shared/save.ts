@@ -3,8 +3,9 @@
 
 import type { MapData, RunSetup, FounderGroup, PlannedEvent, ClimateDrift } from './types';
 
-// Version 2 (F1) adds the Tin and Salt resources; version 1 files are still valid and load as 2.
-export const SAVE_VERSION = 2;
+// Version 3 (F4) adds the elevation layer, version 2 (F1) the Tin and Salt resources. Older
+// files are still valid: they load as version 3 with elevation 0 everywhere.
+export const SAVE_VERSION = 3;
 export const OLDEST_LOADABLE_VERSION = 1;
 export const WRONG_VERSION_MESSAGE = 'This file was made by a different version';
 
@@ -39,6 +40,7 @@ interface MapJson {
   rain: string;
   animals: [string, string, string, string];
   wall: string;
+  elevation?: string;            // version 3+
 }
 
 export function mapToJson(map: MapData): MapJson {
@@ -59,6 +61,7 @@ export function mapToJson(map: MapData): MapJson {
       bytesToBase64(map.animals[3]),
     ],
     wall: bytesToBase64(map.wall),
+    elevation: bytesToBase64(map.elevation),
   };
 }
 
@@ -88,7 +91,7 @@ export function mapFromJson(obj: unknown): MapData {
   const animals = j.animals;
   if (!Array.isArray(animals) || animals.length !== 4) throw new SaveError('Map animal layers are missing');
   return {
-    version: 2,
+    version: 3,
     width,
     height,
     ground: layer(j.ground, n, 'ground'),
@@ -104,6 +107,7 @@ export function mapFromJson(obj: unknown): MapData {
       layer(animals[3], n, 'animals[3]'),
     ],
     wall: layer(j.wall, n, 'wall'),
+    elevation: (j.version as number) >= 3 ? layer(j.elevation, n, 'elevation') : new Uint8Array(n),
   };
 }
 
@@ -137,7 +141,7 @@ export function decodeRun(text: string): RunSetup {
   const seed = typeof j.seed === 'number' ? j.seed >>> 0 : 0;
   const drift = DRIFTS.includes(j.climateDrift as ClimateDrift) ? (j.climateDrift as ClimateDrift) : 'off';
   return {
-    version: 2,
+    version: 3,
     name: typeof j.name === 'string' ? j.name : '',
     map,
     founders: j.founders as FounderGroup[],

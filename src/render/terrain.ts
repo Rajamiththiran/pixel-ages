@@ -7,9 +7,10 @@ import { hash01 } from '../shared/hash';
 import { N8 } from '../shared/grid';
 import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
+import { HazardMark, Mark } from '../shared/protocol';
 import {
   PeakKind, applyDesertDetail, applyFoam, applyGrassDetail, applyWetEdge, blend, computeDepth, copy,
-  edgeDistance, forestCrown, forestFloor, isWaterTile, mountainPeak, peakKind, waterPixel,
+  edgeDistance, forestCrown, forestFloor, isWaterTile, mountainPeak, peakKind, scale, waterPixel,
 } from './terrainDetail';
 
 const R = CONFIG.render;
@@ -20,6 +21,8 @@ const TILE = CONFIG.map.tilePx;
 const SALT = {
   grain: 0, mountainLight: 1, mountainDark: 2, fruit: 5, resource: 6,
   wallInk: 11, wallLight: 12, pass: 14,
+  ash: 21, ruin: 22,             // F4 marks
+  fire: 23,                      // F5 flames
 } as const;
 
 const RESOURCE_COLOR: Record<number, RGB> = {
@@ -46,11 +49,13 @@ const tmp: RGB = [0, 0, 0];
 
 /**
  * Writes the 8×8 pixels of tile i into `data` (RGBA, image width `imgW`).
- * `depth` is the water depth field (computeDepth); `crossing` marks breached wall tiles.
+ * `depth` is the water depth field (computeDepth); `crossing` marks breached wall tiles;
+ * `marks` (run mode, F4) holds paths, roads, ruins, pits, canals, terraces and ash.
  */
 export function drawTilePixels(
   map: MapData, i: number, data: Uint8ClampedArray, imgW: number,
-  time: TerrainTime, depth: Uint8Array, crossing: Uint8Array | null,
+  time: TerrainTime, depth: Uint8Array, crossing: Uint8Array | null, marks: Uint8Array | null = null,
+  hazards: Uint8Array | null = null,
 ): void {
   const { width, height } = map;
   const tx = i % width;
@@ -64,6 +69,8 @@ export function drawTilePixels(
   const isCrossing = crossing !== null && crossing[i] === 1;
   const water = isWaterTile(map, i);
   const kind = isCrossing ? PeakKind.None : peakKind(map, i);
+  const tileMarks = marks ? marks[i]! : 0;
+  const tileHazards = hazards ? hazards[i]! : 0;
 
   // Neighbours of the other kind (land ↔ water) give shore foam / wet edges.
   // Crowns can overhang from a neighbouring forest tile, so check those too.
@@ -100,6 +107,14 @@ export function drawTilePixels(
       } else {
         landPixel(map, ground, plant, dens, kind, nearForest, px, py, time.season, out);
         if (resShare > 0 && hash01(px, py, SALT.resource + res) < resShare) copy(RESOURCE_COLOR[res]!, out);
+        if (tileMarks !== 0) markPixel(map, marks!, i, tileMarks, plant, ox, oy, px, py, out);
+        // F5: standing flood water, then flames on burning land.
+        if (tileHazards & HazardMark.Flood) blend(out, RGBS.water, R.marks.floodBlend, out);
+        if (tileHazards & HazardMark.Fire) {
+          const f = hash01(px, py, SALT.fire);
+          if (f < R.marks.flameShare) copy(f < R.marks.flameShare / 2 ? RGBS.fireYellow : RGBS.fireOrange, out);
+          else scale(out, R.marks.burnDark);
+        }
         if (hasEdge) applyWetEdge(edge, out);
       }
 
@@ -110,6 +125,55 @@ export function drawTilePixels(
       data[o + 2] = out[2] * g;
       data[o + 3] = 255;
     }
+  }
+}
+
+/** Does neighbour (dx, dy) of tile i carry one of `bits` (or water, for canals)? */
+function linked(map: MapData, marks: Uint8Array, i: number, dx: number, dy: number, bits: number, water: boolean): boolean {
+  const w = map.width;
+  const x = (i % w) + dx;
+  const y = Math.floor(i / w) + dy;
+  if (x < 0 || y < 0 || x >= w || y >= map.height) return false;
+  const j = y * w + x;
+  return (marks[j]! & bits) !== 0 || (water && isWaterTile(map, j));
+}
+
+/**
+ * One pixel of what people left on a land tile (F4): terraces as dark contour rows, ash as
+ * soot, canals and paths/roads as lines from the tile centre toward linked neighbours, a pit
+ * for a used-up deposit, broken walls for a ruin.
+ */
+function markPixel(
+  map: MapData, marks: Uint8Array, i: number, m: number, plant: number,
+  ox: number, oy: number, px: number, py: number, out: RGB,
+): void {
+  if (m & Mark.Terrace && plant === Plant.Farmland && oy % 3 === 2) scale(out, R.marks.terraceDark);
+  if (m & Mark.Ash && hash01(px, py, SALT.ash) < R.marks.ashSpeck) copy(RGBS.ink, out);
+  const mid = TILE / 2 - 1;                       // centre rows/columns: 3 (and 4 for wide lines)
+  const onLine = (bits: number, wide: boolean, water: boolean): boolean => {
+    const inRow = oy === mid || (wide && oy === mid + 1);
+    const inCol = ox === mid || (wide && ox === mid + 1);
+    let any = false;
+    if (inRow && ox <= mid && linked(map, marks, i, -1, 0, bits, water)) return true;
+    if (inRow && ox >= mid && linked(map, marks, i, 1, 0, bits, water)) return true;
+    if (inCol && oy <= mid && linked(map, marks, i, 0, -1, bits, water)) return true;
+    if (inCol && oy >= mid && linked(map, marks, i, 0, 1, bits, water)) return true;
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) if (linked(map, marks, i, dx, dy, bits, water)) any = true;
+    // A lone stretch still shows a short dash.
+    return !any && inRow && ox >= mid - 1 && ox <= mid + 2;
+  };
+  if (m & Mark.Canal && onLine(Mark.Canal, false, true)) copy(RGBS.waterLight, out);
+  if (m & Mark.Road) {
+    if (onLine(Mark.Road | Mark.Path, true, false)) blend(out, RGBS.stoneLight, R.marks.roadBlend, out);
+  } else if (m & Mark.Path && onLine(Mark.Path | Mark.Road, false, false)) blend(out, RGBS.sand, R.marks.pathBlend, out);
+  if (m & Mark.Quarry) {
+    const d2 = (ox - mid - 0.5) ** 2 + (oy - mid - 0.5) ** 2;
+    if (d2 <= R.marks.pitRadius2) copy(d2 <= 1 ? RGBS.ink : RGBS.mountainDark, out);
+  }
+  if (m & Mark.Ruin) {
+    const ring = (ox === 1 || ox === TILE - 2) && oy >= 1 && oy <= TILE - 2
+      || (oy === 1 || oy === TILE - 2) && ox >= 1 && ox <= TILE - 2;
+    if (ring && hash01(px, py, SALT.ruin) > R.marks.ruinGap) copy(RGBS.stone, out);
   }
 }
 
@@ -184,6 +248,10 @@ export class TerrainLayer {
   private depthNext: Uint8Array;
   private depthDirty = false;
   crossing: Uint8Array | null = null;
+  /** F4 marks (run mode); null in setup. */
+  marks: Uint8Array | null = null;
+  /** F5 hazards (run mode); null in setup. */
+  hazards: Uint8Array | null = null;
 
   constructor(private map: MapData) {
     this.canvas = document.createElement('canvas');
@@ -288,7 +356,7 @@ export class TerrainLayer {
       // Check the clock every 64 tiles; reading it per tile would cost more than it saves.
       if ((k & 63) === 63 && performance.now() - t0 > budgetMs) break;
       const i = this.dirtyList[k]!;
-      drawTilePixels(this.map, i, this.img.data, this.canvas.width, this.time, this.depth, this.crossing);
+      drawTilePixels(this.map, i, this.img.data, this.canvas.width, this.time, this.depth, this.crossing, this.marks, this.hazards);
       this.dirty[i] = 0;
       const x = i % w;
       const y = (i - x) / w;
