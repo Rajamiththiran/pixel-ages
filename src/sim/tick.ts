@@ -22,8 +22,11 @@ import { breachChecks } from './society/walls';
 import { yearlyContact } from './society/contact';
 import { yearlySociety } from './society/society';
 import { harshWinterNow, updateEvents } from './events';
+import { applyInterventions } from './interventions';
 
 export function tick(s: SimState): void {
+  // 0. Interventions made for this month (F7 intervention mode; none in hands-off runs).
+  applyInterventions(s);
   // 1. Planned events start, end or strike.
   updateEvents(s);
   // 2. Current rain for every tile (drift and events).

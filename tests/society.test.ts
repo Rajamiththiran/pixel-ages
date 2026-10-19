@@ -102,23 +102,23 @@ describe('chiefs and inequality (§12.2)', () => {
 
   it('inequality grows with a chief and surplus and with wins, and falls with cooperation', () => {
     // (0 + 0.02) × (1 − 0.05 × 0.5)
-    expect(nextInequality(0, true, true, 0, 50)).toBeCloseTo(0.02 * 0.975, 10);
+    expect(nextInequality(0, true, true, 0, 50)).toBeCloseTo(0.02 * 0.95, 10);
     expect(nextInequality(0, false, true, 0, 50)).toBe(0);
     expect(nextInequality(0, false, false, 2, 0)).toBeCloseTo(0.1, 10);
-    expect(nextInequality(0.5, false, false, 0, 100)).toBeCloseTo(0.5 * 0.95, 10);
-    // With a chief and a steady surplus it settles at 0.02 / (0.05 × coop/100) of the pre-fall value.
+    expect(nextInequality(0.5, false, false, 0, 100)).toBeCloseTo(0.5 * 0.9, 10);
+    // With a chief and a steady surplus it settles at 0.02 × (1 − f) / f, f = 0.1 × coop/100.
     let v = 0;
     for (let k = 0; k < 2000; k++) v = nextInequality(v, true, true, 0, 80);
-    expect(v).toBeCloseTo((0.02 * (1 - 0.04)) / 0.04, 3);
+    expect(v).toBeCloseTo((0.02 * (1 - 0.08)) / 0.08, 3);
   });
 
   it('inequality makes war likelier and trade and absorbing less likely', () => {
     const base = { coopA: 50, coopB: 50, sameLineage: false, pA: 0.3, pB: 0.3, hA: 10, hB: 10, powerA: 90, powerB: 10, discoveriesDiffer: false };
     const eq = decisionScores(base);
     const uneq = decisionScores({ ...base, inequality: 1 });
-    expect(uneq.war! - eq.war!).toBeCloseTo(20, 10);
-    expect(eq.trade! - uneq.trade!).toBeCloseTo(20, 10);
-    expect(eq.absorb! - uneq.absorb!).toBeCloseTo(20, 10);
+    expect(uneq.war! - eq.war!).toBeCloseTo(5, 10);
+    expect(eq.trade! - uneq.trade!).toBeCloseTo(5, 10);
+    expect(eq.absorb! - uneq.absorb!).toBeCloseTo(5, 10);
   });
 });
 

@@ -622,6 +622,8 @@ Groups of one lineage separated (no contact) for > `languageYears` (500) become 
 
 ## 13. Update F7 — Observer tools
 
+> **Status: built on the owner's request (16 Oct 2026); D5 decided: intervention mode added** (DECISIONS 14.1–14.10). Approved: the owner asked for F8 next (19 Oct 2026).
+
 | Tool | What it does | Notes |
 |---|---|---|
 | **Family tree** | Click a band person: parents, partner, children, life events | Bands only; villages show the sample |
@@ -640,6 +642,8 @@ Groups of one lineage separated (no contact) for > `languageYears` (500) become 
 ---
 
 ## 14. Update F8 — Graphics and sound
+
+> **Status (19 Oct 2026): built on the owner's request. D6 decided: keep the style and add to it. D8 decided: ambient sound, on by default, with a mute button** (DECISIONS 16.1–16.29). Awaiting the owner's approval.
 
 All within the locked art style (D6), Canvas 2D, 60 fps budget (section 20). Effort: **S** small, **M** medium, **L** large.
 

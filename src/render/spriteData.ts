@@ -2,8 +2,11 @@
 
 export interface SpriteDef { w: number; h: number; rows: string[] }
 
-/** Every character a grid may use (§19.1). */
-export const SPRITE_LEGEND = '.KHSCDLWwYMmGgFf';
+/**
+ * Every character a grid may use (§19.1). F8 adds fixed colours for icons and effects:
+ * B water, b waterLight, R fruit red, E grass, e forest, X snow white, N copper, I iron.
+ */
+export const SPRITE_LEGEND = '.KHSCDLWwYMmGgFfBbREeXNI';
 
 export const SPRITES: Record<string, SpriteDef> = {
   // §19.2 People
@@ -105,4 +108,144 @@ export const SPRITES: Record<string, SpriteDef> = {
       'wWWWWWWw',
     ],
   },
+
+  // ---------- F8 (future blueprint §14) ----------
+  // Work poses (§14.3), two frames each, facing right. Same colours as the adult (C, D, S, H, L).
+  gather_1: { w: 5, h: 6, rows: ['.....', '...HH', '.CCSS', '.CC.S', '.LL..', '.L.L.'] },
+  gather_2: { w: 5, h: 6, rows: ['.....', '...HH', '.CCSS', '.CCS.', '.LL..', '.L.L.'] },
+  farm_1: { w: 6, h: 7, rows: ['....G.', '.HHW..', '.SSW..', 'SCCS..', '.CC...', '.LL...', 'L..L..'] },
+  farm_2: { w: 6, h: 7, rows: ['......', '.HH...', '.SS...', 'SCCSW.', '.CC..W', '.LL..W', 'L..L.G'] },
+  cut_1: { w: 6, h: 7, rows: ['...GG.', '.HHW..', '.SSW..', 'SCCS..', '.CC...', '.LL...', 'L..L..'] },
+  cut_2: { w: 6, h: 7, rows: ['......', '.HH...', '.SS...', 'SCCSWW', '.CC..G', '.LL..G', 'L..L..'] },
+  fish_1: { w: 8, h: 7, rows: ['.....WW.', '.HH.W..g', '.SSW...g', 'SCCS...g', '.CC.....', '.LL.....', 'L..L....'] },
+  fish_2: { w: 8, h: 7, rows: ['.....WWg', '.HH.W..g', '.SSW...g', 'SCCS....', '.CC.....', '.LL.....', 'L..L....'] },
+  build_1: { w: 6, h: 6, rows: ['.HH...', '.SS...', 'WWWWWW', '.CC...', '.LL...', 'L..L..'] },
+  build_2: { w: 6, h: 6, rows: ['.HH...', '.SS...', 'WWWWWW', '.CC...', '.LL...', '.LL...'] },
+  staff: { w: 2, h: 6, rows: ['WW', '.W', '.W', '.W', '.W', '.w'] },
+  // Carried items (§14.3), drawn at the walker's hand.
+  item_basket: { w: 2, h: 2, rows: ['YY', 'WW'] },
+  item_meat: { w: 2, h: 2, rows: ['RR', '.R'] },
+  item_wood: { w: 2, h: 2, rows: ['WW', 'ww'] },
+  item_pot: { w: 2, h: 2, rows: ['mM', 'mm'] },
+  item_fish: { w: 2, h: 1, rows: ['Bb'] },
+
+  // Buildings by era (§14.4): lean-to → hut → longhouse → mud brick (house) → stone → city block.
+  leanTo: {
+    w: 8, h: 8, rows: [
+      '........',
+      '........',
+      '.....W..',
+      '....WY..',
+      '...WYY..',
+      '..WYYY..',
+      '.WYYYY..',
+      '.wwwwww.',
+    ],
+  },
+  longhouse: {
+    w: 16, h: 16, rows: [
+      '................',
+      '................',
+      '................',
+      '................',
+      '....WWWWWWWW....',
+      '...WYYYYYYYYW...',
+      '..WYYYYYYYYYYW..',
+      '.WYYYYYYYYYYYYW.',
+      'WYYYYYYYYYYYYYYW',
+      '.WWWWWWWWWWWWWW.',
+      '.WwWwWwKKwWwWwW.',
+      '.WwWwWwKKwWwWwW.',
+      '.WwWwWwKKwWwWwW.',
+      '.WwWwWwKKwWwWwW.',
+      '.wwwwwwwwwwwwww.',
+      '................',
+    ],
+  },
+  stoneHouse: {
+    w: 16, h: 16, rows: [
+      '................',
+      '................',
+      '.....GGGGGG.....',
+      '....GggggggG....',
+      '...GggggggggG...',
+      '..GGGGGGGGGGGG..',
+      '.gggggggggggggg.',
+      '.gKKggggggggKKg.',
+      '.gKKggggggggKKg.',
+      '.gggggggggggggg.',
+      '.GGGGGGGGGGGGGG.',
+      '.ggggggKKgggggg.',
+      '.ggggggKKgggggg.',
+      '.ggggggKKgggggg.',
+      '.wwwwwwwwwwwwww.',
+      '................',
+    ],
+  },
+  // Special buildings (§14.4), one each per village that has the discovery.
+  granary: { w: 8, h: 8, rows: ['...YY...', '..YYYY..', '.YYYYYY.', '.MMMMMM.', '.MmMMmM.', '.MMMMMM.', '.MMKKMM.', '.wwwwww.'] },
+  well: { w: 8, h: 8, rows: ['.W....W.', '.WWWWWW.', '.W....W.', '.W.gg.W.', '.gggggg.', '.gBBBBg.', '.gggggg.', '........'] },
+  kiln: { w: 8, h: 8, rows: ['...GG...', '..mmmm..', '.mmmmmm.', 'mmmmmmmm', 'mmmFFmmm', 'mmFffFmm', 'mmmmmmmm', 'wwwwwwww'] },
+  smithy: { w: 8, h: 8, rows: ['........', 'WWWWWWWW', 'WYYYYYYW', '.W....W.', '.W.FF.W.', '.WGGGGW.', '.W.GG.W.', 'wwwwwwww'] },
+  scriptorium: { w: 8, h: 8, rows: ['...GG...', '..GggG..', '.GggggG.', 'GGGGGGGG', 'gggXXggg', 'gKgXXgKg', 'gggKKggg', 'wwwwwwww'] },
+  temple: {
+    w: 16, h: 16, rows: [
+      '................',
+      '.......ff.......',
+      '......MMMM......',
+      '......MKKM......',
+      '....MMMMMMMM....',
+      '....MmmmmmmM....',
+      '..MMMMMMMMMMMM..',
+      '..MmmmmmmmmmmM..',
+      '..MmmmmmmmmmmM..',
+      'MMMMMMMMMMMMMMMM',
+      'MmmmmmmKKmmmmmmM',
+      'MmmmmmmKKmmmmmmM',
+      'MmmmmmmKKmmmmmmM',
+      'MmmmmmmKKmmmmmmM',
+      'wwwwwwwwwwwwwwww',
+      '................',
+    ],
+  },
+  // Fortifications (§14.4, F6): pieces set around a village.
+  palisadePost: { w: 2, h: 5, rows: ['.W', 'WW', 'Ww', 'Ww', 'ww'] },
+  stoneWallPiece: { w: 3, h: 3, rows: ['ggg', 'gGg', 'GGG'] },
+  // Effects and traffic.
+  flame_1: { w: 4, h: 5, rows: ['.f..', '.Ff.', 'FfF.', 'FFfF', '.FF.'] },
+  flame_2: { w: 4, h: 5, rows: ['..f.', '.fF.', '.FfF', 'FfFF', '.FF.'] },
+  sailboat: { w: 8, h: 7, rows: ['...X....', '...XX...', '...XXX..', '...W....', 'W......W', 'WWWWWWWW', '.wwwwww.'] },
+
+  // Pixel icons (§14.7): discoveries, eras, events, hazards and the log.
+  icon_fire: { w: 7, h: 7, rows: ['...F...', '..FF...', '..FfF..', '.FffFF.', '.FfffF.', '..FfF..', '.WwWwW.'] },
+  icon_tool: { w: 7, h: 7, rows: ['.GGG...', 'GGgGG..', '.GGGW..', '...W...', '...W...', '...W...', '...w...'] },
+  icon_weapon: { w: 7, h: 7, rows: ['......g', '.....G.', '....W..', '...W...', '..W....', '.W.....', 'w......'] },
+  icon_boat: { w: 7, h: 7, rows: ['...X...', '...XX..', '...XXX.', '...W...', 'WWWWWWW', '.wwwww.', 'BbBbBbB'] },
+  icon_cloth: { w: 7, h: 7, rows: ['.M...M.', 'MMM.MMM', 'MMMMMMM', '.MMMMM.', '.MMMMM.', '.MMMMM.', '.MMMMM.'] },
+  icon_animal: { w: 7, h: 7, rows: ['.w...w.', '..w.w..', '..MMM..', '.MKMKM.', '..MMM..', '...M...', '.......'] },
+  icon_wheat: { w: 7, h: 7, rows: ['...Y...', '..YYY..', '.Y.Y.Y.', '..YYY..', '.Y.E.Y.', '...E...', '...E...'] },
+  icon_pot: { w: 7, h: 7, rows: ['.......', '..mmm..', '.mMMMm.', 'mMMMMMm', 'mMMMMMm', '.mMMMm.', '..mmm..'] },
+  icon_house: { w: 7, h: 7, rows: ['...M...', '..MMM..', '.MMMMM.', 'MMMMMMM', '.mmmmm.', '.mmKmm.', '.mmKmm.'] },
+  icon_wheel: { w: 7, h: 7, rows: ['..WWW..', '.W.W.W.', 'W..W..W', 'WWWWWWW', 'W..W..W', '.W.W.W.', '..WWW..'] },
+  icon_metal: { w: 7, h: 7, rows: ['.......', '.......', '..NNNN.', '.NNNNN.', 'NNNNNN.', 'NNNNN..', '.......'] },
+  icon_scroll: { w: 7, h: 7, rows: ['YYYYYY.', 'YKKKKY.', 'YYYYYY.', 'YKKKYY.', 'YYYYYY.', '.......', '.......'] },
+  icon_drop: { w: 7, h: 7, rows: ['...b...', '...B...', '..BBB..', '.BBbBB.', '.BBBbB.', '.BBBBB.', '..BBB..'] },
+  icon_fish: { w: 7, h: 7, rows: ['.......', '..BBB.B', '.BbBBBB', 'BBBBBB.', '.BBBBBB', '..BBB.B', '.......'] },
+  icon_wave: { w: 7, h: 7, rows: ['.......', '.bb....', 'b..b..b', '....bb.', '.BB....', 'B..B..B', '....BB.'] },
+  icon_rock: { w: 7, h: 7, rows: ['.......', '..GG...', '.GggG..', 'GggGGG.', 'GGGGgGG', '.GGGGG.', '.......'] },
+  icon_dust: { w: 7, h: 7, rows: ['.......', '.YYY...', 'Y...Y..', '..YY.Y.', '.Y...Y.', '..YYY..', '.......'] },
+  icon_skull: { w: 7, h: 7, rows: ['.XXXXX.', 'XXXXXXX', 'XKKXKKX', 'XXXXXXX', '.XXKXX.', '.X.X.X.', '.......'] },
+  icon_bug: { w: 7, h: 7, rows: ['.K...K.', '..K.K..', '.KRRRK.', 'K.RRR.K', '.KRRRK.', 'K.RRR.K', '..KKK..'] },
+  icon_leaf: { w: 7, h: 7, rows: ['.....w.', '...YYw.', '..YwY..', '.YwYY..', '.wYY...', 'w......', '.......'] },
+  icon_sun: { w: 7, h: 7, rows: ['f..f..f', '.f.f.f.', '..fff..', 'fffFfff', '..fff..', '.f.f.f.', 'f..f..f'] },
+  icon_cloud: { w: 7, h: 7, rows: ['..ggg..', '.ggggg.', 'ggggggg', '.......', '.b.b.b.', 'b.b.b..', '.......'] },
+  icon_snow: { w: 7, h: 7, rows: ['...X...', '.X.X.X.', '..XXX..', 'XXXXXXX', '..XXX..', '.X.X.X.', '...X...'] },
+  icon_hand: { w: 7, h: 7, rows: ['.M.M.M.', '.M.M.M.', '.MMMMM.', 'MMMMMMM', '.MMMMM.', '..MMM..', '.......'] },
+  icon_berry: { w: 7, h: 7, rows: ['...E...', '..E....', '.RR.RR.', 'RRRRRRR', '.RRRRR.', '..RRR..', '.......'] },
+  icon_trade: { w: 7, h: 7, rows: ['....f..', '....ff.', 'fffffff', '....ff.', '.ff....', 'fffffff', '.ff....'] },
+  icon_shield: { w: 7, h: 7, rows: ['GGGGGGG', 'GgggggG', 'GgRRRgG', 'GgRRRgG', '.GgRgG.', '..GgG..', '...G...'] },
+  icon_arrow: { w: 7, h: 7, rows: ['...X...', '..XXX..', '.X.X.X.', '...X...', '...X...', '...X...', '...X...'] },
+  icon_eye: { w: 7, h: 7, rows: ['.......', '..XXX..', '.XbbbX.', 'XbbKbbX', '.XbbbX.', '..XXX..', '.......'] },
+  icon_star: { w: 7, h: 7, rows: ['...f...', '...f...', '.fffff.', '..fff..', '.ff.ff.', '.f...f.', '.......'] },
+  icon_people: { w: 7, h: 7, rows: ['.K...K.', '.M...M.', 'MMM.MMM', '.M...M.', '.M...M.', 'M.M.M.M', '.......'] },
 };

@@ -174,7 +174,7 @@ function spreadFire(s: SimState, start: number, owners: Int32Array): { tiles: nu
 }
 
 /** A settlement burned: half its buildings, 30% of its food, 2% of its people; a palisade burns down (F6). */
-function burnSettlement(s: SimState, g: Group): number {
+export function burnSettlement(s: SimState, g: Group): number {
   if (g.fortification === 1) g.fortification = 0;
   g.huts = Math.floor(g.huts * (1 - FI.buildingLoss));
   g.houses = Math.floor(g.houses * (1 - FI.buildingLoss));
@@ -378,12 +378,17 @@ export function riverFloods(s: SimState): void {
       continue;
     }
     for (const g of living) {
-      g.huts = Math.floor(g.huts * (1 - FL.hutLoss));
-      g.houses = Math.floor(g.houses * (1 - FL.hutLoss));
-      const dead = killShare(s, g, FL.deathChance);
+      const dead = floodDamage(s, g);
       strike(s, g, Hazard.RiverFlood, `The river flooded ${g.name}'s fields and homes (${dead} drowned)`);
     }
   }
+}
+
+/** A flood reached a group's home: half its buildings damaged, a few drown. Returns deaths. */
+export function floodDamage(s: SimState, g: Group): number {
+  g.huts = Math.floor(g.huts * (1 - FL.hutLoss));
+  g.houses = Math.floor(g.houses * (1 - FL.hutLoss));
+  return killShare(s, g, FL.deathChance);
 }
 
 /** Drains (Drainage, Sewers) working at their upkeep, 0–1. */

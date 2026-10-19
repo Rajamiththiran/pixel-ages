@@ -6,22 +6,32 @@ import { CONFIG } from './config';
 import {
   Ground, WallType, Plant, Resource,
   GROUND_NAMES, PLANT_NAMES, RESOURCE_NAMES, WALL_NAMES, SPECIES_NAMES,
-  type Season,
 } from './shared/ids';
-import type { FounderGroup, LogEntry, MapData, PlannedEvent, RunSetup, YearStats } from './shared/types';
-import type { GroupView } from './shared/protocol';
+import type { FounderGroup, Intervention, LogEntry, MapData, PlannedEvent, RunSetup, YearStats } from './shared/types';
+import type { Frame, GroupView, HeatLayer } from './shared/protocol';
 import { ERA_NAMES } from './shared/discoveries';
+import { logCsv, statsCsv } from './shared/csv';
+import type { MapLine } from './render/overlays';
+import type { GraphMarker } from './ui/graphs';
+import { buildCompare, type CompareApi } from './ui/compare';
+import { openGiftDialog } from './ui/giftDialog';
+import { eventYears } from './sim/events';
 import { decodeMap, decodeRun, encodeMap, encodeRun } from './shared/save';
 import { areaName } from './sim/world/regions';
 import { Editor } from './editor/editor';
 import { Layer, cloneMap, createMap } from './editor/mapState';
 import { RegionsPreview } from './editor/regionsPreview';
 import { Renderer, type SetupView } from './render/renderer';
-import { GROUP_COLORS } from './render/palette';
-import { AgeClass, personSprite } from './render/sprites';
+import { GROUP_COLORS, usePalette } from './render/palette';
+import { AgeClass, carrySprite, clearComposites, personSprite } from './render/sprites';
 import type { WalkerSprite } from './render/decor';
+import { StoryDirector } from './render/storyCam';
+import { GifRecorder, screenshot } from './render/capture';
+import { installPixelFont } from './render/pixelFont';
+import { Ambient } from './audio/ambient';
+import { buildPresentBar } from './ui/presentBar';
 import { buildLayout, showToast } from './ui/layout';
-import { buildRunToolbar, buildToolbar, type RunToolbarApi, type ToolbarApi, type ViewMode } from './ui/toolbar';
+import { buildRunToolbar, buildToolbar, type InterveneTool, type RunToolbarApi, type ToolbarApi, type ViewMode } from './ui/toolbar';
 import { buildSetupPanel, type SetupPanelActions, type SetupPanelApi, type SetupState } from './ui/setupPanel';
 import { buildRunPanel, type RunPanelApi } from './ui/runPanel';
 import { openEventDialog, type PickKind } from './ui/eventDialog';
@@ -34,6 +44,7 @@ import * as storage from './ui/storage';
 import { RunSession } from './runSession';
 import { openAbout, openTutorial } from './ui/tutorial';
 import { scenarioB } from './presets/scenarios';
+import { BUILTIN_SCENARIOS } from './presets/builtins';
 import { h } from './ui/layout';
 
 const TILE = CONFIG.map.tilePx;
@@ -48,6 +59,8 @@ const setup: SetupState = {
   events: [],
   seed: CONFIG.editor.defaultSeed,
   climateDrift: 'off',
+  interventionMode: false,
+  interventions: [],
 };
 
 let mode: 'setup' | 'run' = 'setup';
@@ -74,18 +87,35 @@ const view: SetupView = {
   hover: null,
   showRain: false,
   showElevation: false,
-  showRisk: null,
+  showHeat: null,
+  showTerritoryFill: false,
+  lines: [],
   showAreas: true,
   brushSize: editor.brushSize,
   hoverArea: -1,
   running: false,
+  playing: false,
   runGroups: [],
   showFog: false,
   territory: [],
   selectedPerson: null,
+  photo: false,
 };
 
+// F8 look settings (day and night, weather, sound, colour-blind colours), remembered in this browser.
+const look = storage.loadLook();
+if (look.colourBlind) usePalette('colourBlind');
 const renderer = new Renderer(ui.canvas, view);
+renderer.light.enabled = look.dayNight;
+renderer.weather.enabled = look.weather;
+const ambient = new Ambient(look.muted);
+const story = new StoryDirector();
+const gif = new GifRecorder();
+const caption = h('div', { class: 'caption' });
+ui.stage.append(caption);
+let followOn = false;
+let lastLapse = false;
+void installPixelFont();
 const regions = new RegionsPreview(editor.map, (a) => renderer.setAreas(a));
 renderer.setAreas(regions.current);
 
@@ -199,18 +229,25 @@ function applyRun(run: RunSetup): boolean {
   setup.events = run.events;
   setup.seed = run.seed;
   setup.climateDrift = run.climateDrift;
+  setup.interventionMode = run.interventionMode === true;
+  setup.interventions = run.interventions ?? [];
   panel.refresh();
   return true;
 }
 
-/** The example from the tutorial (§20.8): Scenario B, "Smart desert vs rich forest", seed 48213. */
-function loadExample(): void {
+/** Loads a ready-made run into the editor, asking first if that would replace the owner's work. */
+function loadScenario(build: () => RunSetup, label: string, hint: string): void {
   if (mode === 'run') { showToast(ui.toast, 'Stop the run first (Stop run, top left).'); return; }
   const busy = setup.founders.length > 0 || editor.canUndo;
-  if (busy && !confirm('Load the example? The current map, groups and events will be replaced.')) return;
-  applyRun(scenarioB());
+  if (busy && !confirm(`Load ${label}? The current map, groups and events will be replaced.`)) return;
+  if (!applyRun(build())) return;
   panel.show('Run');
-  showToast(ui.toast, 'Example loaded: press Run ▶, then 8× to watch the two groups.');
+  showToast(ui.toast, hint);
+}
+
+/** The example from the tutorial (§20.8): Scenario B, "Smart desert vs rich forest", seed 48213. */
+function loadExample(): void {
+  loadScenario(() => scenarioB(), 'the example', 'Example loaded: press Run ▶, then 8× to watch the two groups.');
 }
 
 function currentRun(): RunSetup {
@@ -222,6 +259,7 @@ function currentRun(): RunSetup {
     events: setup.events,
     seed: setup.seed,
     climateDrift: setup.climateDrift,
+    ...(setup.interventionMode ? { interventionMode: true, interventions: setup.interventions } : {}),
   };
 }
 
@@ -294,6 +332,10 @@ const panelActions: SetupPanelActions = {
     replaceMap(createMap());
     panel.setStatus('New map ready.', 'ok');
   },
+  loadBuiltin: (id) => {
+    const b = BUILTIN_SCENARIOS.find((s) => s.id === id);
+    if (b) loadScenario(b.build, `"${b.name}"`, `"${b.name}" loaded: press Run ▶ and watch.`);
+  },
   savePreset: (name) => {
     if (!name) { panel.setStatus('Type a preset name first.', 'err'); return; }
     const exists = storage.listPresets();
@@ -359,6 +401,13 @@ let session: RunSession | null = null;
 let runView: ViewMode = 'normal';
 let runToolbar: RunToolbarApi | null = null;
 let runAnimals: Float32Array[] | null = null;
+// F7 observer tools.
+let runSetup: RunSetup | null = null;
+let heat: HeatLayer | null = null;
+let linesOn = false;
+let trailsOn = false;
+let tool: InterveneTool | null = null;
+let compare: CompareApi | null = null;
 
 const bottom = buildBottomBar(ui.bottom, {
   start: () => startRun(),
@@ -373,7 +422,7 @@ const bottom = buildBottomBar(ui.bottom, {
   },
   backToNow: () => session?.send({ type: 'backToNow' }),
 });
-renderer.onFps = (fps) => bottom.setFps(fps);
+renderer.onFps = (fps, ms) => bottom.setFps(fps, ms);
 bottom.setSetupMode(SETUP_HINT);
 
 // Selection and inspector (§21.1).
@@ -389,17 +438,114 @@ let inspectTimer: ReturnType<typeof setInterval> | null = null;
 const fogOn = (): boolean => (runView === 'fog' || runView === 'follow') && selectedGroup !== null;
 const territoryOn = (): boolean => runView === 'territory' || runView === 'follow';
 
+function refreshRunToolbar(): void {
+  runToolbar?.refresh({ mode: runView, heat, lines: linesOn, trails: trailsOn, tool });
+  refreshPresent();
+}
+
 function setRunView(m: ViewMode): void {
   runView = m;
   view.showRain = m === 'rain';
-  // F5 risk views: the worker sends the layer each year while one is shown.
-  const risk = m === 'fireRisk' || m === 'floodRisk' ? m : null;
-  view.showRisk = risk;
-  session?.send({ type: 'layer', layer: risk });
   view.showFog = fogOn();
+  // F7: every lineage's land is filled in while Territory is on; the worker sends it each year.
+  view.showTerritoryFill = territoryOn();
+  session?.send({ type: 'territory', on: view.showTerritoryFill });
   updateTerritory();
-  runToolbar?.refresh(runView, renderer.camera.zoom > 1);
-  if ((m === 'fog' || m === 'territory') && selectedGroup === null) showToast(ui.toast, 'Click a group (its home or one of its people) first.');
+  refreshRunToolbar();
+  if (m === 'fog' && selectedGroup === null) showToast(ui.toast, 'Click a group (its home or one of its people) first.');
+}
+
+/** F5 risk views and F7 heatmaps: the worker sends the layer each year while one is shown. */
+function setHeat(k: HeatLayer | null): void {
+  heat = k;
+  view.showHeat = k;
+  session?.send({ type: 'layer', layer: k });
+  refreshRunToolbar();
+}
+
+// ---------- F7: relation lines and migration trails ----------
+
+const LINE_COLOURS = { trade: '#6fcf4f', war: '#d94f4f', alliance: '#4f7fd9', coexist: '#a39d92' } as const;
+interface Trail { x1: number; y1: number; x2: number; y2: number; colour: string; year: number }
+let trails: Trail[] = [];
+let trailHomes = new Map<number, { x: number; y: number; lineageId: number }>();
+let trailYear = -1;
+
+/** Moves and new groups since the last frame become trails; a jump in time starts them afresh. */
+function updateTrails(f: Frame): void {
+  if (f.isPast || f.year < trailYear) {
+    trails = [];
+    trailHomes = new Map();
+  }
+  trailYear = f.year;
+  if (f.isPast) return;
+  const fresh = trailHomes.size === 0;
+  const next = new Map<number, { x: number; y: number; lineageId: number }>();
+  for (const g of f.groups) {
+    const colour = GROUP_COLORS[g.colourIndex % GROUP_COLORS.length]!;
+    const was = trailHomes.get(g.id);
+    if (was && (was.x !== g.homeX || was.y !== g.homeY)) {
+      trails.push({ x1: was.x, y1: was.y, x2: g.homeX, y2: g.homeY, colour, year: f.year });
+    } else if (!was && !fresh) {
+      // A new group set off from the nearest home of its lineage (a split or refugees).
+      let from: { x: number; y: number } | null = null;
+      let best = Infinity;
+      for (const o of trailHomes.values()) {
+        if (o.lineageId !== g.lineageId) continue;
+        const d = (o.x - g.homeX) ** 2 + (o.y - g.homeY) ** 2;
+        if (d < best) { best = d; from = o; }
+      }
+      if (from) trails.push({ x1: from.x, y1: from.y, x2: g.homeX, y2: g.homeY, colour, year: f.year });
+    }
+    next.set(g.id, { x: g.homeX, y: g.homeY, lineageId: g.lineageId });
+  }
+  trailHomes = next;
+  trails = trails.filter((t) => f.year - t.year < CONFIG.render.trailYears);
+}
+
+function updateLines(f: Frame): void {
+  const out: MapLine[] = [];
+  if (linesOn) {
+    const home = new Map(f.groups.map((g) => [g.id, g]));
+    for (const r of f.relations) {
+      const a = home.get(r.a);
+      const b = home.get(r.b);
+      if (!a || !b) continue;
+      out.push({
+        x1: a.homeX, y1: a.homeY, x2: b.homeX, y2: b.homeY, colour: LINE_COLOURS[r.kind], alpha: CONFIG.render.relationLineAlpha,
+        dash: r.kind === 'coexist' ? [2, 3] : r.kind === 'alliance' ? [5, 2] : [], arrow: false,
+      });
+    }
+  }
+  if (trailsOn) {
+    for (const t of trails) {
+      const fade = 1 - (f.year - t.year) / CONFIG.render.trailYears;
+      out.push({ x1: t.x1, y1: t.y1, x2: t.x2, y2: t.y2, colour: t.colour, alpha: CONFIG.render.trailAlpha * fade, dash: [], arrow: true });
+    }
+  }
+  view.lines = out;
+}
+
+/** F7 graph markers: planned events shaded, disasters and interventions as ticks. */
+function graphMarkers(): GraphMarker[] {
+  const out: GraphMarker[] = [];
+  for (const ev of runSetup?.events ?? []) {
+    const { start, end } = eventYears(ev);
+    out.push({ start, end, colour: ev.kind === 'drought' ? '#e0c48a' : ev.kind === 'plague' ? '#b8323a' : '#5d9cc9', label: describeEvent(ev, -1) });
+  }
+  // One tick per year with disasters (a busy world logs thousands), labelled with the first.
+  const disasters = new Map<number, { first: string; n: number }>();
+  for (const e of runLog) {
+    if (e.type === 'intervention') out.push({ start: e.year, end: e.year + 1, colour: '#ffffff', label: e.text });
+    else if (e.type === 'hazard') {
+      const d = disasters.get(e.year);
+      if (d) d.n++; else disasters.set(e.year, { first: e.text, n: 1 });
+    }
+  }
+  for (const [year, d] of disasters) {
+    out.push({ start: year, end: year + 1, colour: '#e8833a', label: d.n > 1 ? `${d.first} (+${d.n - 1} more)` : d.first });
+  }
+  return out;
 }
 
 /** Territory (§18.7): a dotted range circle around every home of the selected group's lineage. */
@@ -456,6 +602,8 @@ function inspectAt(tx: number, ty: number, mx: number, my: number): void {
     }, null);
   }
   selection = { x: tx, y: ty, personId, groupId: group?.id ?? null };
+  // F7: the clicked band person's family and life story are recorded from now on.
+  if (personId !== view.selectedPerson) session?.send({ type: 'person', personId });
   view.selectedPerson = personId;
   if (group) selectGroup(group.id);
   requestInspect();
@@ -464,13 +612,61 @@ function inspectAt(tx: number, ty: number, mx: number, my: number): void {
 
 function clearSelection(): void {
   selection = null;
+  if (view.selectedPerson !== null) session?.send({ type: 'person', personId: null });
   view.selectedPerson = null;
   selectGroup(null);
   runPanel?.setInspect(null);
 }
 
-/** Village walkers are ordinary adults in the village colour (§18.5). */
-const walkerSprite: WalkerSprite = (look, frame) => personSprite({ ...look, ageClass: AgeClass.Adult }, frame);
+// ---------- F7: intervention mode (D5) ----------
+
+function setTool(t: InterveneTool | null): void {
+  tool = t;
+  if (t === 'gift') {
+    tool = null;
+    const g = session?.lastFrame?.groups.find((o) => o.id === selectedGroup);
+    if (!g) showToast(ui.toast, 'Click a group first, then Gift.');
+    else openGiftDialog(g.name, g.discoveries, (d) => intervene({ kind: 'gift', year: 0, month: 0, groupId: g.id, discovery: d }));
+  } else if (t === 'move' && selectedGroup === null) {
+    tool = null;
+    showToast(ui.toast, 'Click a group first, then Move.');
+  }
+  ui.canvas.classList.toggle('place', tool !== null);
+  setBanner(tool === 'flood' ? 'Click where the flood strikes (Esc to cancel)'
+    : tool === 'fire' ? 'Click where the fire starts (Esc to cancel)'
+      : tool === 'move' ? 'Click the new home of the selected group (Esc to cancel)' : null);
+  refreshRunToolbar();
+}
+
+/** Sends an intervention; the worker stamps it with the live month and makes it part of the run. */
+function intervene(iv: Intervention): void {
+  if (!session) return;
+  if (session.lastFrame?.isPast) { showToast(ui.toast, 'Go back to now first: interventions happen in the present.'); return; }
+  session.send({ type: 'intervene', intervention: iv });
+}
+
+/** A map click with an intervention tool picked. */
+function interveneAt(x: number, y: number): void {
+  const t = tool;
+  setTool(null);
+  if (t === 'flood') intervene({ kind: 'flood', year: 0, month: 0, at: { x, y } });
+  else if (t === 'fire') intervene({ kind: 'fire', year: 0, month: 0, at: { x, y } });
+  else if (t === 'move' && selectedGroup !== null) {
+    const m = session!.map;
+    const i = y * m.width + x;
+    if (m.ground[i] === Ground.Water || (m.wall[i] !== WallType.None && !session!.crossing[i])) {
+      showToast(ui.toast, 'A home must be on land, not water or a wall.');
+      return;
+    }
+    intervene({ kind: 'move', year: 0, month: 0, groupId: selectedGroup, to: { x, y } });
+  }
+}
+
+/** Village walkers are ordinary adults in the village colour (§18.5); F8: some carry something. */
+const walkerSprite: WalkerSprite = (look, frame, carry) => {
+  const p = { ...look, ageClass: AgeClass.Adult };
+  return carry ? carrySprite(p, carry, frame) : personSprite(p, frame);
+};
 
 function startRun(): void {
   const v = currentValidation();
@@ -479,7 +675,7 @@ function startRun(): void {
     panel.show('Run');
     return;
   }
-  const runSetup: RunSetup = {
+  const runSetup0: RunSetup = {
     version: 3,
     name: setup.name,
     map: cloneMap(editor.map),
@@ -487,43 +683,54 @@ function startRun(): void {
     events: structuredClone(setup.events),
     seed: setup.seed >>> 0,
     climateDrift: setup.climateDrift,
+    // F7: earlier interventions replay at their months; new ones are added as they are made.
+    ...(setup.interventionMode ? { interventionMode: true, interventions: structuredClone(setup.interventions) } : {}),
   };
+  runSetup = runSetup0;
   setMoving(null);
   mode = 'run';
   runAnimals = null;
+  trails = [];
+  trailHomes = new Map();
+  trailYear = -1;
+  tool = null;
   runLog.length = 0;
   runStats.length = 0;
   lastViewYear = null;
-  runLineages = runSetup.founders.map((f) => ({ id: f.id, name: f.name, colour: GROUP_COLORS[f.colorIndex % GROUP_COLORS.length]! }));
+  runLineages = runSetup0.founders.map((f) => ({ id: f.id, name: f.name, colour: GROUP_COLORS[f.colorIndex % GROUP_COLORS.length]! }));
   selection = null;
   selectedGroup = null;
   view.selectedPerson = null;
-  renderer.people.clear();
-  renderer.buildings.clear();
-  renderer.camps.clear();
-  renderer.life.clear();
+  followOn = false;
+  story.clear();
+  renderer.clearRun();
   renderer.fog.setKnown(null);
-  session = new RunSession(runSetup, {
+  session = new RunSession(runSetup0, {
     started: () => {},
     terrainChanged: (tiles) => (tiles === 'all' ? renderer.markAllTiles() : renderer.markTiles(tiles)),
     rainChanged: () => renderer.invalidateRain(),
     animalsChanged: (d) => { runAnimals = d; renderer.setAnimalDensities(d); },
     frame: (f) => {
       bottom.update(f);
+      if (f.timelapse !== lastLapse) { lastLapse = f.timelapse; refreshPresent(); }
       // The world changes under a still mouse, so keep the hover tooltip live.
       if (view.hover && ui.tooltip.style.display === 'block') ui.tooltip.textContent = tileInfo(view.hover.x, view.hover.y);
-      renderer.setSeason(CONFIG.seasonOfMonth[f.month] as Season);
-      setBanner(f.isPast ? `Viewing the past — ${yearLabel(f.year, f.month)}` : null);
-      renderer.people.update(f.people, f.speed === 8, performance.now());
-      renderer.buildings.update(session!.map, f.groups);
-      renderer.camps.update(session!.map, f.groups);
-      renderer.life.update(session!.map, f.groups, walkerSprite);
+      // F8: seasons ease with the months; a jump in time (full tiles) snaps them.
+      renderer.setMonth(f.month, f.fullTiles !== undefined);
+      view.playing = f.playing;
+      setBanner(f.timelapse ? `Time-lapse — ${yearLabel(f.year, f.month)} of ${f.liveYear.toLocaleString('en-US')}`
+        : f.isPast ? `Viewing the past — ${yearLabel(f.year, f.month)}` : null);
+      renderer.people.update(f.people, f.speed === 8 || f.timelapse, performance.now(), f.groups);
+      renderer.setGroups(f.groups, f.relations, walkerSprite);
       view.runGroups = f.groups.map((g) => ({
         name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup,
         sub: ERA_NAMES[g.era],
       }));
       if (f.selectedKnown) renderer.fog.setKnown(f.selectedKnown);
       updateTerritory();
+      updateTrails(f);
+      updateLines(f);
+      compare?.sync();
       const vy = f.isPast ? f.year : null;
       if (vy !== lastViewYear) { lastViewYear = vy; runPanel?.viewChanged(); }
     },
@@ -533,6 +740,8 @@ function startRun(): void {
       showToast(ui.toast, 'The simulation hit an error — see the browser console.');
     },
     log: (entries) => {
+      // F8: discovery sparkles, era rings and rockfalls for what happens now; story mode's big moments.
+      if (!session?.lastFrame?.isPast) { renderer.onLog(entries); story.push(entries); }
       runLog.push(...entries);
       // Trim in place: the log panel holds this same array.
       if (runLog.length > CONFIG.log.maxEntries) runLog.splice(0, runLog.length - CONFIG.log.maxEntries);
@@ -543,11 +752,18 @@ function startRun(): void {
       runPanel?.statsChanged();
     },
     inspect: (result) => runPanel?.setInspect(result),
-    layer: (kind, data) => renderer.setRisk(kind, data),
+    layer: (kind, data) => (kind === 'territory' ? renderer.setTerritory(data) : renderer.setHeat(kind, data)),
+    person: (story) => runPanel?.setStory(story),
+    intervened: (iv) => {
+      // Now part of this run; kept for the next run of the setup and for Export run.
+      runSetup0.interventions = [...(runSetup0.interventions ?? []), iv];
+      showToast(ui.toast, `Intervention saved for year ${iv.year.toLocaleString('en-US')}: it is part of this run now.`);
+    },
   });
   renderer.setMap(session.map);
   renderer.setCrossing(session.crossing);
-  renderer.setMarks(session.marks, session.hazards);
+  // The painted map (editor.map, unchanged during a run) shows where forest was cut and how dry this year is.
+  renderer.setRunLayers(session.marks, session.hazards, session.look, editor.map);
   renderer.terrainBudgetMs = CONFIG.render.terrainBudgetMs;
   // During a run, people come from the simulation, not from the setup.
   view.founders = NO_FOUNDERS;
@@ -557,19 +773,44 @@ function startRun(): void {
   view.brushSize = null;
   view.hoverArea = -1;
   ui.canvas.classList.remove('place');
-  runToolbar = buildRunToolbar(ui.toolbar, setRunView, () => toggleZoom(), () => stopRun());
+  runToolbar = buildRunToolbar(ui.toolbar, {
+    view: setRunView,
+    heat: setHeat,
+    lines: (on) => { linesOn = on; refreshRunToolbar(); if (session?.lastFrame) updateLines(session.lastFrame); },
+    trails: (on) => { trailsOn = on; refreshRunToolbar(); if (session?.lastFrame) updateLines(session.lastFrame); },
+    stop: () => stopRun(),
+    // F7 (D5): intervention tools only in intervention mode; experiments stay hands-off.
+    intervene: runSetup0.interventionMode ? setTool : undefined,
+  });
   setRunView(runView === 'fog' ? 'normal' : runView);
+  setHeat(heat);
+  const lineageName = (id: number): string => runLineages.find((l) => l.id === id)?.name ?? `Lineage ${id}`;
+  compare = buildCompare({
+    statsA: runStats,
+    setupA: () => runSetup0,
+    lineages: () => runLineages,
+    viewYear: () => lastViewYear,
+    onJump: jumpToYear,
+    markers: graphMarkers,
+    liveYear: () => session?.lastFrame?.liveYear ?? 0,
+    toast: (text) => showToast(ui.toast, text),
+  });
   runPanel = buildRunPanel(ui.tabs, ui.tabBody, {
     log: runLog,
     stats: runStats,
     lineages: () => runLineages,
     viewYear: () => lastViewYear,
-    onFollow: (groupId) => { selectGroup(groupId); setRunView('follow'); },
+    onFollow: (groupId) => { selectGroup(groupId); setRunView('follow'); followOn = true; refreshPresent(); },
     onJump: jumpToYear,
     onLogPick: pickLogEntry,
+    markers: graphMarkers,
+    compare,
+    exportStats: () => storage.downloadText(`${storage.safeFileName(runSetup0.name)}.graphs.csv`, statsCsv(runStats, lineageName), 'text/csv'),
+    exportLog: () => storage.downloadText(`${storage.safeFileName(runSetup0.name)}.log.csv`, logCsv(runLog), 'text/csv'),
   });
   inspectTimer = setInterval(requestInspect, CONFIG.ui.inspectRefreshMs);
   bottom.setRunMode();
+  refreshPresent();
 }
 
 function stopRun(): void {
@@ -577,6 +818,14 @@ function stopRun(): void {
   if (!confirm('Stop and return to setup? You can replay this exact run any time with the same seed.')) return;
   session.stop();
   session = null;
+  compare?.stop();
+  compare = null;
+  // Interventions made in this run stay with the setup: the next run replays them (F7).
+  if (runSetup?.interventionMode) setup.interventions = structuredClone(runSetup.interventions ?? []);
+  tool = null;
+  view.lines = [];
+  view.showHeat = null;
+  view.showTerritoryFill = false;
   runToolbar = null;
   runAnimals = null;
   runPanel = null;
@@ -585,18 +834,20 @@ function stopRun(): void {
   selection = null;
   selectedGroup = null;
   view.running = false;
+  view.playing = false;
   view.showFog = false;
   view.territory = [];
   view.selectedPerson = null;
+  followOn = false;
+  story.on = false;
+  story.clear();
+  caption.style.display = 'none';
   setPicking(null);
-  renderer.people.clear();
-  renderer.buildings.clear();
-  renderer.camps.clear();
-  renderer.life.clear();
+  renderer.clearRun();
   mode = 'setup';
   setBanner(null);
   renderer.setCrossing(null);
-  renderer.setMarks(null);
+  renderer.setRunLayers(null, null, null, null);
   renderer.terrainBudgetMs = Infinity;
   renderer.setMap(editor.map);
   view.founders = setup.founders;
@@ -606,15 +857,111 @@ function stopRun(): void {
   panel.show('Run');
   bottom.setSetupMode(SETUP_HINT);
   syncView();
+  refreshPresent();
 }
 
-// ---------- zoom and pan (§18.8) ----------
+// ---------- zoom and pan (§18.8; F8: 1× / 2× / 4×, wheel, follow cam, story mode) ----------
 
 let lastMouseMap = { x: renderer.camera.viewW / 2, y: renderer.camera.viewH / 2 };
 
 function toggleZoom(): void {
   renderer.camera.toggle(lastMouseMap.x, lastMouseMap.y);
-  runToolbar?.refresh(runView, renderer.camera.zoom > 1);
+  story.userActed(performance.now());
+  refreshPresent();
+}
+
+ui.canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const p = canvasPoint(e);
+  const m = renderer.camera.toMap(p.x, p.y);
+  renderer.camera.wheel(e.deltaY, m.x, m.y);
+  story.userActed(performance.now());
+  refreshPresent();
+}, { passive: false });
+
+/** Every frame: the follow cam, story mode's camera and caption, and the ambient sound. */
+renderer.onFrame = (now) => {
+  const groups = session?.lastFrame?.groups ?? [];
+  const followed = followOn ? groups.find((g) => g.id === selectedGroup) : undefined;
+  renderer.camera.follow = followed ? { x: (followed.homeX + 0.5) * TILE, y: (followed.homeY + 0.5) * TILE } : null;
+  const moment = mode === 'run' ? story.update(now) : null;
+  if (moment?.fresh && moment.entry.x !== null && moment.entry.y !== null) {
+    renderer.camera.centreOn((moment.entry.x + 0.5) * TILE, (moment.entry.y + 0.5) * TILE, CONFIG.render.f8.story.zoom);
+    caption.textContent = `Year ${moment.entry.year.toLocaleString('en-US')} — ${moment.entry.text}`;
+    caption.style.display = 'block';
+    refreshPresent();
+  } else if (!moment) caption.style.display = 'none';
+  ambient.update(now, renderer.soundScene(now));
+};
+
+// ---------- F8 presentation: camera, capture and look ----------
+
+const appRoot = document.getElementById('app')!;
+
+function setPhoto(on: boolean): void {
+  view.photo = on;
+  appRoot.classList.toggle('photo', on);
+  if (on) showToast(ui.toast, 'Photo mode: press P or Esc to show the controls again.');
+}
+
+function saveLook(): void {
+  storage.saveLook(look);
+  refreshPresent();
+}
+
+/** Lineage colours changed: forget every sprite and list drawn in the old ones. */
+function restyle(): void {
+  clearComposites();
+  renderer.people.restyle();
+  renderer.life.clear();
+  renderer.battles.clear();
+  if (session?.lastFrame) renderer.setGroups(session.lastFrame.groups, session.lastFrame.relations, walkerSprite);
+  if (runSetup) runLineages = runSetup.founders.map((f) => ({ id: f.id, name: f.name, colour: GROUP_COLORS[f.colorIndex % GROUP_COLORS.length]! }));
+  runPanel?.statsChanged();
+  runPanel?.logChanged();
+  if (session && view.showTerritoryFill) session.send({ type: 'territory', on: true });
+  if (mode === 'setup') panel.refresh();
+}
+
+const fileYear = (): string => `pixel-ages-${storage.safeFileName(setup.name)}-year-${session?.lastFrame?.year ?? 0}`;
+
+const present = buildPresentBar(ui.bottom, {
+  zoom: () => toggleZoom(),
+  follow: () => {
+    if (!followOn && selectedGroup === null) { showToast(ui.toast, 'Click a group (its home or one of its people) first.'); return; }
+    followOn = !followOn;
+    refreshPresent();
+  },
+  story: () => {
+    story.on = !story.on;
+    if (!story.on) { story.clear(); caption.style.display = 'none'; }
+    else showToast(ui.toast, 'Story mode: the camera will jump to big moments as they happen.');
+    refreshPresent();
+  },
+  timelapse: () => {
+    if (!session) return;
+    session.send({ type: 'timelapse' });
+  },
+  shot: () => screenshot(ui.canvas, `${fileYear()}.png`),
+  gif: () => gif.start(ui.canvas, `${fileYear()}.gif`, (text) => { showToast(ui.toast, text); refreshPresent(); }),
+  photo: () => setPhoto(!view.photo),
+  dayNight: () => { look.dayNight = !look.dayNight; renderer.light.enabled = look.dayNight; saveLook(); },
+  weather: () => { look.weather = !look.weather; renderer.weather.enabled = look.weather; saveLook(); },
+  sound: () => { look.muted = !look.muted; ambient.setMuted(look.muted); saveLook(); },
+  colourBlind: () => {
+    look.colourBlind = !look.colourBlind;
+    usePalette(look.colourBlind ? 'colourBlind' : 'default');
+    restyle();
+    saveLook();
+  },
+});
+
+function refreshPresent(): void {
+  present.refresh({
+    zoom: renderer.camera.targetZoom, follow: followOn, story: story.on, timelapse: session?.lastFrame?.timelapse ?? false,
+    recording: gif.busy, dayNight: look.dayNight, weather: look.weather, muted: look.muted, colourBlind: look.colourBlind,
+    running: mode === 'run',
+  });
 }
 
 // ---------- mouse ----------
@@ -641,6 +988,7 @@ ui.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 let panning: { x: number; y: number } | null = null;
 
 ui.canvas.addEventListener('mousedown', (e) => {
+  story.userActed(performance.now());
   if (e.button === 2) {
     if (renderer.camera.zoom > 1) panning = { x: e.clientX, y: e.clientY };
     return;
@@ -649,6 +997,7 @@ ui.canvas.addEventListener('mousedown', (e) => {
   const t = tileAt(e);
   if (!t) return;
   if (mode === 'run') {
+    if (tool !== null) { interveneAt(t.x, t.y); return; }
     const p = canvasPoint(e);
     const m = renderer.camera.toMap(p.x, p.y);
     inspectAt(t.x, t.y, m.x, m.y);
@@ -762,8 +1111,9 @@ window.addEventListener('keydown', (e) => {
   if (document.querySelector('.modal-back')) return;
   const key = e.key.toLowerCase();
 
-  // Both modes: zoom and pan.
+  // Both modes: photo mode, zoom and pan.
   if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (key === 'p' || (e.key === 'Escape' && view.photo)) { setPhoto(!view.photo); return; }
     if (key === 'z') { toggleZoom(); return; }
     const pan = CONFIG.render.panStepPx;
     const d: Record<string, [number, number]> = {
@@ -774,6 +1124,7 @@ window.addEventListener('keydown', (e) => {
     if (step && renderer.camera.zoom > 1) {
       e.preventDefault();
       renderer.camera.pan(step[0], step[1]);
+      story.userActed(performance.now());
       return;
     }
   }
@@ -786,12 +1137,17 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === '8') session.send({ type: 'speed', value: 8 });
     else if (e.key === '.') session.send({ type: 'step' });
     else if (e.key === 'Escape') {
-      if (selection || selectedGroup !== null) clearSelection();
+      if (tool !== null) setTool(null);
+      else if (selection || selectedGroup !== null) clearSelection();
       else if (f?.isPast) session.send({ type: 'backToNow' });
     }
     else if (key === 'i') runPanel?.show('Inspect');
     else if (key === 'g') runPanel?.show('Graphs');
     else if (key === 'l') runPanel?.show('Log');
+    // F8: follow cam, story mode, time-lapse.
+    else if (key === 'c') { if (selectedGroup !== null || followOn) { followOn = !followOn; refreshPresent(); } }
+    else if (key === 'm') { story.on = !story.on; if (!story.on) { story.clear(); caption.style.display = 'none'; } refreshPresent(); }
+    else if (key === 't') session.send({ type: 'timelapse' });
     return;
   }
 
@@ -826,6 +1182,7 @@ window.addEventListener('keydown', (e) => {
 
 buildSetupToolbar();
 syncView();
+refreshPresent();
 renderer.start();
 
 // About (version, seeds, credits) and the first-launch tutorial (§20.8).

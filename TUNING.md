@@ -91,3 +91,15 @@ Each pass: what changed, why, and the results before and after.
 **Goal (future blueprint §10.8):** forest returns over cleared land and ruins at the default rain.
 
 **Change:** `plants.forest.spreadMinRain` 55 → 45. At 55, forest never spread at the new-map rain of 50, so every clearing stayed open for good. At 45 forest spreads at rain 50 and still not in dry land (rain 25–44 keeps existing forest but never gains).
+
+## Pass 6 — F6 (inequality and war), 16 Oct 2026
+
+**Goal (future blueprint §12.9):** conflict gains raids and alliances without F6 turning every big village into a war machine.
+
+**Measured:** Scenario D, 10 seeds, 600 years. At the starting numbers (inequality war, trade and absorb weights 20, cooperation fall 0.05) most villages got a chief, inequality settled near 0.8, and +16 on the war score put it above coexisting: median wars ~170 against ~100 with F6 off, ~3× the conquests, and a third of the people.
+
+**Change:** `future.society.inequalityWarWeight`, `inequalityTradeWeight`, `inequalityAbsorbWeight` 20 → 5; `inequalityCoopFall` 0.05 → 0.1 (inequality settles near 0.38 at cooperation 50).
+
+**Result:** median wars ~38 (fewer than with F6 off: walls and alliances deter), alliances in 9/10 seeds, raids in 5/10.
+
+**Open for F9:** Scenario D population at year 600 is still below the F6-off runs. The largest part was wider contact spreading F5 outbreaks along trade links (now only horses widen contact, DECISIONS 13.16). F5 disease itself is strong: in one seed, turning outbreaks off tripled the population.

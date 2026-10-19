@@ -1,7 +1,7 @@
 // JSON encode/decode for map presets and run files (§17.4).
 // Typed arrays are stored as base64 strings of their bytes.
 
-import type { MapData, RunSetup, FounderGroup, PlannedEvent, ClimateDrift } from './types';
+import type { MapData, RunSetup, FounderGroup, PlannedEvent, ClimateDrift, Intervention } from './types';
 
 // Version 3 (F4) adds the elevation layer, version 2 (F1) the Tin and Salt resources. Older
 // files are still valid: they load as version 3 with elevation 0 everywhere.
@@ -128,6 +128,8 @@ export function encodeRun(run: RunSetup): string {
     map: mapToJson(run.map),
     founders: run.founders,
     events: run.events,
+    // F7 (D5): left out of hands-off runs, so their files stay exactly as before.
+    ...(run.interventionMode ? { interventionMode: true, interventions: run.interventions ?? [] } : {}),
   });
 }
 
@@ -148,6 +150,9 @@ export function decodeRun(text: string): RunSetup {
     events: j.events as PlannedEvent[],
     seed,
     climateDrift: drift,
+    ...(j.interventionMode === true
+      ? { interventionMode: true, interventions: Array.isArray(j.interventions) ? (j.interventions as Intervention[]) : [] }
+      : {}),
   };
 }
 

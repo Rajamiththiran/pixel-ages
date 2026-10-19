@@ -1,10 +1,10 @@
 // Main-thread side of a run: owns the worker, sends commands, and applies frames to a
 // local copy of the tiles that the renderer draws. Rendering never changes sim state.
 
-import type { LogEntry, MapData, RunSetup, YearStats } from './shared/types';
+import type { Intervention, LogEntry, MapData, RunSetup, YearStats } from './shared/types';
 import {
-  TILE_BYTES, TILE_UPDATE_BYTES, unpackTile, type AreaInfo, type Frame, type FromWorker, type InspectResult, type RiskLayer,
-  type ToWorker,
+  TILE_BYTES, TILE_UPDATE_BYTES, unpackTile, type AreaInfo, type Frame, type FromWorker, type InspectResult, type MapLayer,
+  type PersonStory, type ToWorker,
 } from './shared/protocol';
 import { cloneMap } from './editor/mapState';
 
@@ -20,8 +20,12 @@ export interface RunHandlers {
   log(entries: LogEntry[]): void;
   stats(rows: YearStats[]): void;
   inspect(result: InspectResult): void;
-  /** F5 risk view data (1 byte per tile). */
-  layer(kind: RiskLayer, data: Uint8Array): void;
+  /** F5 risk views, F7 heatmaps and territory fills (1 byte per tile). */
+  layer(kind: MapLayer, data: Uint8Array): void;
+  /** F7: the followed person's family and life story (null: nobody, or not a band person). */
+  person(story: PersonStory | null): void;
+  /** F7: an intervention became part of the run. */
+  intervened(iv: Intervention): void;
 }
 
 export class RunSession {
@@ -33,6 +37,8 @@ export class RunSession {
   readonly marks: Uint8Array;
   /** F5: per-tile hazards (burning, flooded) drawn over the terrain. */
   readonly hazards: Uint8Array;
+  /** F8: per-tile look (worn soil, salt, ash stage, silt) drawn over the terrain. */
+  readonly look: Uint8Array;
   lastFrame: Frame | null = null;
 
   constructor(setup: RunSetup, private readonly h: RunHandlers) {
@@ -40,6 +46,7 @@ export class RunSession {
     this.crossing = new Uint8Array(setup.map.width * setup.map.height);
     this.marks = new Uint8Array(setup.map.width * setup.map.height);
     this.hazards = new Uint8Array(setup.map.width * setup.map.height);
+    this.look = new Uint8Array(setup.map.width * setup.map.height);
     this.worker = new Worker(new URL('./sim/worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent<FromWorker>) => this.receive(e.data);
     this.worker.onerror = (e) => h.error(e.message || 'The simulation stopped with an error.');
@@ -65,6 +72,8 @@ export class RunSession {
       case 'inspectResult': this.h.inspect(msg.result); return;
       case 'stats': this.h.stats(msg.rows); return;
       case 'layer': this.h.layer(msg.layer, msg.data); return;
+      case 'person': this.h.person(msg.story); return;
+      case 'intervened': this.h.intervened(msg.intervention); return;
     }
   }
 
@@ -72,7 +81,7 @@ export class RunSession {
     const m = this.map;
     const n = m.width * m.height;
     if (f.fullTiles) {
-      for (let i = 0; i < n; i++) unpackTile(f.fullTiles, i * TILE_BYTES, m, m.rain, this.crossing, this.marks, this.hazards, i);
+      for (let i = 0; i < n; i++) unpackTile(f.fullTiles, i * TILE_BYTES, m, m.rain, this.crossing, this.marks, this.hazards, this.look, i);
       this.h.terrainChanged('all');
       this.h.rainChanged();
     } else if (f.tileUpdates) {
@@ -83,10 +92,11 @@ export class RunSession {
         const i = u[o]! | (u[o + 1]! << 8);
         const oldRain = m.rain[i];
         const before = lookBytes(m, this.crossing, i) + this.marks[i]! * 2 ** 48 + this.hazards[i]! * 2 ** 56;
-        unpackTile(u, o + 2, m, m.rain, this.crossing, this.marks, this.hazards, i);
+        const beforeLook = this.look[i];
+        unpackTile(u, o + 2, m, m.rain, this.crossing, this.marks, this.hazards, this.look, i);
         if (m.rain[i] !== oldRain) rain = true;
         // Rain alone doesn't change how a tile looks; skip the (costly) terrain redraw.
-        if (lookBytes(m, this.crossing, i) + this.marks[i]! * 2 ** 48 + this.hazards[i]! * 2 ** 56 !== before) terrain.push(i);
+        if (lookBytes(m, this.crossing, i) + this.marks[i]! * 2 ** 48 + this.hazards[i]! * 2 ** 56 !== before || this.look[i] !== beforeLook) terrain.push(i);
       }
       if (terrain.length > 0) this.h.terrainChanged(terrain);
       if (rain) this.h.rainChanged();

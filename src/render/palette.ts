@@ -33,18 +33,37 @@ export const PALETTE = {
   foam: '#d6e8ef',               // shoreline foam
   snow: '#eef2f4',               // mountain peaks
   flowerWhite: '#f4f1e8',        // grass flowers
+  frost: '#c9d6df',              // F8: winter frost on low land
+  mud: '#5a4632',                // F8: silt left by a flood, river banks
+  night: '#0b1030',              // F8: night tint
+  sick: '#8fbf3a',               // F8: disease tint over sick villages
 } as const;
 
 export type PaletteKey = keyof typeof PALETTE;
 
-/** Lineage (group) colours, in order. */
-export const GROUP_COLORS = [
-  '#d94f4f', '#4f7fd9', '#e0b030', '#9b59d0', '#39b6a6',
-  '#e07b2f', '#e05fa0', '#6fcf4f', '#f2f2f2', '#45c4e0',
-] as const;
-export const GROUP_COLOR_NAMES = [
-  'Red', 'Blue', 'Yellow', 'Purple', 'Teal', 'Orange', 'Pink', 'Lime', 'White', 'Cyan',
-] as const;
+/** Lineage colours: the default set, and a colour-blind-safe set (Okabe–Ito plus Tol), F8 §14.7. */
+const DEFAULT_LINEAGE = ['#d94f4f', '#4f7fd9', '#e0b030', '#9b59d0', '#39b6a6', '#e07b2f', '#e05fa0', '#6fcf4f', '#f2f2f2', '#45c4e0'];
+const DEFAULT_NAMES = ['Red', 'Blue', 'Yellow', 'Purple', 'Teal', 'Orange', 'Pink', 'Lime', 'White', 'Cyan'];
+const SAFE_LINEAGE = ['#e69f00', '#56b4e9', '#009e73', '#f0e442', '#0072b2', '#d55e00', '#cc79a7', '#f2f2f2', '#999999', '#aa4499'];
+const SAFE_NAMES = ['Orange', 'Sky blue', 'Green', 'Yellow', 'Blue', 'Vermilion', 'Pink', 'White', 'Grey', 'Purple'];
+
+/**
+ * Lineage (group) colours, in order. Changed in place by usePalette, so every reader sees the
+ * current set; colour indices (what runs store) stay the same.
+ */
+export const GROUP_COLORS: string[] = [...DEFAULT_LINEAGE];
+export const GROUP_COLOR_NAMES: string[] = [...DEFAULT_NAMES];
+
+export type LineagePalette = 'default' | 'colourBlind';
+let current: LineagePalette = 'default';
+export const currentPalette = (): LineagePalette => current;
+
+/** Switches the lineage colours. Callers redraw whatever cached the old colours. */
+export function usePalette(p: LineagePalette): void {
+  current = p;
+  GROUP_COLORS.splice(0, GROUP_COLORS.length, ...(p === 'colourBlind' ? SAFE_LINEAGE : DEFAULT_LINEAGE));
+  GROUP_COLOR_NAMES.splice(0, GROUP_COLOR_NAMES.length, ...(p === 'colourBlind' ? SAFE_NAMES : DEFAULT_NAMES));
+}
 
 export const SKIN_COLORS = [PALETTE.skinLight, PALETTE.skinMid, PALETTE.skinDark] as const;
 export const HAIR_COLORS = [PALETTE.ink, PALETTE.darkWood, PALETTE.wood] as const;

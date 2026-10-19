@@ -3,12 +3,13 @@
 
 import { CONFIG } from '../config';
 import {
-  Action, ACTION_NAMES, FORTIFICATION_NAMES, GROUND_NAMES, HAZARD_NAMES, Mode, NEED_NAMES, Plant, PLANT_NAMES, PRACTICE_NAMES, Resource, RESOURCE_NAMES, Sex,
+  Action, ACTION_NAMES, FORTIFICATION_NAMES, GROUND_NAMES, Hazard, HAZARD_NAMES, Mode, NEED_NAMES, Plant, PLANT_NAMES, PRACTICE_NAMES, Resource, RESOURCE_NAMES, Sex,
   SPECIES_NAMES, WallType, WALL_NAMES,
 } from '../shared/ids';
 import { Discovery, DISCOVERIES, ERA_NAMES, has } from '../shared/discoveries';
 import { pressure } from './society/walls';
-import type { GroupView, InspectResult } from '../shared/protocol';
+import { Look, PERSON_FLOATS, type GroupView, type InspectResult } from '../shared/protocol';
+import { Farmed } from './people/farming';
 import type { Group, SimState } from './state';
 import { areaName } from './world/regions';
 import { countMembers, groupColor, population, traitAverages } from './people/groups';
@@ -25,7 +26,10 @@ const SMELTING = [Discovery.copperWorking, Discovery.bronzeWorking, Discovery.ir
 
 const A = CONFIG.people.ages;
 
-/** 8 floats per person (§22): id, workX, workY, colour, flags, motherId, skin*3+hair, action. Lowest ids first, capped. */
+/**
+ * PERSON_FLOATS per person (§22): id, workX, workY, colour, flags, motherId, skin*3+hair, action,
+ * groupId (F8: people gather at their own campfire at night). Lowest ids first, capped.
+ */
 export function packPeople(s: SimState): Float32Array {
   const p = s.persons;
   const slots: number[] = [];
@@ -37,9 +41,9 @@ export function packPeople(s: SimState): Float32Array {
   const colour = new Map(s.groups.map((g) => [g.id, groupColor(s, g)]));
   const clothed = new Map(s.groups.map((g) => [g.id, hasActive(g, Discovery.clothing)]));
   const riding = new Map(s.groups.map((g) => [g.id, hasActive(g, Discovery.riding)]));
-  const out = new Float32Array(slots.length * 8);
+  const out = new Float32Array(slots.length * PERSON_FLOATS);
   slots.forEach((slot, k) => {
-    const o = k * 8;
+    const o = k * PERSON_FLOATS;
     const gid = p.groupId[slot]!;
     const months = p.ageMonths[slot]!;
     const ageClass = months < A.adult * 12 ? 0 : months >= A.elder * 12 ? 2 : 1;
@@ -54,6 +58,7 @@ export function packPeople(s: SimState): Float32Array {
     out[o + 5] = p.motherId[slot]!;
     out[o + 6] = p.skin[slot]! * 3 + p.hair[slot]!;
     out[o + 7] = action;
+    out[o + 8] = gid;
   });
   return out;
 }
@@ -64,7 +69,31 @@ export function groupViews(s: SimState): GroupView[] {
     homeX: g.homeX, homeY: g.homeY, population: population(g), era: g.era, discoveries: Array.from(g.discoveries),
     huts: g.huts, houses: g.houses, herd: Math.floor(g.herd), range: CONFIG.people.range.forage,
     farms: g.farmTiles.length,
+    fortification: g.fortification,
+    chief: g.chief,
+    sick: s.hazardsActive.some((h) => h.groupId === g.id && h.kind === Hazard.Outbreak && s.year < h.endYear),
   }));
+}
+
+const LK = CONFIG.render.f8.look;
+
+/** 0–3: how many of the ascending thresholds `v` is below (worn soil) or above (salt). */
+const levelBelow = (v: number, t: readonly number[]): number => (v < t[2]! ? 3 : v < t[1]! ? 2 : v < t[0]! ? 1 : 0);
+const levelAbove = (v: number, t: readonly number[]): number => (v > t[2]! ? 3 : v > t[1]! ? 2 : v > t[0]! ? 1 : 0);
+
+/**
+ * The look byte per tile (F8, protocol Look): worn soil and salt levels, the ash stage (years
+ * of ash left, at most 3) and silt on land flooded this year once the water has gone.
+ */
+export function computeLook(s: SimState, out: Uint8Array): Uint8Array {
+  for (let i = 0; i < out.length; i++) {
+    const silt = (s.farmedThisYear[i]! & Farmed.Flooded) !== 0 && s.floodMonths[i] === 0;
+    out[i] = (levelBelow(s.fertility[i]!, LK.wornBelow) << Look.wornShift)
+      | (levelAbove(s.salinity[i]!, LK.saltAbove) << Look.saltShift)
+      | (Math.min(3, s.ash[i]!) << Look.ashShift)
+      | (silt ? Look.Silt : 0);
+  }
+  return out;
 }
 
 const pct = (v: number): string => `${Math.round(v * 100)}%`;

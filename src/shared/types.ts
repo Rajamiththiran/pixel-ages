@@ -46,6 +46,16 @@ export type PlannedEvent =
 
 export type ClimateDrift = 'off' | 'slow' | 'strong';
 
+/**
+ * F7 intervention mode (D5): a change the owner made during a run, stored with the month it
+ * happened so the run replays exactly. Applied at the start of that month (before planned events).
+ */
+export type Intervention =
+  | { kind: 'flood'; year: number; month: number; at: { x: number; y: number } }
+  | { kind: 'fire'; year: number; month: number; at: { x: number; y: number } }
+  | { kind: 'gift'; year: number; month: number; groupId: number; discovery: number }
+  | { kind: 'move'; year: number; month: number; groupId: number; to: { x: number; y: number } };
+
 export interface LogEntry {
   year: number;
   month: number;
@@ -62,7 +72,7 @@ export type LogType =
   | 'discovery' | 'lostDiscovery' | 'eraUp' | 'eraDown' | 'ranOut'
   | 'split' | 'migrate' | 'becameVillage' | 'becameBand'
   | 'firstContact' | 'tradeStart' | 'war' | 'conquered' | 'absorbed' | 'raid' | 'alliance' | 'society'
-  | 'breach' | 'event' | 'animalsGone' | 'hazard' | 'groupExtinct' | 'lineageExtinct' | 'cannotReproduce' | 'perf';
+  | 'breach' | 'event' | 'intervention' | 'animalsGone' | 'hazard' | 'groupExtinct' | 'lineageExtinct' | 'cannotReproduce' | 'perf';
 
 export interface YearStats {
   year: number;
@@ -88,4 +98,7 @@ export interface RunSetup {
   events: PlannedEvent[];
   seed: number;                  // uint32
   climateDrift: ClimateDrift;
+  // F7 (D5): intervention mode. Absent or false = a hands-off experiment (v1 §2 #22).
+  interventionMode?: boolean;
+  interventions?: Intervention[]; // in the order they were made
 }

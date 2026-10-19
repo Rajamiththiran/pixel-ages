@@ -9,6 +9,19 @@ const EXPECTED: Record<string, [number, number]> = {
   goat_1: [5, 4], goat_2: [5, 4], horse_1: [7, 5], horse_2: [7, 5],
   hut: [8, 8], house: [16, 16], city: [16, 24],
   campfire_1: [3, 3], campfire_2: [3, 3], raft: [6, 3], boat: [8, 3], cart: [7, 4], bridge: [8, 8],
+  // F8 (future blueprint §14): poses, carried items, buildings by era, special buildings,
+  // fortifications, effects and icons.
+  gather_1: [5, 6], gather_2: [5, 6], farm_1: [6, 7], farm_2: [6, 7], cut_1: [6, 7], cut_2: [6, 7],
+  fish_1: [8, 7], fish_2: [8, 7], build_1: [6, 6], build_2: [6, 6], staff: [2, 6],
+  item_basket: [2, 2], item_meat: [2, 2], item_wood: [2, 2], item_pot: [2, 2], item_fish: [2, 1],
+  leanTo: [8, 8], longhouse: [16, 16], stoneHouse: [16, 16],
+  granary: [8, 8], well: [8, 8], kiln: [8, 8], smithy: [8, 8], scriptorium: [8, 8], temple: [16, 16],
+  palisadePost: [2, 5], stoneWallPiece: [3, 3], flame_1: [4, 5], flame_2: [4, 5], sailboat: [8, 7],
+  ...Object.fromEntries([
+    'fire', 'tool', 'weapon', 'boat', 'cloth', 'animal', 'wheat', 'pot', 'house', 'wheel', 'metal', 'scroll',
+    'drop', 'fish', 'wave', 'rock', 'dust', 'skull', 'bug', 'leaf', 'sun', 'cloud', 'snow', 'hand', 'berry',
+    'trade', 'shield', 'arrow', 'eye', 'star', 'people',
+  ].map((k) => [`icon_${k}`, [7, 7] as [number, number]])),
 };
 
 describe('sprite grids (§19)', () => {

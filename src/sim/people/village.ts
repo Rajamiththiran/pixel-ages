@@ -122,6 +122,9 @@ export function mergeSamples(rng: RngState, a: SampleMember[], popA: number, b: 
   if (b.length === 0 || popB <= 0) { const out = a.slice(); resizeSample(rng, out); return out; }
   if (a.length === 0 || popA <= 0) { const out = b.slice(); resizeSample(rng, out); return out; }
   const fromB = Math.min(V.sampleSize, Math.round((V.sampleSize * popB) / (popA + popB)));
+  // Too few newcomers for a place (a yearly marriage, F6): keep the sample as it is, rather than
+  // redrawing it with replacement, which would wear away its variety year after year.
+  if (fromB === 0) return a.map((m) => ({ ...m, pot: [...m.pot], act: [...m.act] }));
   const out: SampleMember[] = [];
   for (let k = 0; k < V.sampleSize - fromB; k++) out.push(a[int(rng, a.length)]!);
   for (let k = 0; k < fromB; k++) out.push(b[int(rng, b.length)]!);

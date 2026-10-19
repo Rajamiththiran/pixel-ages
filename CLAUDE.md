@@ -33,7 +33,9 @@ Code style: TypeScript `strict`, small pure functions, short comments that expla
 - F3 (food and environment, §9): built on the owner's request.
 - F4 (people change the landscape, §10; D7 elevation layer added): built on the owner's request.
 - F5 (elements and hazards, §11): built on the owner's request.
-- F6 (society, conflict and animals, §12): built on the owner's request; awaiting the owner's approval.
+- F6 (society, conflict and animals, §12): built on the owner's request.
+- F7 (observer tools, §13; D5 intervention mode added): built on the owner's request; approved.
+- F8 (graphics and sound, §14; D6 keep the style, D8 sound on by default): built on the owner's request; awaiting the owner's approval.
 
 ## Notes
 

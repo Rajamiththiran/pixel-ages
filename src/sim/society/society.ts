@@ -244,9 +244,8 @@ export function ploughMult(g: Group): number {
   return 1 + (WA.ploughMult - 1) * share;
 }
 
-/** Horses (Riding) or oxen pulling a Cart widen the group's reach for contact and trade. */
-export const workingAnimals = (g: Group): boolean =>
-  hasActive(g, Discovery.riding) || (hasActive(g, Discovery.cart) && g.herd >= 1);
+/** Horses (Riding) widen the group's reach for contact and trade ("Riding/Cart + horses", §12.8). */
+export const workingAnimals = (g: Group): boolean => hasActive(g, Discovery.riding);
 
 /** Herd yield × (1 + domestication). */
 export const domesticMult = (g: Group): number => 1 + g.domestication;

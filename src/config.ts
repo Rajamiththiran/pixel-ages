@@ -350,8 +350,10 @@ export const CONFIG = {
       chiefLostBelowPop: 150,    // … and goes when the group falls below 150
       inequalitySurplusGain: 0.02, // a year with a chief and a surplus
       inequalityWarWinGain: 0.05,  // each battle or raid won
-      inequalityCoopFall: 0.05,    // then × (1 − 0.05 × cooperation/100) a year: cooperative groups level out
-      inequalityWarWeight: 20, inequalityTradeWeight: 20, inequalityAbsorbWeight: 20, // contact scores ± weight × inequality
+      // Tuned in F6 (TUNING.md pass 6): fall 0.05 → 0.1 and weights 20 → 5; at 20 nearly every chiefdom
+      // was at war every year and Scenario D lost two thirds of its people by year 600.
+      inequalityCoopFall: 0.1,     // then × (1 − 0.1 × cooperation/100) a year: cooperative groups level out
+      inequalityWarWeight: 5, inequalityTradeWeight: 5, inequalityAbsorbWeight: 5, // contact scores ± weight × inequality
       // Marriage between groups and inbreeding (§12.3). Real basis: exogamy linked foraging bands.
       marriageShare: 0.02,       // share of unpaired young adults exchanged a year between groups at peace
       marriageMinAge: 16, marriageMaxAge: 30,
@@ -397,9 +399,15 @@ export const CONFIG = {
       domesticationPerYear: 0.01, domesticationMax: 1, // a herded herd's yield × (1 + domestication)
       ploughMult: 1.5,           // Plough + oxen: farm yield × 1.5 …
       oxenPerField: 2,           // … in full with 2 herd animals per field
-      tradeMult: 1.5,            // Riding, or a Cart with oxen: contact (and trade) range × 1.5
+      tradeMult: 1.5,            // Riding (horses): contact (and trade) range × 1.5
     },
     stoneHouse: { wood: 2, stone: 30 }, // Stone Building: houses of stone (F1 table §7.2)
+
+    // F7 — intervention mode (D5).
+    interventions: {
+      floodRadius: 3,            // a flood dropped off any floodplain covers low land within 3 tiles
+      floodMonths: 2,            // months it stands
+    },
   },
 
   walls: {
@@ -462,7 +470,13 @@ export const CONFIG = {
     waterShimmerMs: 500, riverFlowMs: 300,
     fogAlpha: 0.6, rainOverlayAlpha: 0.6, areaHoverAlpha: 0.2,
     elevationOverlayAlpha: 0.75, // F4: the height view while the Elevation brush is selected
-    riskOverlayAlpha: 0.8,       // F5: fire / flood risk views (alpha = risk × 0.8)
+    riskOverlayAlpha: 0.8,       // F5: fire / flood risk views (alpha = risk × 0.8); F7 heatmaps too
+    // F7 heatmaps (§13): the value that shows at full strength.
+    heat: { populationFull: 10, foodFull: 6, conflictYears: 50, conflictFull: 5 },
+    territoryAlpha: 0.3,         // F7 territory fills
+    relationLineAlpha: 0.8,      // F7 trade / war / alliance lines between homes
+    trailYears: 150,             // F7 migration trails fade over this many years
+    trailAlpha: 0.7,
     idleStepPx: 2,               // §18.6: idle people make a tiny random step of at most this many px
     childOffsetPx: [-3, 1],      // §18.6: children walk at mother's position + this offset
     pickRadiusPx: 3,             // §21.1: clicking within 3 px of a person selects them
@@ -475,7 +489,6 @@ export const CONFIG = {
     desertGrassMaxBlend: 0.4,    // grass on desert blends only up to 40%
     fruitSpeck: 0.08,
     resourceSpeckBase: 0.05, resourceSpeckScale: 0.25,
-    riverStreakEvery: 5,         // (px + py + t) % 5 === 0 → waterLight
     mountainWallInkSpeck: 0.15, mountainWallLightSpeck: 0.05,
     mountainPassSpeck: 0.10,
     // Extra terrain detail (owner request, 14 Oct 2026). All sizes in screen pixels.
@@ -517,7 +530,85 @@ export const CONFIG = {
     vesselSearchTiles: 3,        // raft / boat is drawn on the water tile nearest home, within 3 tiles
     // F4 marks on the land (terrain.ts markPixel).
     marks: { terraceDark: 0.75, ashSpeck: 0.25, pathBlend: 0.6, roadBlend: 0.8, pitRadius2: 4.5, ruinGap: 0.3,
-      floodBlend: 0.65, flameShare: 0.35, burnDark: 0.45 }, // F5: flood water over land; flames and char on burning tiles
+      flameShare: 0.35, burnDark: 0.45 }, // F5: flames and char on burning tiles (F8: flood water is the effects layer, f8.effects.floodAlpha)
+    // F8 graphics and sound (future blueprint §14). Visual only: nothing here reaches the simulation,
+    // except `look`, which the worker uses to pack the look byte it sends with each tile.
+    f8: {
+      // The look byte (worker side): soil worn by farming, salt, ash stage. Levels 1–3 start below/above these.
+      look: { wornBelow: [0.75, 0.5, 0.25], saltAbove: [0.15, 0.4, 0.8] },
+      // Seasons (§14.1): a tint per tile class and season, eased in real time so 8× (8 years a
+      // second) blurs toward the yearly average instead of flashing. Colours are palette keys.
+      season: {
+        easeMs: 150,             // time constant of the tint easing (1×: a year lasts 1,000 ms, ~70% of the swing shows; 8×: ~13%)
+        snowElevation: 6,        // winter snow lies on Mountain ground and on land at least this high
+        // [colour, alpha] per class: grass, forest, fruit, farmland, desert, cold (snow line)
+        spring: { grass: ['grassLight', 0.14], forest: ['grassLight', 0.10], fruit: ['flowerWhite', 0.10], farm: ['grassLight', 0.55], desert: ['grassLight', 0.06], cold: ['snow', 0.25] },
+        summer: { grass: ['sand', 0.20], forest: ['forest', 0.10], fruit: ['fruit', 0.18], farm: ['fireYellow', 0.55], desert: ['fireYellow', 0.08], cold: ['stoneLight', 0.0] },
+        autumn: { grass: ['wood', 0.18], forest: ['copper', 0.40], fruit: ['fruit', 0.25], farm: ['wood', 0.55], desert: ['clay', 0.08], cold: ['snow', 0.20] },
+        winter: { grass: ['frost', 0.28], forest: ['frost', 0.22], fruit: ['frost', 0.28], farm: ['frost', 0.45], desert: ['sand', 0.0], cold: ['snow', 0.82] },
+      },
+      // Height shading (§14.1, D7): light from the top-left; brightness changes this much per height step.
+      shade: { perStep: 0.05, max: 0.3 },
+      beachPx: 2,                // land pixels this close to a lake or the sea are beach (Grassland/Desert)
+      river: { cornerRadius: 5, dashLen: 3, dashEvery: 6, shimmer: 0.04 }, // curved banks, flowing dashes, glints
+      stumps: { cell: 4, belowPainted: 0.2, share: 0.6 }, // stumps where forest is this much below its painted density
+      soil: { wornPale: [0.12, 0.25, 0.4], saltWhite: [0.15, 0.35, 0.7], ashGreen: 0.35, siltBlend: 0.5, puddle: 0.04 },
+      trample: { radiusPx: 9, villagePerSqrtPop: 1.2, maxRadiusPx: 22, alpha: 0.55, ragged: 0.35 },
+      // Weather (§14.2): clouds drift over the map; it rains (or snows) under clouds where rain is high.
+      weather: {
+        cellTiles: 2,            // cloud field resolution
+        scaleCells: 9,           // size of a cloud, in cells
+        windPxPerS: 6,           // cloud drift (map px per second at any speed)
+        cover: 0.55,             // share of the sky clouded where rain is 100
+        shadowAlpha: 0.22, shadowOffsetPx: 10,
+        updateMs: 120,
+        rainAbove: 35,           // no rain particles under clouds where rain now is below this
+        maxDrops: 900, dropsPerCellPerS: 1.2, dropFallPx: 18, dropMs: 420,
+        snowMs: 2200, snowFallPx: 14,
+        droughtBelow: 0.6, wetAbove: 1.4, // rain now ÷ painted rain: cracks below, puddles above
+        crackShare: 0.12, puddleShare: 0.06,
+      },
+      // Day and night (§14.2): a real-time cycle that runs while the world plays.
+      light: { dayMs: 48000, nightShare: 0.3, dusk: 0.12, maxDark: 0.5, glowRadiusPx: 7, fireGlowRadiusPx: 12 }, // glows: lit windows, fires
+      // People and animals (§14.3).
+      people: {
+        poseFrameMs: 380,        // work poses (bending, hoeing, chopping) alternate this often
+        nightGatherTiles: 6,     // only people working this close to home walk to the fire at night
+        walkerCarryShare: 0.4,   // village walkers carrying a basket, pot or wood
+        fireRingPx: [5, 11],     // at night people sit this far from their campfire
+        nightGatherAbove: 0.55,  // night darkness above which bands gather at the fire
+        herdFollowers: 2, herdFollowPx: 6,
+        huntDeerPx: 9,           // the hunted deer stays about this far from the hunters
+        battleMax: 14, battleSpreadPx: 10, battleFrameMs: 140,
+      },
+      animals: { herdSpreadPx: 7, gallopMult: 3.5, gallopFrameMs: 110, wolfStalkMult: 0.5, wolfDashMult: 4, wolfSeekPx: 28, fleePx: 12 },
+      // Settlements (§14.4).
+      // Bands below era 2 build lean-tos; a village without Mud Brick draws every 4 huts as one longhouse.
+      buildings: { leanToBelowEra: 2, longhouseHuts: 4, wallPostStepPx: 3, wallMarginTiles: 1, wallMinTiles: 2, gateHalfAngle: 0.35 },
+      traffic: { boatsPer: 40, maxBoats: 3, boatRangeTiles: 6, boatSpeedPx: 5, cartsPer: 60, maxCarts: 2, cartRangeTiles: 8, cartSpeedPx: 7 },
+      smoke: { houseEveryMs: 1800, fireEveryMs: 500, puffMs: 2600, risePx: 14, driftPx: 6, hazeAlpha: 0.12, hazeRadiusTiles: 4 },
+      // Effects (§14.5).
+      effects: {
+        maxParticles: 1500,
+        flamesPerTile: 2, flameFrameMs: 120, fireSmokeEveryMs: 400,
+        floodSpreadMsPerTile: 160, floodFadeMs: 600, floodAlpha: 0.65, rippleShare: 0.05,
+        quakeRocks: 24, quakeDust: 16, quakeMs: 1800,
+        sickAlpha: 0.22, sickPulseMs: 1600, sickRadiusTiles: 3,
+        sparkleMs: 2200, sparkles: 10, iconRisePx: 12, eraGlowMs: 1800, eraGlowRadiusPx: 40,
+        maxBursts: 40,           // discovery / era / quake effects running at once (8× logs many)
+      },
+      // Camera (§14.6).
+      camera: { zooms: [1, 2, 4], easeMs: 180, followEaseMs: 400, labelScaleFromZoom: 2 }, // labels drawn 2× once zoomed this far
+      story: { holdMs: 4500, zoom: 2, queueMax: 6, idleAfterInputMs: 6000 },
+      timelapseTicksPerLoop: 600, // F8 time-lapse: replay up to this many months per worker loop (bounded by maxWorkMsPerLoop)
+      capture: { gifFps: 10, gifSeconds: 4, gifScale: 0.5, gifColours: 255 },
+      // Ambient sound (§14.7, D8: on by default, mute button). Gains 0–1, rates per second.
+      sound: {
+        master: 0.5, updateMs: 250, rampS: 0.6,
+        wind: 0.06, windMountain: 0.10, rain: 0.18, water: 0.04,
+        birdsPerS: 1.6, birdGain: 0.05, crackleGain: 0.07, cracklePerFire: 0.5, workPerS: 2.5, workGain: 0.05,
+      },
+    },
   },
 
   // Editor and setup UI (step 1). Not used by the simulation.
@@ -551,6 +642,7 @@ export const CONFIG = {
       intelligence: 100, cooperation: 50, strength: 50,
       maxPeople: 40, nameMaxLength: 20,
     },
-    smallGroupWarnBelow: 10,     // setup warning: smaller founder groups often die out by chance (F0)
+    smallGroupWarnBelow: 10,
+    storyMaxEvents: 200,         // F7: life-story lines kept for the followed person     // setup warning: smaller founder groups often die out by chance (F0)
   },
 } as const;

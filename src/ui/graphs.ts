@@ -1,5 +1,7 @@
 // Graphs (§21.2): one line per lineage in its colour, drawn with Canvas 2D. Hover shows every
 // lineage's value at that year; a click jumps the timeline there; a marker shows the viewed year.
+// F7 (§13): planned events and disasters are marked on the timeline, and a second run can be
+// drawn over the first (dotted) to compare them.
 
 import { CONFIG } from '../config';
 import type { YearStats } from '../shared/types';
@@ -34,6 +36,15 @@ const CHARTS: Chart[] = [
 const G = CONFIG.ui.graphs;
 const PAD = { left: 34, right: 6, top: 16, bottom: 14 };
 
+/** A shaded span (planned event) or a tick (disaster, intervention) on the timeline. */
+export interface GraphMarker { start: number; end: number; colour: string; label: string }
+
+export interface GraphExtras {
+  /** Run B's stats, drawn dotted over run A (Compare). */
+  compare?: () => readonly YearStats[] | null;
+  markers?: () => readonly GraphMarker[];
+}
+
 export interface GraphsApi {
   element: HTMLElement;
   redraw(): void;
@@ -41,6 +52,7 @@ export interface GraphsApi {
 
 export function buildGraphs(
   rows: readonly YearStats[], lineages: () => LineageInfo[], viewYear: () => number | null, onJump: (year: number) => void,
+  extras: GraphExtras = {},
 ): GraphsApi {
   const hidden = new Set<number>();
   let logScale = false;
@@ -78,7 +90,8 @@ export function buildGraphs(
 
   /** Rows shown: up to the viewed year when looking at the past. */
   function shown(): { list: readonly YearStats[]; maxYear: number } {
-    const last = rows.length ? rows[rows.length - 1]!.year : 0;
+    const b = extras.compare?.() ?? null;
+    const last = Math.max(rows.length ? rows[rows.length - 1]!.year : 0, b && b.length ? b[b.length - 1]!.year : 0);
     const vy = viewYear();
     if (vy === null) return { list: rows, maxYear: Math.max(1, last) };
     let n = rows.length;
@@ -117,11 +130,16 @@ export function buildGraphs(
     const ids = ls.map((l) => l.id);
     const step = Math.max(1, Math.ceil(list.length / G.maxPoints));
     const vy = viewYear();
+    const other = extras.compare?.() ?? null;
+    const marks = extras.markers?.() ?? [];
     CHARTS.forEach((chart, k) => {
       const c = canvases[k]!;
       const ctx = c.getContext('2d')!;
       ctx.clearRect(0, 0, c.width, c.height);
-      const [lo, hi] = yRange(chart, list, ids);
+      const [lo0, hi0] = yRange(chart, list, ids);
+      const [loB, hiB] = other ? yRange(chart, other, ids) : [lo0, hi0];
+      const lo = Math.min(lo0, loB);
+      const hi = Math.max(hi0, hiB);
       const useLog = chart.population === true && logScale;
       const ty = (v: number): number => {
         const t = useLog ? (Math.log10(Math.max(lo, v)) - Math.log10(lo)) / Math.max(1e-9, Math.log10(hi) - Math.log10(lo)) : (v - lo) / (hi - lo || 1);
@@ -147,6 +165,37 @@ export function buildGraphs(
       ctx.strokeStyle = '#454052';
       ctx.lineWidth = 1;
       ctx.strokeRect(PAD.left + 0.5, PAD.top + 0.5, c.width - PAD.left - PAD.right - 1, c.height - PAD.top - PAD.bottom - 1);
+      // Planned events shaded, disasters and interventions as thin ticks (F7).
+      for (const m of marks) {
+        const x0 = tx(Math.max(0, m.start));
+        const x1 = Math.max(x0 + 1, tx(Math.min(maxYear, m.end)));
+        ctx.fillStyle = m.colour;
+        ctx.globalAlpha = m.end - m.start > 1 ? 0.18 : 0.45;
+        ctx.fillRect(x0, PAD.top, x1 - x0, c.height - PAD.top - PAD.bottom);
+      }
+      ctx.globalAlpha = 1;
+      // Run B (Compare), dotted under run A.
+      if (other) {
+        const stepB = Math.max(1, Math.ceil(other.length / G.maxPoints));
+        for (const l of ls) {
+          ctx.strokeStyle = l.colour;
+          ctx.globalAlpha = 0.75;
+          ctx.setLineDash([1, 2]);
+          ctx.beginPath();
+          let open = false;
+          for (let i = 0; i < other.length; i += stepB) {
+            const row = other[i]!;
+            const r = row.perLineage.find((q) => q.lineageId === l.id);
+            const v = r && (r.population > 0 || chart.population) ? chart.solid(r) : NaN;
+            if (!Number.isFinite(v) || (useLog && v <= 0)) { open = false; continue; }
+            const x = tx(row.year);
+            const y = ty(v);
+            if (open) ctx.lineTo(x, y); else { ctx.moveTo(x, y); open = true; }
+          }
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
       // One line per lineage (solid, then dashed); gaps where a lineage has no people.
       for (const l of ls) {
         for (const [fn, dash] of [[chart.solid, false], [chart.dashed, true]] as const) {
@@ -201,7 +250,16 @@ export function buildGraphs(
           : chart.format(chart.solid(r)) + (chart.dashed ? ` / ${chart.format(chart.dashed(r))}` : '');
         return `<span style="color:${l.colour}">■</span> ${escapeHtml(l.name)}: ${val}`;
       });
-      tip.innerHTML = `<b>Year ${row.year.toLocaleString('en-US')}</b><br>${lines.join('<br>')}`;
+      const other = extras.compare?.() ?? null;
+      const rowB = other ? nearestRow(other, row.year) : undefined;
+      if (rowB) {
+        for (const l of lineages().filter((q) => !hidden.has(q.id))) {
+          const r = rowB.perLineage.find((p) => p.lineageId === l.id);
+          if (r) lines.push(`<span style="color:${l.colour}">┈</span> ${escapeHtml(l.name)} (run B): ${chart.format(chart.solid(r))}`);
+        }
+      }
+      const here = (extras.markers?.() ?? []).filter((m) => m.start <= row.year && row.year < Math.max(m.end, m.start + 1)).map((m) => escapeHtml(m.label));
+      tip.innerHTML = `<b>Year ${row.year.toLocaleString('en-US')}</b><br>${lines.join('<br>')}${here.length ? `<br><i>${here.slice(0, 4).join('<br>')}</i>` : ''}`;
       const host = element.getBoundingClientRect();
       tip.style.display = 'block';
       tip.style.left = `${Math.min(e.clientX - host.left + 12, host.width - tip.offsetWidth - 4)}px`;

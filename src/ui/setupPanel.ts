@@ -2,10 +2,11 @@
 
 import { CONFIG } from '../config';
 import { Sex } from '../shared/ids';
-import type { ClimateDrift, FounderGroup, PlannedEvent } from '../shared/types';
+import type { ClimateDrift, FounderGroup, Intervention, PlannedEvent } from '../shared/types';
 import { GROUP_COLORS } from '../render/palette';
 import { eventYears } from '../sim/events';
 import { h } from './layout';
+import { BUILTIN_SCENARIOS } from '../presets/builtins';
 import { listPresets } from './storage';
 import type { Validation } from './validation';
 
@@ -15,6 +16,8 @@ export interface SetupState {
   events: PlannedEvent[];
   seed: number;
   climateDrift: ClimateDrift;
+  interventionMode: boolean;     // F7 (D5): a separate mode; experiments stay hands-off
+  interventions: Intervention[]; // made in earlier runs of this setup; replayed at their months
 }
 
 export interface SetupPanelActions {
@@ -22,6 +25,8 @@ export interface SetupPanelActions {
   moveGroup(id: number): void;
   deleteGroup(id: number): void;
   newMap(): void;
+  /** Loads a built-in scenario (map, groups, events, seed) by its id. */
+  loadBuiltin(id: string): void;
   savePreset(name: string): void;
   loadPreset(name: string): void;
   deletePreset(name: string): void;
@@ -152,6 +157,19 @@ export function buildSetupPanel(
     drift.value = state.climateDrift;
     drift.addEventListener('change', () => { state.climateDrift = drift.value as ClimateDrift; });
 
+    // F7 (D5): intervention mode, clearly apart from hands-off experiments.
+    const mode = h('input', { type: 'checkbox' });
+    mode.checked = state.interventionMode;
+    mode.addEventListener('change', () => { state.interventionMode = mode.checked; refresh(); });
+    const ivs = state.interventions.length;
+    const modeBox = h('div', { class: 'section' },
+      h('label', { class: 'row' }, mode, h('span', { text: 'Intervention mode' })),
+      h('p', { class: 'hint', text: state.interventionMode
+        ? 'You can flood, burn, gift discoveries and move groups during the run. Each change is saved with its month, so the run still replays exactly. This is not a hands-off experiment.'
+        : 'Off: a hands-off experiment. Turn on to change the world during the run.' }),
+      ivs > 0 ? h('div', { class: 'row' },
+        h('span', { class: state.interventionMode ? '' : 'hint', text: `${ivs} intervention${ivs === 1 ? '' : 's'} saved${state.interventionMode ? ' (replayed at their months)' : ' (ignored while the mode is off)'}` }),
+        h('button', { class: 'danger', text: 'Clear', onclick: () => { if (confirm('Delete the saved interventions?')) { state.interventions = []; refresh(); } } })) : null);
     return [
       h('h3', { text: 'Run' }),
       h('div', { class: 'form-grid' },
@@ -160,6 +178,7 @@ export function buildSetupPanel(
         h('label', { text: 'Climate drift' }), drift,
       ),
       h('p', { class: 'hint', text: 'Same map + same seed = the same history, every time. Change one thing and keep the seed to compare.' }),
+      modeBox,
       ...checks(),
     ];
   }
@@ -181,7 +200,7 @@ export function buildSetupPanel(
     const presets = listPresets();
     const list = h('ul', { class: 'preset-list' });
     if (presets.ok) {
-      if (presets.value.length === 0) list.append(h('li', { class: 'hint', text: 'No saved presets yet.' }));
+      if (presets.value.length === 0) list.append(h('li', { class: 'hint', text: 'None yet: paint a map, name it and press Save preset.' }));
       for (const p of presets.value) {
         list.append(h('li', {},
           h('span', { text: p, title: p }),
@@ -192,11 +211,21 @@ export function buildSetupPanel(
     } else {
       list.append(h('li', { class: 'msg-err', text: presets.error }));
     }
+    const builtins = BUILTIN_SCENARIOS.map((b) => h('div', { class: 'group-card' },
+      h('div', { class: 'title', text: b.name }),
+      h('div', { class: 'meta', text: b.blurb }),
+      h('div', { class: 'row' }, h('button', { text: 'Load', onclick: () => actions.loadBuiltin(b.id) })),
+    ));
     return [
       h('h3', { text: 'Map' }),
       h('div', { class: 'row' }, h('button', { text: 'New map', onclick: () => actions.newMap() })),
       h('div', { class: 'section' },
-        h('h3', { text: 'Presets (this browser)' }),
+        h('h3', { text: 'Built-in scenarios' }),
+        h('p', { class: 'hint', text: 'Ready-made worlds with groups, events and a seed. Load one, then press Run ▶.' }),
+        ...builtins,
+      ),
+      h('div', { class: 'section' },
+        h('h3', { text: 'My presets (this browser)' }),
         h('div', { class: 'row' }, presetName,
           h('button', { text: 'Save preset', onclick: () => actions.savePreset(presetName.value.trim()) })),
         list,

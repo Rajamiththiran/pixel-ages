@@ -5,13 +5,14 @@ import { CONFIG } from '../config';
 import type { LogEntry, LogType } from '../shared/types';
 import type { LineageInfo } from './graphs';
 import { h } from './layout';
+import { iconUrl, logIcon } from '../render/icons';
 
 export const LOG_GROUPS: ReadonlyArray<readonly [string, readonly LogType[]]> = [
   ['Discoveries & eras', ['discovery', 'lostDiscovery', 'eraUp', 'eraDown', 'ranOut']],
   ['Movement', ['split', 'migrate', 'becameVillage', 'becameBand']],
   ['Contact', ['firstContact', 'tradeStart', 'war', 'conquered', 'absorbed', 'raid', 'alliance']],
   ['Society', ['society']],
-  ['World', ['breach', 'event', 'animalsGone', 'hazard']],
+  ['World', ['breach', 'event', 'intervention', 'animalsGone', 'hazard']],
   ['Life', ['groupExtinct', 'lineageExtinct', 'cannotReproduce']],
   ['System', ['perf']],
 ];
@@ -99,8 +100,9 @@ export function buildEventLog(
       const e = log[visible[k]!]!;
       const dot = h('span', { class: 'swatch-dot' });
       dot.style.background = e.lineageId !== null ? colourOf.get(e.lineageId) ?? WORLD_DOT : WORLD_DOT;
+      const icon = h('img', { class: 'px-icon', src: iconUrl(logIcon(e)), alt: '' });
       const row = h('div', { class: 'log-row clickable', title: `Year ${e.year.toLocaleString('en-US')} — ${e.text}\nClick to go to this year`, onclick: () => onPick(e) },
-        h('span', { class: 'log-year', text: `Year ${e.year.toLocaleString('en-US')}` }), dot, h('span', { class: 'log-text', text: e.text }));
+        h('span', { class: 'log-year', text: `Year ${e.year.toLocaleString('en-US')}` }), dot, icon, h('span', { class: 'log-text', text: e.text }));
       row.style.top = `${k * ROW}px`;
       rows.push(row);
     }
