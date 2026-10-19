@@ -17,6 +17,10 @@ export function createFounders(s: SimState): void {
   for (const f of founders) {
     s.lineages.push({ id: f.id, name: f.name, colorIndex: f.colorIndex, extinctYear: null, splitCounter: P.splitNameStart - 1 });
     const g = newGroup(s, f.id, f.name, f.id, f.x, f.y);
+    // Every founder lineage speaks its own language (F6 §12.5, DECISIONS 13.6).
+    const lang = s.nextLanguageId++;
+    s.languages.push({ id: lang, name: f.name, parentId: -1, sinceYear: 0 });
+    g.languageId = lang;
     for (const fp of f.people) {
       const slot = allocPerson(p);
       p.groupId[slot] = g.id;

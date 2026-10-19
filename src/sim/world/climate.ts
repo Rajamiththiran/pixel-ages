@@ -4,6 +4,7 @@ import { CONFIG } from '../../config';
 import { gaussian } from '../../shared/rng';
 import type { SimState } from '../state';
 import { eventRainMult } from '../events';
+import { cellOf } from './landscape';
 
 const C = CONFIG.climate;
 
@@ -56,12 +57,29 @@ export function computeDriftMult(s: SimState): void {
   }
 }
 
-/** Monthly: rainNow = clamp(round(baseRain × drift × events), 0, 100). */
+/** Monthly: rainNow = clamp(round(baseRain × drift × events × local drying), 0, 100). */
 export function updateRainNow(s: SimState): void {
   const n = s.baseRain.length;
   const ev = eventRainMult(s);
+  const cells = tileCells(s);
+  const dry = CONFIG.future.drying.mult;
   for (let i = 0; i < n; i++) {
-    const r = Math.round(s.baseRain[i]! * s.driftMult[i]! * (ev ? ev[i]! : 1));
+    // F4 (§10.1): a cell that lost its forest gets 10% less rain.
+    const r = Math.round(s.baseRain[i]! * s.driftMult[i]! * (ev ? ev[i]! : 1) * (s.dryCells[cells[i]!] ? dry : 1));
     s.rainNow[i] = r < 0 ? 0 : r > 100 ? 100 : r;
   }
+}
+
+// The climate cell of each tile; fixed for a map size (sim-local cache, not state).
+const cellCache = new Map<number, Uint8Array>();
+
+function tileCells(s: SimState): Uint8Array {
+  const key = s.width * 65536 + s.height;
+  let c = cellCache.get(key);
+  if (!c) {
+    c = new Uint8Array(s.width * s.height);
+    for (let y = 0; y < s.height; y++) for (let x = 0; x < s.width; x++) c[y * s.width + x] = cellOf(x, y, s.width, s.height);
+    cellCache.set(key, c);
+  }
+  return c;
 }

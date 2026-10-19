@@ -13,7 +13,9 @@ import { harshWinterNow, plagued } from '../events';
 import { fishCatch, gatherCapOf, huntSuccess } from './foodJobs';
 import { learnLesson } from '../progress/discoveryRules';
 import { fishSustainable, fishTiles } from '../world/fish';
+import { sick } from '../world/hazards';
 import { forEach8Passable } from '../../shared/grid';
+import { craftMult, domesticMult, noteStore, selfishMult } from '../society/society';
 
 const P = CONFIG.people;
 const F = P.food;
@@ -120,10 +122,11 @@ export function computeSignals(s: SimState, g: Group, range: number[], need = ba
   // Wild food, plus fields (10 farmers × 2 FU each) and last month's tended herd (§11.5).
   g.sustainable = rangeSustainable(s, range, g)
     + g.farmTiles.length * F.farmersPerTile * F.farmerCap
-    + Math.min(g.herd, g.herders * F.herdPerHerder) * F.herdYieldPerAnimal
+    + Math.min(g.herd, g.herders * F.herdPerHerder) * F.herdYieldPerAnimal * domesticMult(g)
     + waterSustainable(s, g);
   g.crowding = g.sustainable > 0 ? Math.min(P.crowdingMax, need / g.sustainable) : P.crowdingMax;
   g.hunger = hungerOf(g);
+  noteStore(g);                  // F6: the year's store decides specialists and chiefs
 }
 
 /** Group hunger H (0–100): recent shortfall plus worry about an empty store. */
@@ -137,7 +140,7 @@ export function hungerOf(g: Group): number {
   return Math.min(100, H.fedWeight * (1 - fed3) + Math.max(0, H.storageWorry - H.storageWorryPerMonth * stockMonths));
 }
 
-/** Multiplier on all food a worker gains: cooking, copper tools, cleverness, trade. */
+/** Multiplier on all food a worker gains: cooking, copper tools, cleverness, trade, craftspeople's tools (F6). */
 export function yieldMult(s: SimState, g: Group, slot: number): number {
   return yieldMultInt(s, g, s.persons.actInt[slot]!);
 }
@@ -153,6 +156,7 @@ export function yieldMultInt(s: SimState, g: Group, int: number): number {
     * (hasActive(g, Discovery.bronzeWorking) ? CONFIG.future.bronze.foodMult : 1)
     * (1 + (int - 100) / F.intYieldDivisor)
     * (g.trading ? F.tradeMult : 1)
+    * craftMult(g)
     * (harshWinterNow(s) ? CONFIG.events.harshWinterFoodMult : 1);
 }
 
@@ -252,7 +256,9 @@ export function distribute(s: SimState, g: Group, avgCoop: number, carers: Set<n
   const m = g.members;
   const n = m.length;
   if (n === 0) return 1;
-  const plague = plagued(s, g);
+  const plague = plagued(s, g) || sick(s, g);   // an outbreak (F5) is hard times too
+  // F6: sharing cultures take less for themselves; unequal ones more.
+  const selfish = D.selfishness * selfishMult(g);
   const need = new Float64Array(n);
   let total = 0;
   for (let k = 0; k < n; k++) { need[k] = needOf(p, m[k]!); total += need[k]!; }
@@ -267,7 +273,7 @@ export function distribute(s: SimState, g: Group, avgCoop: number, carers: Set<n
       const slot = m[k]!;
       let w = p.ageMonths[slot]! < P.ages.adult * 12
         ? D.childBase + avgCoop / 100
-        : 1 + D.selfishness * (strengthNow(p, slot) / 100) * (1 - p.actCoop[slot]! / 100);
+        : 1 + selfish * (strengthNow(p, slot) / 100) * (1 - p.actCoop[slot]! / 100);
       if (carers.has(slot)) w *= D.carerMult;
       weight[k] = need[k]! * w;
     }

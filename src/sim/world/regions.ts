@@ -2,15 +2,10 @@
 // imports this on the main thread, and the simulation will use it from step 2.
 
 import { WallType } from '../../shared/ids';
+import type { AreaResult } from '../../shared/areas';
 
-export interface AreaResult {
-  regionId: Int32Array;          // -1 on intact wall tiles
-  count: number;                 // number of regions
-  tileCount: Int32Array;         // per region
-  firstTile: Int32Array;         // per region, lowest tile index (its top-left-most tile)
-  centerX: Float64Array;         // per region, mean tile x
-  centerY: Float64Array;
-}
+export type { AreaResult } from '../../shared/areas';
+export { areaName } from '../../shared/areas';
 
 /**
  * Flood fill with 4-connectivity, so a diagonal line of wall tiles still blocks.
@@ -75,9 +70,6 @@ export function computeAreas(
   }
   return { regionId, count, tileCount, firstTile: Int32Array.from(firsts), centerX, centerY };
 }
-
-/** Display name of a region ("Area 1" is the region with the lowest tile index). */
-export const areaName = (regionId: number): string => `Area ${regionId + 1}`;
 
 // ---------- wall segments ----------
 

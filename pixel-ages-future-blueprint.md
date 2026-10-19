@@ -437,6 +437,8 @@ Real basis: salt slowly ruined southern Mesopotamian farmland.
 
 ## 10. Update F4 — People change the landscape
 
+> **Status (15 Oct 2026): built on the owner's request; D7 decided: Elevation layer added** (DECISIONS 11.1–11.13, TUNING pass 5). Awaiting the owner's approval.
+
 ### 10.1 Deforestation
 
 Comes from F1 (wood) plus field clearing (v1). Shows as a widening ring of thin forest, then grass, around villages. **Local drying (optional):** when forest cover in a climate cell (v1 §10.1) falls below `dryingForestShare` (20%), that cell's rain × `dryingMult` (0.9). Real basis: large clearings lower local rainfall.
@@ -493,6 +495,8 @@ Lines between trade partners' homes also add wear. Real basis: tracks and roads 
 ---
 
 ## 11. Update F5 — Elements and hazards
+
+> **Status (15 Oct 2026): built on the owner's request** (DECISIONS 12.1–12.16). Awaiting the owner's approval.
 
 Every hazard follows section 4.1: **base × natural × human × (1 − prevention)**, leaves aftermath, and teaches a lesson.
 
@@ -568,6 +572,8 @@ After a hazard hits a group, its prevention discoveries get `lessonMult` (3×) c
 
 ## 12. Update F6 — Society, conflict and animals
 
+> **Status (16 Oct 2026): built on the owner's request** (DECISIONS 13.1–13.18). Awaiting the owner's approval.
+
 ### 12.1 Specialists
 
 When a group stores more than `surplusMonths` (6) months of food and has ≥ `specialistMinPop` (150) people, a share of workers become specialists: `specialists = min(0.15, 0.02 × surplusMonths)`. Each 1% of specialists gives +2% discovery chance and +2% tool and weapon quality. Real basis: the first full-time craftspeople appear in surplus-producing villages.
@@ -616,6 +622,8 @@ Groups of one lineage separated (no contact) for > `languageYears` (500) become 
 
 ## 13. Update F7 — Observer tools
 
+> **Status: built on the owner's request (16 Oct 2026); D5 decided: intervention mode added** (DECISIONS 14.1–14.10). Approved: the owner asked for F8 next (19 Oct 2026).
+
 | Tool | What it does | Notes |
 |---|---|---|
 | **Family tree** | Click a band person: parents, partner, children, life events | Bands only; villages show the sample |
@@ -634,6 +642,8 @@ Groups of one lineage separated (no contact) for > `languageYears` (500) become 
 ---
 
 ## 14. Update F8 — Graphics and sound
+
+> **Status (19 Oct 2026): built on the owner's request. D6 decided: keep the style and add to it. D8 decided: ambient sound, on by default, with a mute button** (DECISIONS 16.1–16.29). Awaiting the owner's approval.
 
 All within the locked art style (D6), Canvas 2D, 60 fps budget (section 20). Effort: **S** small, **M** medium, **L** large.
 

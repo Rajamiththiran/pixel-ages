@@ -2,9 +2,9 @@
 
 import { CONFIG } from '../config';
 import type { MapData } from '../shared/types';
-import type { AreaResult } from '../sim/world/regions';
-import { areaName } from '../sim/world/regions';
-import { RGBS } from './palette';
+import { areaName, type AreaResult } from '../shared/areas';
+import { GROUP_COLORS, RGBS, hexToRgb, type RGB } from './palette';
+import type { HeatLayer } from '../shared/protocol';
 
 const TILE = CONFIG.map.tilePx;
 const R = CONFIG.render;
@@ -118,6 +118,138 @@ export class RainOverlay {
     }
     ctx.drawImage(this.canvas, 0, 0, map.width * TILE, map.height * TILE);
   }
+}
+
+/**
+ * Height view (F4): while the Elevation brush is selected, each tile is shaded from dark
+ * (height 0, see-through) to snow white (height 9). One pixel per tile, scaled up.
+ */
+export class ElevationOverlay {
+  readonly canvas: HTMLCanvasElement;
+  private dirty = true;
+
+  constructor(width: number, height: number) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = width;
+    this.canvas.height = height;
+  }
+
+  invalidate(): void { this.dirty = true; }
+
+  draw(ctx: CanvasRenderingContext2D, map: MapData): void {
+    if (this.dirty) {
+      this.dirty = false;
+      const c = this.canvas.getContext('2d')!;
+      const img = c.createImageData(map.width, map.height);
+      const lo = RGBS.mountainDark;
+      const hi = RGBS.snow;
+      const max = CONFIG.editor.maxElevation;
+      for (let i = 0; i < map.elevation.length; i++) {
+        const t = map.elevation[i]! / max;
+        img.data[i * 4] = lo[0] + (hi[0] - lo[0]) * t;
+        img.data[i * 4 + 1] = lo[1] + (hi[1] - lo[1]) * t;
+        img.data[i * 4 + 2] = lo[2] + (hi[2] - lo[2]) * t;
+        img.data[i * 4 + 3] = map.elevation[i] === 0 ? 0 : Math.round(255 * R.elevationOverlayAlpha);
+      }
+      c.putImageData(img, 0, 0);
+    }
+    ctx.drawImage(this.canvas, 0, 0, map.width * TILE, map.height * TILE);
+  }
+}
+
+/** The colour of each heatmap (F5 risk views, F7 heatmaps). */
+const HEAT_COLOURS: Record<HeatLayer, RGB> = {
+  fireRisk: RGBS.fireOrange, floodRisk: RGBS.waterLight, population: hexToRgb('#e05fa0'), food: RGBS.grassLight,
+  era: hexToRgb('#b48cf0'), conflict: RGBS.fruit, fertility: RGBS.clay, salinity: RGBS.salt,
+};
+
+/** Heatmaps (F5 risk views, F7 §13): one colour per kind; alpha = value. */
+export class HeatOverlay {
+  readonly canvas: HTMLCanvasElement;
+
+  constructor(width: number, height: number) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = width;
+    this.canvas.height = height;
+  }
+
+  set(kind: HeatLayer, data: Uint8Array, width: number, height: number): void {
+    const c = this.canvas.getContext('2d')!;
+    const img = c.createImageData(width, height);
+    const [r, g, b] = HEAT_COLOURS[kind];
+    for (let i = 0; i < data.length; i++) {
+      img.data[i * 4] = r;
+      img.data[i * 4 + 1] = g;
+      img.data[i * 4 + 2] = b;
+      img.data[i * 4 + 3] = Math.round(data[i]! * R.riskOverlayAlpha);
+    }
+    c.putImageData(img, 0, 0);
+  }
+
+  draw(ctx: CanvasRenderingContext2D, map: MapData): void {
+    ctx.drawImage(this.canvas, 0, 0, map.width * TILE, map.height * TILE);
+  }
+}
+
+/** Territory fills (F7 §13): each lineage's land softly in its colour. Data = colour index + 1. */
+export class TerritoryOverlay {
+  readonly canvas: HTMLCanvasElement;
+
+  constructor(width: number, height: number) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = width;
+    this.canvas.height = height;
+  }
+
+  set(data: Uint8Array, width: number, height: number): void {
+    const c = this.canvas.getContext('2d')!;
+    const img = c.createImageData(width, height);
+    const alpha = Math.round(255 * R.territoryAlpha);
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] === 0) continue;
+      const [r, g, b] = hexToRgb(GROUP_COLORS[(data[i]! - 1) % GROUP_COLORS.length]!);
+      img.data[i * 4] = r; img.data[i * 4 + 1] = g; img.data[i * 4 + 2] = b; img.data[i * 4 + 3] = alpha;
+    }
+    c.putImageData(img, 0, 0);
+  }
+
+  draw(ctx: CanvasRenderingContext2D): void {
+    ctx.drawImage(this.canvas, 0, 0, this.canvas.width * TILE, this.canvas.height * TILE);
+  }
+}
+
+/** A line between two tile centres (relation lines, migration trails). */
+export interface MapLine { x1: number; y1: number; x2: number; y2: number; colour: string; alpha: number; dash: number[]; arrow: boolean }
+
+/** Relation lines and migration trails (F7 §13), with an arrow head on trails. */
+export function drawLines(ctx: CanvasRenderingContext2D, lines: readonly MapLine[]): void {
+  if (lines.length === 0) return;
+  ctx.save();
+  ctx.lineWidth = 1;
+  for (const l of lines) {
+    const x1 = (l.x1 + 0.5) * TILE, y1 = (l.y1 + 0.5) * TILE, x2 = (l.x2 + 0.5) * TILE, y2 = (l.y2 + 0.5) * TILE;
+    ctx.globalAlpha = l.alpha;
+    ctx.strokeStyle = l.colour;
+    ctx.setLineDash(l.dash);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    if (l.arrow) {
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      if (len > 0) {
+        const ux = (x2 - x1) / len, uy = (y2 - y1) / len, a = TILE * 0.6;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - a * ux - (a / 2) * uy, y2 - a * uy + (a / 2) * ux);
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - a * ux + (a / 2) * uy, y2 - a * uy - (a / 2) * ux);
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
 }
 
 export function drawHoverTile(ctx: CanvasRenderingContext2D, x: number, y: number): void {

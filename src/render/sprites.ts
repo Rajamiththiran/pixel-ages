@@ -18,6 +18,15 @@ const FIXED: Record<string, string> = {
   g: PALETTE.stoneLight,
   F: PALETTE.fireOrange,
   f: PALETTE.fireYellow,
+  // F8 icons and effects
+  B: PALETTE.water,
+  b: PALETTE.waterLight,
+  R: PALETTE.fruit,
+  E: PALETTE.grass,
+  e: PALETTE.forest,
+  X: PALETTE.snow,
+  N: PALETTE.copper,
+  I: PALETTE.iron,
 };
 
 /** Colour of one grid character, or null for transparent. */
@@ -44,7 +53,7 @@ const packRgba = (hex: string): number => {
   return ((255 << 24) | ((v & 255) << 16) | (v & 0xff00) | ((v >> 16) & 255)) >>> 0;
 };
 
-function render(def: SpriteDef, vars: SpriteVars, flip: boolean): HTMLCanvasElement {
+function render(def: SpriteDef, vars: SpriteVars, flip: boolean, night: boolean): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = def.w;
   c.height = def.h;
@@ -53,7 +62,9 @@ function render(def: SpriteDef, vars: SpriteVars, flip: boolean): HTMLCanvasElem
   for (let y = 0; y < def.h; y++) {
     const row = def.rows[y]!;
     for (let x = 0; x < def.w; x++) {
-      const col = charColor(row[x]!, vars);
+      // F8 night variant of a building: dark windows and doors glow with firelight.
+      const ch = night && row[x] === 'K' ? 'f' : row[x]!;
+      const col = charColor(ch, vars);
       if (!col) continue;
       const px = flip ? def.w - 1 - x : x;
       ctx.fillStyle = col;
@@ -67,13 +78,13 @@ function render(def: SpriteDef, vars: SpriteVars, flip: boolean): HTMLCanvasElem
 
 const cache = new Map<string, HTMLCanvasElement>();
 
-export function getSprite(name: string, vars: SpriteVars = {}, flip = false): HTMLCanvasElement {
-  const key = `${name}|${vars.C ?? ''}|${vars.S ?? ''}|${vars.H ?? ''}|${vars.L ?? ''}|${flip ? 1 : 0}`;
+export function getSprite(name: string, vars: SpriteVars = {}, flip = false, night = false): HTMLCanvasElement {
+  const key = `${name}|${vars.C ?? ''}|${vars.S ?? ''}|${vars.H ?? ''}|${vars.L ?? ''}|${flip ? 1 : 0}|${night ? 1 : 0}`;
   let c = cache.get(key);
   if (!c) {
     const def = SPRITES[name];
     if (!def) throw new Error(`Unknown sprite ${name}`);
-    c = render(def, vars, flip);
+    c = render(def, vars, flip, night);
     cache.set(key, c);
   }
   return c;
@@ -92,20 +103,51 @@ export interface PersonLook {
   clothed: boolean;
 }
 
-/** Person sprite for walk frame 1 or 2. Elders use the adult grid with stoneLight hair. */
-export function personSprite(p: PersonLook, frame: 1 | 2): HTMLCanvasElement {
+/** The C, D, S, H, L colours of a person's look. */
+function lookVars(p: PersonLook): SpriteVars {
   const C = GROUP_COLORS[p.colorIndex % GROUP_COLORS.length]!;
   const D = darken(C);
   const S = SKIN_COLORS[p.skin] ?? SKIN_COLORS[0];
   const H = p.ageClass === AgeClass.Elder ? ELDER_HAIR : (HAIR_COLORS[p.hair] ?? HAIR_COLORS[0]);
-  const L = p.clothed ? D : S;
+  return { C, D, S, H, L: p.clothed ? D : S };
+}
+
+/** Person sprite for walk frame 1 or 2. Elders use the adult grid with stoneLight hair. */
+export function personSprite(p: PersonLook, frame: 1 | 2): HTMLCanvasElement {
   const name = p.ageClass === AgeClass.Child
     ? `child_${frame}`
     : `${p.female ? 'adult_f' : 'adult_m'}_${frame}`;
-  return getSprite(name, { C, D, S, H, L });
+  return getSprite(name, lookVars(p));
+}
+
+/** F8 work poses (§14.3), facing right; `flip` faces left. */
+export type Pose = 'gather' | 'farm' | 'cut' | 'fish' | 'build';
+
+export function poseSprite(p: PersonLook, pose: Pose, frame: 1 | 2, flip = false): HTMLCanvasElement {
+  return getSprite(`${pose}_${frame}`, lookVars(p), flip);
+}
+
+/** F8 carried items (§14.3). */
+export type Carry = 'basket' | 'meat' | 'wood' | 'pot' | 'fish';
+
+/** A walking adult carrying an item at the right hand: the adult at (0, 0), the item at (+3, +2), 6 px wide. */
+export function carrySprite(p: PersonLook, item: Carry, frame: 1 | 2): HTMLCanvasElement {
+  const body = personSprite(p, frame);
+  return compose(`carry|${lookKey(p)}|${item}|${frame}`, 6, body.height,
+    [{ img: body, x: 0, y: 0 }, { img: getSprite(`item_${item}`), x: 3, y: 2 }]);
+}
+
+/** A herder (§14.3): the adult with a crook at (+3, 0). */
+export function herderSprite(p: PersonLook, frame: 1 | 2): HTMLCanvasElement {
+  const body = personSprite(p, frame);
+  return compose(`herder|${lookKey(p)}|${frame}`, 5, body.height,
+    [{ img: body, x: 0, y: 0 }, { img: getSprite('staff'), x: 3, y: 0 }]);
 }
 
 const composites = new Map<string, HTMLCanvasElement>();
+
+/** Composite keys hold colour indices, not colours: forget them when the lineage palette changes (F8). */
+export function clearComposites(): void { composites.clear(); }
 
 interface Part { img: HTMLCanvasElement; x: number; y: number; rows?: number }
 

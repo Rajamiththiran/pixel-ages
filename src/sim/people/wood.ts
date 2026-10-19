@@ -10,6 +10,7 @@ import { logEvent } from './groups';
 import { hasActive, rebuildFrontier } from './explore';
 import { maxStock } from '../world/plants';
 import { takeResource } from '../progress/deposits';
+import { palisadeWoodWanted } from '../society/society';
 
 const W = CONFIG.future.wood;
 const S = CONFIG.future.smelt;
@@ -171,8 +172,16 @@ export function yearlyVessels(s: SimState, g: Group): void {
 /** Wood for the next building: a mud-brick house with Mud Brick, else a hut. */
 export const buildingWood = (house: boolean): number => (house ? W.house : W.hut);
 
-/** Pays for one hut, or one mud-brick house (wood + clay). False, with nothing paid, if short. */
+/**
+ * Pays for one hut, or one house: of stone with Stone Building and 30 stone at hand (F6), else of
+ * mud brick (wood + clay). False, with nothing paid, if short.
+ */
 export function payBuilding(s: SimState, g: Group, house: boolean): boolean {
+  const SH = CONFIG.future.stoneHouse;
+  if (house && hasActive(g, Discovery.stoneBuilding) && g.wood >= SH.wood && takeResource(s, g, Resource.Stone, SH.stone)) {
+    g.wood -= SH.wood;
+    return true;
+  }
   const wood = buildingWood(house);
   if (g.wood < wood) return false;
   if (house && !takeResource(s, g, Resource.Clay, W.houseClay)) return false;
@@ -188,7 +197,7 @@ export function payBuilding(s: SimState, g: Group, house: boolean): boolean {
  */
 export function woodNeedYear(g: Group, pop: number, shelterWood: number): number {
   const units = Math.ceil(pop / CONFIG.discoveries.resourceUsePer);
-  let need = shelterWood;
+  let need = shelterWood + palisadeWoodWanted(g);   // F6: a threatened group saves wood for a palisade
   if (has(g.discoveries, Discovery.fire)) need += fuelPerYear(pop);
   for (const def of DISCOVERIES) if (has(g.discoveries, def.id)) need += yearlyWoodOf(def.id, pop, units);
   for (const [d, cost] of VESSELS) if (has(g.discoveries, d) && !has(g.built, d)) need += cost;

@@ -2,11 +2,12 @@
 
 import { CONFIG } from '../config';
 import { Ground, Plant, Resource, Species, WallType } from '../shared/ids';
-import { ANIMAL_ERASER, type Tool } from '../editor/brushes';
+import { ANIMAL_ERASER, type Tool, strengthToHeight } from '../editor/brushes';
 import type { Editor } from '../editor/editor';
 import { PALETTE } from '../render/palette';
 import { AgeClass, personSprite } from '../render/sprites';
 import { h } from './layout';
+import type { HeatLayer } from '../shared/protocol';
 
 interface ToolSpec { name: string; tool: Tool; swatch: string | 'eraser' | 'people'; dot?: boolean }
 interface ToolGroup { label: string; tools: ToolSpec[] }
@@ -45,6 +46,11 @@ export const TOOL_GROUPS: ToolGroup[] = [
     ],
   },
   {
+    label: 'Height', tools: [
+      { name: 'Elevation (strength = height 0–9)', tool: { kind: 'elevation' }, swatch: PALETTE.stoneLight },
+    ],
+  },
+  {
     label: 'Animals', tools: [
       { name: 'Prey (deer)', tool: { kind: 'animal', species: Species.Prey }, swatch: PALETTE.mudBrick },
       { name: 'Predator (wolves)', tool: { kind: 'animal', species: Species.Predator }, swatch: PALETTE.stone },
@@ -71,35 +77,96 @@ export const TOOL_GROUPS: ToolGroup[] = [
 /** Run view modes (§18.7). 'follow' = fog + territory for the followed group (§21.1). */
 export type ViewMode = 'normal' | 'rain' | 'fog' | 'territory' | 'follow';
 
-export interface RunToolbarApi {
-  refresh(mode: ViewMode, zoomed: boolean): void;
+/** Heatmaps (F5 risk views, F7 §13), in menu order. */
+export const HEATMAPS: ReadonlyArray<readonly [HeatLayer, string, string]> = [
+  ['population', 'Population', 'Where people live: each group spread over its range'],
+  ['food', 'Food', 'Wild food on the land now: plants and prey'],
+  ['era', 'Era', 'The highest era of the groups using the land'],
+  ['conflict', 'Conflict', 'Battles, raids and conquests of the last 50 years'],
+  ['fireRisk', 'Fire risk', 'How likely each tile is to burn: summer dryness × fuel (F5)'],
+  ['floodRisk', 'Flood risk', 'River floodplains: more in a wet year, less behind kept-up levees (F5)'],
+  ['fertility', 'Worn soil', 'Fertility lost by farming (F3)'],
+  ['salinity', 'Salt', 'Salt left by irrigation without drainage (F3)'],
+];
+
+/** F7 intervention tools (intervention mode only). */
+export type InterveneTool = 'flood' | 'fire' | 'gift' | 'move';
+
+export interface RunToolbarState {
+  mode: ViewMode; heat: HeatLayer | null; lines: boolean; trails: boolean; tool: InterveneTool | null;
 }
 
-/** Run-mode toolbar (§20.3): view modes, zoom, stop. Fog and Territory need a selected group. */
-export function buildRunToolbar(
-  root: HTMLElement,
-  onView: (m: ViewMode) => void, onZoom: () => void, onStop: () => void,
-): RunToolbarApi {
+export interface RunToolbarApi {
+  refresh(st: RunToolbarState): void;
+}
+
+export interface RunToolbarActions {
+  view(m: ViewMode): void;
+  heat(h: HeatLayer | null): void;
+  lines(on: boolean): void;
+  trails(on: boolean): void;
+  stop(): void;
+  /** Present only in intervention mode. */
+  intervene?: (tool: InterveneTool | null) => void;
+}
+
+/** Run-mode toolbar (§20.3): view modes, heatmaps, lines, intervention tools, stop. (Zoom lives in the bottom bar since F8.) */
+export function buildRunToolbar(root: HTMLElement, a: RunToolbarActions): RunToolbarApi {
   root.replaceChildren();
   root.append(h('div', { class: 'tb-group-label', text: 'View' }));
   const views = h('div', { class: 'tb-view' });
-  const normal = h('button', { text: 'Normal', title: 'Normal view', onclick: () => onView('normal') });
-  const rain = h('button', { text: 'Rain', title: 'Show rain right now', onclick: () => onView('rain') });
-  const fog = h('button', { text: 'Fog', title: 'Darken what the selected group has not explored (click a group first)', onclick: () => onView('fog') });
-  const territory = h('button', { text: 'Territory', title: 'Dotted range circles around every home of the selected lineage (click a group first)', onclick: () => onView('territory') });
+  const normal = h('button', { text: 'Normal', title: 'Normal view', onclick: () => a.view('normal') });
+  const rain = h('button', { text: 'Rain', title: 'Show rain right now', onclick: () => a.view('rain') });
+  const fog = h('button', { text: 'Fog', title: 'Darken what the selected group has not explored (click a group first)', onclick: () => a.view('fog') });
+  const territory = h('button', { text: 'Territory', title: "Every lineage's land in its colour; dotted range circles for the selected lineage", onclick: () => a.view('territory') });
   views.append(normal, rain, fog, territory);
   root.append(views);
-  root.append(h('div', { class: 'tb-group-label', text: 'Zoom' }));
-  const zoom = h('button', { class: 'tb-opt', text: 'Zoom 2×', title: 'Zoom 2× on the cursor (Z). Pan with right-drag or arrows/WASD', onclick: onZoom });
-  root.append(h('div', { class: 'tb-view' }, zoom));
-  root.append(h('button', { class: 'tb-stop', text: 'Stop run', title: 'Stop and return to setup', onclick: onStop }));
+
+  root.append(h('div', { class: 'tb-group-label', text: 'Heatmap' }));
+  const heat = h('select', { class: 'tb-select', title: 'Colour the map by one value (F7)' },
+    h('option', { value: '', text: 'None' }),
+    ...HEATMAPS.map(([k, name, tip]) => h('option', { value: k, text: name, title: tip })));
+  heat.addEventListener('change', () => a.heat(heat.value === '' ? null : (heat.value as HeatLayer)));
+  root.append(heat);
+
+  root.append(h('div', { class: 'tb-group-label', text: 'Show' }));
+  const lines = h('button', { text: 'Lines', title: 'Lines between homes: trade (green), war (red), alliance (blue), living side by side (grey)' });
+  const trails = h('button', { text: 'Trails', title: 'Fading arrows of past moves and splits' });
+  let st: RunToolbarState = { mode: 'normal', heat: null, lines: false, trails: false, tool: null };
+  lines.addEventListener('click', () => a.lines(!st.lines));
+  trails.addEventListener('click', () => a.trails(!st.trails));
+  root.append(h('div', { class: 'tb-view' }, lines, trails));
+
+  const tools: Array<[HTMLButtonElement, InterveneTool]> = [];
+  if (a.intervene) {
+    root.append(h('div', { class: 'tb-group-label', text: 'Intervene' }));
+    const box = h('div', { class: 'tb-view' });
+    const specs: Array<[InterveneTool, string, string]> = [
+      ['flood', 'Flood', 'Click a tile: its floodplain (or the low land around it) floods'],
+      ['fire', 'Fire', 'Click a tile: a fire starts there and spreads through dry fuel'],
+      ['gift', 'Gift', 'Give the selected group a discovery'],
+      ['move', 'Move', 'Click a tile: the selected group moves its home there'],
+    ];
+    for (const [tool, name, tip] of specs) {
+      const b = h('button', { text: name, title: tip, onclick: () => a.intervene!(st.tool === tool ? null : tool) });
+      box.append(b);
+      tools.push([b, tool]);
+    }
+    root.append(box);
+  }
+
+  root.append(h('button', { class: 'tb-stop', text: 'Stop run', title: 'Stop and return to setup', onclick: a.stop }));
   return {
-    refresh(mode, zoomed) {
-      normal.classList.toggle('selected', mode === 'normal');
-      rain.classList.toggle('selected', mode === 'rain');
-      fog.classList.toggle('selected', mode === 'fog' || mode === 'follow');
-      territory.classList.toggle('selected', mode === 'territory' || mode === 'follow');
-      zoom.classList.toggle('selected', zoomed);
+    refresh(next) {
+      st = next;
+      normal.classList.toggle('selected', st.mode === 'normal');
+      rain.classList.toggle('selected', st.mode === 'rain');
+      fog.classList.toggle('selected', st.mode === 'fog' || st.mode === 'follow');
+      territory.classList.toggle('selected', st.mode === 'territory' || st.mode === 'follow');
+      heat.value = st.heat ?? '';
+      lines.classList.toggle('selected', st.lines);
+      trails.classList.toggle('selected', st.trails);
+      for (const [b, tool] of tools) b.classList.toggle('selected', st.tool === tool);
     },
   };
 }
@@ -153,7 +220,7 @@ export function buildToolbar(
   root.append(sizes);
 
   const strengthLabel = h('div', { class: 'tb-strength-label' });
-  const strength = h('input', { type: 'range', min: 0, max: 100, step: 1, class: 'tb-strength', title: 'Strength: plant density, resource amount, rain value, animal density' });
+  const strength = h('input', { type: 'range', min: 0, max: 100, step: 1, class: 'tb-strength', title: 'Strength: plant density, resource amount, rain value, height, animal density' });
   strength.value = String(editor.strength);
   strength.addEventListener('input', () => { editor.strength = Number(strength.value); refresh(); });
   root.append(strength, strengthLabel);
@@ -169,7 +236,8 @@ export function buildToolbar(
     for (const [b, t] of toolButtons) b.classList.toggle('selected', sameTool(t, editor.tool));
     for (const [b, s] of sizeButtons) b.classList.toggle('selected', s === editor.brushSize);
     strength.value = String(editor.strength);
-    strengthLabel.textContent = editor.tool.kind === 'rain' ? `Rain ${editor.strength}` : `Strength ${editor.strength}%`;
+    strengthLabel.textContent = editor.tool.kind === 'rain' ? `Rain ${editor.strength}`
+      : editor.tool.kind === 'elevation' ? `Height ${strengthToHeight(editor.strength)}` : `Strength ${editor.strength}%`;
     fill.classList.toggle('selected', editor.fillMode);
     fill.disabled = editor.tool.kind === 'people';
     undo.disabled = !editor.canUndo;

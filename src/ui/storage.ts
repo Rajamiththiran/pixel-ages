@@ -54,8 +54,8 @@ export function deletePreset(name: string): Result<null> {
   }
 }
 
-export function downloadText(filename: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+export function downloadText(filename: string, text: string, type = 'application/json'): void {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
@@ -88,6 +88,25 @@ const TUTORIAL_KEY = 'pixelAges.tutorialSeen';
 /** True once the first-launch tutorial (§20.8) has been finished or skipped. Blocked storage counts as not seen. */
 export function tutorialSeen(): boolean {
   try { return localStorage.getItem(TUTORIAL_KEY) === '1'; } catch { return false; }
+}
+
+/** F8 look settings, remembered in this browser. */
+export interface LookSettings { muted: boolean; colourBlind: boolean; dayNight: boolean; weather: boolean }
+const LOOK_KEY = 'pixelAges.look';
+// D8: sound is on by default.
+const LOOK_DEFAULT: LookSettings = { muted: false, colourBlind: false, dayNight: true, weather: true };
+
+export function loadLook(): LookSettings {
+  try {
+    const v = JSON.parse(localStorage.getItem(LOOK_KEY) ?? '{}') as Partial<LookSettings>;
+    return { ...LOOK_DEFAULT, ...v };
+  } catch {
+    return { ...LOOK_DEFAULT };
+  }
+}
+
+export function saveLook(s: LookSettings): void {
+  try { localStorage.setItem(LOOK_KEY, JSON.stringify(s)); } catch { /* storage blocked: settings last for this visit */ }
 }
 
 export function markTutorialSeen(): void {

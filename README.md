@@ -26,23 +26,36 @@ On first launch a short tutorial appears. **Load the example** sets up "Smart de
 | Space | Play / pause |
 | 1 / 8 | 1 year per second / 8 years per second |
 | . | Step one month (paused) |
-| Z | Zoom 2× on the cursor; pan with right-drag or arrows / WASD |
+| Z / mouse wheel | Zoom 1× / 2× / 4× on the cursor; pan with right-drag or arrows / WASD |
+| C | Follow cam: keep the selected group in the middle |
+| M | Story mode: the camera jumps to big moments as they happen |
+| T | Time-lapse: replay the whole history fast from year 0 up to now |
+| P | Photo mode: hide everything but the map (Esc leaves it too) |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo painting |
 | [ / ] | Brush size |
 | F | Fill bucket |
 | I / G / L | Inspect / Graphs / Log tab |
 | Esc | Cancel picking, deselect |
 
+The strip at the right of the bottom bar holds the same camera tools plus **Shot** (save a PNG of the map), **GIF** (record 4 seconds as an animated GIF), and the look switches: **Day/night**, **Weather**, **Sound** (ambient sound, on by default) and **Colour-blind** (lineage colours that colour-blind eyes tell apart). The look switches are remembered in the browser. Seasons, day and night, weather and every effect are drawn only: they never change the simulation.
+
 ## Presets
 
-`presets/` holds the four test scenarios as run files. Load one with **Maps → Import run**.
+The **Maps** tab lists built-in scenarios: load one and press **Run ▶**. **Four Realms** is the showcase: four peoples in three walled lands, with contact, trade, wars, breached walls and a drought. The test scenarios below are built in too, and `presets/` also holds them as run files (**Maps → Import run**).
 
 | File | What it is |
 |---|---|
+| `four-realms.run.json` | The showcase world |
 | `scenario-a-garden.run.json` | The baseline: one group in a rich garden world |
 | `scenario-b-smart-desert-vs-rich-forest.run.json` | The owner's experiment: intelligence 70 in a rich forest vs intelligence 140 in a desert, across a river |
 | `scenario-c-collapse.run.json` | The garden with a drought (year 500) and a plague (year 800) |
 | `scenario-d-performance.run.json` | Three walled areas, six groups, strong climate drift |
+| `scenario-e-fire-season.run.json` | Dry forest with a careful, an average and a careless group (v2) |
+| `scenario-f-floodplain-city.run.json` | A river valley that floods in wet centuries, beside a dry upland (v2) |
+| `scenario-g-overgrazed-steppe.run.json` | Dry grassland full of wild goats and horses, two herding groups (v2) |
+| `scenario-h-island-isolation.run.json` | Six people on a small island, four groups on a mainland across the sea (v2) |
+
+The A–D files are version 1 files from Pixel Ages 1.0; version 2 still loads and replays them exactly (a test checks this).
 
 ## Build
 
@@ -76,10 +89,12 @@ $env:LONG=1; npm test      # PowerShell
 ## Project layout
 
 - `src/sim/`: the simulation. It runs in a Web Worker, is deterministic (seeded RNG, no `Math.random`, no clocks) and never touches the DOM.
-- `src/render/`: Canvas 2D drawing. It reads frames and never changes the simulation.
+- `src/render/`: Canvas 2D drawing. It reads frames and never changes the simulation (it imports only `shared/` and `config`; a test checks this).
+- `src/audio/`: ambient sound, made in code with the Web Audio API.
 - `src/editor/`, `src/ui/`: painting tools and panels.
 - `src/config.ts`: every tunable number.
 - `src/presets/scenarios.ts`: the §26 scenarios in code, shared by the game and the tests.
+- `src/presets/builtins.ts`: the built-in scenarios of the Maps tab (the showcase Four Realms plus A–D).
 - `tests/`: Vitest tests.
 
 Only Vite, TypeScript and Vitest are used; there are no other dependencies.

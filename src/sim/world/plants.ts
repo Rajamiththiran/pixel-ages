@@ -61,7 +61,9 @@ function growAndDie(s: SimState): void {
     const d = s.plantDensity[i]!;
     const target = targetDensity(s, type, i);
     let next = d;
-    if (d < target) next = Math.min(target, d + P.growPerYear);
+    // Grass on fresh ash (F4 burning) grows back twice as fast.
+    const grow = type === Plant.Grass && s.ash[i] !== 0 ? 2 * P.growPerYear : P.growPerYear;
+    if (d < target) next = Math.min(target, d + grow);
     else if (d > target) next = Math.max(target, d - P.diePerYear);
     s.plantDensity[i] = next;
     if (next === 0) {
@@ -132,7 +134,10 @@ function groundChange(s: SimState): void {
     const rain = s.rainNow[i]!;
     if (g === Ground.Grassland) {
       s.wetYears[i] = 0;
-      s.dryYears[i] = rain < G.desertifyBelowRain ? Math.min(65535, s.dryYears[i]! + 1) : 0;
+      // F4 (§10.2): grazed-bare dry land counts 3 years toward desert each year, even above rain 10.
+      const grazedOut = s.bareYears[i]! >= CONFIG.future.grazing.overgrazeYears;
+      const step = grazedOut ? CONFIG.future.grazing.desertifyMult : rain < G.desertifyBelowRain ? 1 : 0;
+      s.dryYears[i] = step > 0 ? Math.min(65535, s.dryYears[i]! + step) : 0;
       if (s.dryYears[i]! >= G.desertifyYears) { s.ground[i] = Ground.Desert; s.dryYears[i] = 0; }
     } else if (g === Ground.Desert) {
       s.dryYears[i] = 0;

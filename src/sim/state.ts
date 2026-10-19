@@ -10,6 +10,7 @@ import { initClimate, updateRainNow } from './world/climate';
 import { initPlantFood } from './world/plants';
 import { initFish } from './world/fish';
 import { initAreaAnimals } from './world/animals';
+import { cellForestShares } from './world/landscape';
 import { createPool, type PersonPool } from './people/persons';
 import { createFounders } from './people/founders';
 
@@ -52,6 +53,29 @@ export interface Relation {
   reviewYear: number;
   pa: number;                    // pressures at the last decision (re-decide on a change > 0.3)
   pb: number;
+}
+
+/** A hazard that lasts (F5): an outbreak (deaths × 3) or a blight (harvest × 0.3) in one group. */
+export interface ActiveHazard {
+  kind: number;                  // Hazard id
+  groupId: number;
+  endYear: number;               // runs while year < endYear
+}
+
+/** Two groups at peace allied against a much stronger third (F6 §12.7). */
+export interface Alliance {
+  a: number;                     // group ids, a < b
+  b: number;
+  against: number;               // the threatening group
+  sinceYear: number;
+}
+
+/** A language (F6 §12.5): each founder lineage has its own; long-separated groups grow new ones. */
+export interface Language {
+  id: number;
+  name: string;
+  parentId: number;              // −1 for a founder lineage's language
+  sinceYear: number;
 }
 
 export interface ActiveEvent {
@@ -103,6 +127,21 @@ export interface Group {
   needAcc: Float32Array;         // this year's needs, summed month by month (Need id)
   needs: Float32Array;           // last year's needs, 0–1 (Need id)
   lessons: Uint16Array;          // by Hazard id: year until which its lesson lasts (0 = none)
+  maintenance: number;           // F5: upkeep 0–1 of canals, levees and drains (1 = fresh works)
+  // F6 (§12): society.
+  specialists: number;           // share of workers who craft (0–0.15)
+  chief: boolean;                // has a leader
+  inequality: number;            // 0–1
+  culture: Float32Array;         // by Culture id: sharing, warlike, openness (0–100)
+  languageId: number;            // Language id
+  kinContactYear: number;        // last year it met a group of its own language (or was founded)
+  isolationYears: number;        // years since outsiders last joined (marriage, captives, absorbed)
+  domestication: number;         // 0–1: how tame and productive its herd has become
+  fortification: number;         // 0 none, 1 palisade, 2 stone wall
+  storeMonthsSum: number;        // Σ this year's monthly food stock in months of need (specialists, chief)
+  warWinsYear: number;           // battles and raids won this year (inequality)
+  underThreat: boolean;          // at war or raided at the last contact: builds walls
+  hungerPeak: number;            // this year's worst monthly hunger H (raids)
   huts: number;
   houses: number;                // mud-brick houses
   buildProgress: number;         // worker-months toward the next building
@@ -164,6 +203,23 @@ export interface SimState {
   salinity: Float32Array;        // salt 0–1 left by irrigation without drainage
   animalLowYears: Uint8Array;    // [species × tiles]: years in a row below extinctBelow (deer, goats, horses)
   areaAnimals: Uint8Array;       // [area × 4 + species]: 1 if the species lived in the area last year
+  // F4 (§10): people change the land.
+  elevation: Uint8Array;         // painted height 0–9 (D7); never changes, shared like the setup
+  wear: Uint8Array;              // path wear 0–255 (walking); fades 20% a year
+  roadOK: Uint8Array;            // 1 if walked by a group with the Wheel this year (a road at high wear)
+  ruinAge: Uint16Array;          // years since a settlement here was abandoned (0 = no ruin)
+  quarry: Uint8Array;            // 1 = a used-up deposit left a pit
+  canal: Uint8Array;             // 1 = an irrigation canal this year
+  terrace: Uint8Array;           // 1 = terraced slope (kept once built)
+  ash: Uint8Array;               // years of ash left after a burn
+  bareYears: Uint8Array;         // years a grazed-bare dry tile has stayed bare (desert clock)
+  cellForest0: Float32Array;     // forest share of each climate cell at the start (never changes)
+  dryCells: Uint8Array;          // 1 = this climate cell lost its forest: rain × 0.9
+  // F5 (§11): hazards.
+  fireState: Uint8Array;         // months a tile still burns (0 = not burning)
+  floodMonths: Uint8Array;       // months of standing flood water
+  weatherYear: Float32Array;     // per climate cell: this year's rain anomaly (−0.8…1.5)
+  hazardsActive: ActiveHazard[]; // outbreaks and blights running, sorted by (groupId, kind)
   climate: Float32Array;       // cellsX × cellsY drift values
   driftMult: Float32Array;       // per tile, interpolated from `climate` once a year
 
@@ -173,6 +229,9 @@ export interface SimState {
   persons: PersonPool;           // band-mode people only
   relations: Relation[];         // sorted by (a, b)
   lineagesMet: number[];         // lineage pairs that have met (lo × 65536 + hi), sorted
+  alliances: Alliance[];         // F6: sorted by (a, b, against)
+  languages: Language[];         // F6: sorted by id
+  nextLanguageId: number;
 
   activeEvents: ActiveEvent[];
   log: LogEntry[];
@@ -237,6 +296,21 @@ export function createState(setup: RunSetup): SimState {
     salinity: new Float32Array(n),
     animalLowYears: new Uint8Array(4 * n),
     areaAnimals: new Uint8Array(4 * areas.count),
+    elevation: m.elevation,
+    wear: new Uint8Array(n),
+    roadOK: new Uint8Array(n),
+    ruinAge: new Uint16Array(n),
+    quarry: new Uint8Array(n),
+    canal: new Uint8Array(n),
+    terrace: new Uint8Array(n),
+    ash: new Uint8Array(n),
+    bareYears: new Uint8Array(n),
+    cellForest0: cellForestShares(m.width, m.height, m.plantType, m.plantDensity),
+    dryCells: new Uint8Array(CONFIG.climate.cellsX * CONFIG.climate.cellsY),
+    fireState: new Uint8Array(n),
+    floodMonths: new Uint8Array(n),
+    weatherYear: new Float32Array(CONFIG.climate.cellsX * CONFIG.climate.cellsY),
+    hazardsActive: [],
     climate: new Float32Array(CONFIG.climate.cellsX * CONFIG.climate.cellsY),
     driftMult: new Float32Array(n),
     groups: [],
@@ -245,6 +319,9 @@ export function createState(setup: RunSetup): SimState {
     persons: createPool(),
     relations: [],
     lineagesMet: [],
+    alliances: [],
+    languages: [],
+    nextLanguageId: 1,
     activeEvents: [],
     log: [],
     logDropped: 0,

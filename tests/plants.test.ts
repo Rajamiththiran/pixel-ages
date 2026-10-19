@@ -59,9 +59,9 @@ describe('plants (§10.2)', () => {
     expect(count()).toBeGreaterThan(160);
   });
 
-  it('forest does not spread below rain 55, and only onto Grassland', () => {
+  it('forest does not spread below rain 45 (tuned in F4, TUNING pass 5), and only onto Grassland', () => {
     const m = createMap();
-    m.rain.fill(50);
+    m.rain.fill(44);
     fillRect(m, 70, 40, 79, 49, (i) => { m.plantType[i] = Plant.Forest; m.plantDensity[i] = 255; });
     const s = createState(runOf(m, 3));
     runTicks(s, 40 * YEAR);

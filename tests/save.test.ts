@@ -19,12 +19,13 @@ function busyMap(): MapData {
     m.rain[i] = (i * 17) % 101;
     for (let s = 0; s < 4; s++) m.animals[s]![i] = (i * (s + 5)) % 256;
     m.wall[i] = (i * 11) % 4;
+    m.elevation[i] = (i * 13) % 10;            // F4: heights 0–9
   }
   return m;
 }
 
 function expectSameMap(a: MapData, b: MapData): void {
-  expect(b.version).toBe(2);
+  expect(b.version).toBe(3);
   expect([b.width, b.height]).toEqual([a.width, a.height]);
   expect(b.ground).toEqual(a.ground);
   expect(b.plantType).toEqual(a.plantType);
@@ -34,6 +35,7 @@ function expectSameMap(a: MapData, b: MapData): void {
   expect(b.rain).toEqual(a.rain);
   for (let s = 0; s < 4; s++) expect(b.animals[s]).toEqual(a.animals[s]);
   expect(b.wall).toEqual(a.wall);
+  expect(b.elevation).toEqual(a.elevation);
 }
 
 describe('save', () => {
@@ -70,7 +72,7 @@ describe('save', () => {
 
   it('run round trip keeps map, founders, events, seed and drift', () => {
     const run: RunSetup = {
-      version: 2,
+      version: 3,
       name: 'Smart desert vs rich forest',
       map: busyMap(),
       founders: [{
@@ -92,21 +94,34 @@ describe('save', () => {
     expect(encodeRun(back)).toBe(text);
   });
 
-  it('loads version 1 files (v1.0) as version 2, unchanged (future blueprint §5.5)', () => {
+  it('loads version 1 and 2 files as version 3 with height 0 everywhere (future blueprint §5.5)', () => {
     const m = busyMap();
     const j = JSON.parse(encodeMap(m));
-    expect(j.version).toBe(2);
-    j.version = 1;
-    expectSameMap(m, decodeMap(JSON.stringify(j)));
-    const r = JSON.parse(encodeRun({ version: 2, name: 'old', map: m, founders: [], events: [], seed: 7, climateDrift: 'off' }));
+    expect(j.version).toBe(3);
+    for (const old of [1, 2]) {
+      const k = { ...j, version: old };
+      delete k.elevation;
+      const back = decodeMap(JSON.stringify(k));
+      expect(back.version).toBe(3);
+      expect(back.elevation.every((v) => v === 0)).toBe(true);
+      expectSameMap({ ...m, elevation: new Uint8Array(m.elevation.length) }, back);
+    }
+    const r = JSON.parse(encodeRun({ version: 3, name: 'old', map: m, founders: [], events: [], seed: 7, climateDrift: 'off' }));
     r.version = 1;
     r.map.version = 1;
+    delete r.map.elevation;
     expect(decodeRun(JSON.stringify(r)).seed).toBe(7);
+  });
+
+  it('a version 3 file without its elevation layer is refused', () => {
+    const j = JSON.parse(encodeMap(createMap()));
+    delete j.elevation;
+    expect(() => decodeMap(JSON.stringify(j))).toThrow(SaveError);
   });
 
   it('rejects unknown versions with the §17.4 message', () => {
     const j = JSON.parse(encodeMap(createMap()));
-    j.version = 3;
+    j.version = 4;
     expect(() => decodeMap(JSON.stringify(j))).toThrow(WRONG_VERSION_MESSAGE);
     expect(() => decodeMap('not json')).toThrow(SaveError);
   });

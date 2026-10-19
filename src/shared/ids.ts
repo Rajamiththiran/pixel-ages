@@ -26,8 +26,8 @@ export type Mode = (typeof Mode)[keyof typeof Mode];
 export const Action = {
   None: 0, Gather: 1, Hunt: 2, Farm: 3, Herd: 4, Explore: 5,
   Care: 6, Build: 7, Wall: 8, Rest: 9, Teach: 10, Child: 11,
-  // Future blueprint §5.1 ids: Fish arrives in F3; CutWood in F1.
-  Fish: 12, CutWood: 13,
+  // Future blueprint §5.1 ids: CutWood (F1), Fish (F3), Burn (F4); Craft and Maintain come later.
+  Fish: 12, CutWood: 13, Craft: 14, Maintain: 15, Burn: 16,
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
 
@@ -42,7 +42,7 @@ export const WALL_NAMES = ['None', 'River', 'Mountain', 'Sea'] as const;
 export const SPECIES_NAMES = ['Prey', 'Predator', 'Herd', 'Riding'] as const;
 export const SEASON_NAMES = ['Spring', 'Summer', 'Autumn', 'Winter'] as const;
 export const ACTION_NAMES = [
-  'None', 'Gather', 'Hunt', 'Farm', 'Herd', 'Explore', 'Care', 'Build', 'Wall work', 'Rest', 'Teach', 'Child', 'Fish', 'Cut wood',
+  'None', 'Gather', 'Hunt', 'Farm', 'Herd', 'Explore', 'Care', 'Build', 'Wall work', 'Rest', 'Teach', 'Child', 'Fish', 'Cut wood', 'Craft', 'Maintain', 'Burn',
 ] as const;
 
 // Future blueprint F2 (§8.1): activities a group gets practice in (months of work, decaying).
@@ -74,6 +74,15 @@ export const HAZARD_NAMES = [
   'Wildfire', 'Town fire', 'River flood', 'Flash flood', 'Landslide', 'Dust storm',
   'Outbreak', 'Pests', 'Blight', 'Mine collapse',
 ] as const;
+
+// F6 (§12.4): a group's inherited habits, 0–100 each.
+export const Culture = { sharing: 0, warlike: 1, openness: 2 } as const;
+export type Culture = (typeof Culture)[keyof typeof Culture];
+export const CULTURE_COUNT = 3;
+export const CULTURE_NAMES = ['Sharing', 'Warlike', 'Openness'] as const;
+
+// F6 (§12.6): none, palisade, stone wall.
+export const FORTIFICATION_NAMES = ['none', 'palisade', 'stone wall'] as const;
 
 // Everyday names of the painted animals, for log lines (F3: "Deer are gone from Area 2").
 export const ANIMAL_NAMES = ['Deer', 'Wolves', 'Goats', 'Horses'] as const;

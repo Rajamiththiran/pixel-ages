@@ -8,6 +8,7 @@ import type { Group, SimState } from '../state';
 import { hasActive } from './explore';
 import { plagued } from '../events';
 import { learnLesson } from '../progress/discoveryRules';
+import { craftPractice } from '../society/society';
 
 const PR = CONFIG.future.practice;
 
@@ -21,6 +22,8 @@ const PRACTICE_OF_ACTION: Readonly<Record<number, number>> = {
   [Action.CutWood]: Practice.woodWork,
   [Action.Build]: Practice.building,
   [Action.Wall]: Practice.building,
+  [Action.Burn]: Practice.fireUse,
+  [Action.Maintain]: Practice.building,
 };
 
 export function addPractice(g: Group, p: number, months: number): void {
@@ -37,6 +40,7 @@ const WINTER_MONTHS = CONFIG.seasonOfMonth.filter((x) => x === Season.Winter).le
  */
 export function monthlyPractice(s: SimState, g: Group, workers: (action: number) => number, adults: number): void {
   for (const [action, p] of Object.entries(PRACTICE_OF_ACTION)) addPractice(g, p, workers(Number(action)));
+  addPractice(g, craftPractice(g), workers(Action.Craft));   // F6: specialists practise their craft
   // Work without a job of its own: part of everyone's month (DECISIONS 9.3).
   const fire = hasActive(g, Discovery.fire);
   if (fire) addPractice(g, Practice.fireUse, adults * PR.fireUseShare);

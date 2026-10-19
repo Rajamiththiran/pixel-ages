@@ -13,11 +13,15 @@ export type Tool =
   | { kind: 'plant'; value: Plant }          // Plant.None = eraser
   | { kind: 'resource'; value: Resource }    // Resource.None = eraser
   | { kind: 'rain' }
+  | { kind: 'elevation' }                    // F4 (D7): strength 0–100 % → height 0–9
   | { kind: 'animal'; species: number }      // 0–3, or -1 = eraser (all species)
   | { kind: 'wall'; value: WallType }        // WallType.None = eraser
   | { kind: 'people' };
 
 export const ANIMAL_ERASER = -1;
+
+/** 0–100 % strength → height 0–9 (F4). */
+export const strengthToHeight = (strengthPct: number): number => Math.round((strengthPct / 100) * CONFIG.editor.maxElevation);
 
 /** 0–100 % strength → 0–255 density/amount. */
 export const strengthToByte = (strengthPct: number): number => Math.round((strengthPct / 100) * 255);
@@ -69,6 +73,10 @@ export function paintTile(
       rec.set(Layer.Rain, i, Math.round(orig + (target - orig) * soft));
       return;
     }
+
+    case 'elevation':
+      rec.set(Layer.Elevation, i, strengthToHeight(strengthPct));
+      return;
 
     case 'animal': {
       if (tool.species === ANIMAL_ERASER) {

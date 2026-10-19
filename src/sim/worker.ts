@@ -4,12 +4,27 @@
 import { CONFIG } from '../config';
 import { nowMs } from '../shared/clock';
 import { packTile, TILE_BYTES, TILE_UPDATE_BYTES, type Frame, type FromWorker, type Speed, type ToWorker } from '../shared/protocol';
+import { computeMarks } from './world/landscape';
+import { computeHazardMarks } from './world/hazards';
+import type { MapLayer, RelationView } from '../shared/protocol';
+import { mapLayer } from './layers';
+import { observe, startStory, storyView, type StoryRecorder } from './story';
+
+// F5 risk views and F7 heatmaps: which layer the UI shows, and the year (and past/live) it was last sent for.
+let layerKind: MapLayer | null = null;
+let layerKey = '';
+// F7 territory fills, sent alongside any heatmap.
+let territoryOn = false;
+let territoryKey = '';
+// F7 life story of the followed person (live run only).
+let story: StoryRecorder | null = null;
+let storySent = -1;
 import { createState, type SimState } from './state';
 import { tick } from './tick';
 import { cloneState } from './serialize';
 import { createTimeline, keyframeAtOrBefore, recordKeyframe, type Timeline } from './timeline';
 import { areaName, computeAreas } from './world/regions';
-import { groupViews, inspect, packPeople } from './view';
+import { computeLook, groupViews, inspect, packPeople } from './view';
 
 const T = CONFIG.time;
 
@@ -17,7 +32,12 @@ let live: SimState | null = null;
 let view: SimState | null = null;       // a past year being viewed or replayed
 let timeline: Timeline | null = null;
 let playing = false;
+// F7 Compare: a second run with no screen, kept in step with the first (stats and log only).
+let headless = false;
+let headlessTarget = 0;
 let speed: Speed = 1;
+// F8 time-lapse: the past replays from year 0 as fast as the machine allows, then pauses at now.
+let timelapse = false;
 
 // Silent rebuild of a past year (§17.3 step 2).
 let rebuildTarget: number | null = null;
@@ -56,10 +76,14 @@ function handle(msg: ToWorker): void {
   switch (msg.type) {
     case 'start': {
       live = createState(msg.setup);
-      timeline = createTimeline(live);
+      headless = msg.headless === true;
+      headlessTarget = 0;
+      timeline = headless ? null : createTimeline(live);
       view = null;
       rebuildTarget = null;
       selectedGroup = null;
+      story = null;
+      storySent = -1;
       sentLog = 0;
       sentStats = 0;
       const m = msg.setup.map;
@@ -71,19 +95,26 @@ function handle(msg: ToWorker): void {
           centerX: areas.centerX[r]!, centerY: areas.centerY[r]!,
         })),
       });
+      if (headless) return;
       needFull = true;
       setPlaying(true);
       sendFrame();
       return;
     }
+    case 'runTo':
+      headlessTarget = msg.year;
+      if (headless) schedule(0);
+      return;
     case 'play': setPlaying(true); sendFrame(); return;
-    case 'pause': setPlaying(false); sendFrame(); return;
+    case 'pause': timelapse = false; setPlaying(false); sendFrame(); return;
+    case 'timelapse': startTimelapse(); return;
     case 'speed': speed = msg.value; sendFrame(); return;
     case 'step':
       if (!playing && rebuildTarget === null && live) { advanceOne(); sendFrame(); }
       return;
-    case 'viewYear': viewYear(msg.year); return;
+    case 'viewYear': timelapse = false; viewYear(msg.year); return;
     case 'backToNow':
+      timelapse = false;
       view = null;
       rebuildTarget = null;
       needFull = true;
@@ -100,6 +131,32 @@ function handle(msg: ToWorker): void {
       lastKnownVersion = -1;
       sendFrame();
       return;
+    case 'layer':
+      layerKind = msg.layer;
+      layerKey = '';
+      sendFrame();
+      return;
+    case 'territory':
+      territoryOn = msg.on;
+      territoryKey = '';
+      sendFrame();
+      return;
+    case 'person':
+      story = msg.personId !== null && live ? startStory(live, msg.personId) : null;
+      storySent = -1;
+      if (!story) post({ type: 'person', story: null });
+      sendFrame();
+      return;
+    case 'intervene': {
+      // Intervention mode only, and only on the live world: it becomes part of the run (F7, D5).
+      if (!live || !live.setup.interventionMode || view || rebuildTarget !== null) return;
+      const iv = { ...msg.intervention, year: live.year, month: live.month };
+      (live.setup.interventions ??= []).push(iv);
+      post({ type: 'intervened', intervention: iv });
+      if (!playing) { advanceOne(); needFull = true; }
+      sendFrame();
+      return;
+    }
     case 'stop':
       if (loopTimer !== null) clearTimeout(loopTimer);
       self.close();
@@ -138,14 +195,30 @@ function viewYear(year: number): void {
   schedule(0);
 }
 
+/** Time-lapse (F8): a copy of the first keyframe (year 0) replays forward fast; it is the past, so the live run is untouched. */
+function startTimelapse(): void {
+  if (!live || !timeline || live.year === 0) return;
+  view = cloneState(keyframeAtOrBefore(timeline, 0));
+  rebuildTarget = null;
+  timelapse = true;
+  needFull = true;
+  setPlaying(true);
+  sendFrame();
+}
+
 /** One tick of whatever is on screen. A replayed past that catches up becomes live again. */
 function advanceOne(): void {
   if (view) {
     tick(view);
-    if (view.year === live!.year && view.month === live!.month) view = null;
+    if (view.year === live!.year && view.month === live!.month) {
+      view = null;
+      // The time-lapse reached now: stop there, so the owner sees the present.
+      if (timelapse) { timelapse = false; playing = false; }
+    }
   } else {
     tick(live!);
     recordKeyframe(timeline!, live!);
+    if (story) observe(story, live!);
   }
 }
 
@@ -153,6 +226,12 @@ function loop(): void {
   loopTimer = null;
   if (!live) return;
   const t0 = nowMs();
+  if (headless) {
+    while (live.year < headlessTarget && nowMs() - t0 < T.maxWorkMsPerLoop) tick(live);
+    sendHistory();
+    if (live.year < headlessTarget) schedule(0);
+    return;
+  }
 
   if (rebuildTarget !== null && view) {
     // Rebuilding a past year: tick as fast as possible, in 50 ms slices so messages
@@ -176,6 +255,15 @@ function loop(): void {
   }
 
   if (!playing) return;
+  if (timelapse) {
+    let ran = 0;
+    while (timelapse && ran < CONFIG.render.f8.timelapseTicksPerLoop && nowMs() - t0 < T.maxWorkMsPerLoop) { advanceOne(); ran++; }
+    speedSamples.push({ t: t0, ticks: ran });
+    while (speedSamples.length > 0 && t0 - speedSamples[0]!.t > T.speedWindowMs) speedSamples.shift();
+    sendFrame();
+    if (playing) schedule(1000 / T.maxFramesPerSecond);
+    return;
+  }
   const tps = T.ticksPerSecond1x * (speed === 8 ? T.fastMultiplier : 1);
   budget = Math.min(budget + ((t0 - lastLoopMs) / 1000) * tps, tps * T.maxBacklogSeconds + 1);
   lastLoopMs = t0;
@@ -214,9 +302,11 @@ function sendFrame(): void {
     liveMonth: live.month,
     playing,
     speed,
+    timelapse,
     yearsPerSecond: yearsPerSecond(),
     people: packPeople(s),
     groups: groupViews(s),
+    relations: relationViews(s),
   };
   const transfer: Transferable[] = [frame.people.buffer];
 
@@ -231,7 +321,10 @@ function sendFrame(): void {
   if (needFull || lastSent.length !== n * TILE_BYTES) {
     needFull = false;
     const full = new Uint8Array(n * TILE_BYTES);
-    for (let i = 0; i < n; i++) packTile(s, s.rainNow, s.crossing, i, full, i * TILE_BYTES);
+    const marks = computeMarks(s, marksScratch(n));
+    const hz = computeHazardMarks(s, hazardScratch(n));
+    const look = computeLook(s, lookScratch(n));
+    for (let i = 0; i < n; i++) packTile(s, s.rainNow, s.crossing, marks, hz, look, i, full, i * TILE_BYTES);
     lastSent = full.slice();
     frame.fullTiles = full;
     transfer.push(full.buffer);
@@ -252,8 +345,29 @@ function sendFrame(): void {
     transfer.push(dens.buffer);
   }
   post({ type: 'frame', frame }, transfer);
+  // Heatmaps and territory fills follow the year on screen.
+  const key = `${s.year}|${view ? 1 : 0}`;
+  if (layerKind && key !== layerKey) {
+    layerKey = key;
+    const data = mapLayer(s, layerKind, live.log);
+    post({ type: 'layer', layer: layerKind, data }, [data.buffer]);
+  }
+  if (territoryOn && key !== territoryKey) {
+    territoryKey = key;
+    const data = mapLayer(s, 'territory', live.log);
+    post({ type: 'layer', layer: 'territory', data }, [data.buffer]);
+  }
+  if (story && story.version !== storySent) {
+    storySent = story.version;
+    post({ type: 'person', story: storyView(story, live) });
+  }
 
-  // New live log entries. A replayed past makes the same entries again, so only live ones go out.
+  sendHistory();
+}
+
+/** New live log entries and yearly stats rows. A replayed past makes the same entries again, so only live ones go out. */
+function sendHistory(): void {
+  if (!live) return;
   const total = live.logDropped + live.log.length;
   if (total > sentLog) {
     const from = Math.max(0, sentLog - live.logDropped);
@@ -267,14 +381,32 @@ function sendFrame(): void {
   }
 }
 
-const scratchTile = new Uint8Array(TILE_BYTES);
+/** F7 relation lines: every relation between groups on screen, plus alliances. */
+function relationViews(s: SimState): RelationView[] {
+  const out: RelationView[] = s.relations.map((r) => ({ a: r.a, b: r.b, kind: r.kind }));
+  for (const al of s.alliances) {
+    if (!out.some((r) => r.kind === 'alliance' && r.a === al.a && r.b === al.b)) out.push({ a: al.a, b: al.b, kind: 'alliance' });
+  }
+  return out;
+}
 
-/** Changed tiles since the last frame, as [index lo, index hi, 7 bytes] records. */
+const scratchTile = new Uint8Array(TILE_BYTES);
+let marksBuf = new Uint8Array(0);
+const marksScratch = (n: number): Uint8Array => (marksBuf.length === n ? marksBuf : (marksBuf = new Uint8Array(n)));
+let hazardBuf = new Uint8Array(0);
+const hazardScratch = (n: number): Uint8Array => (hazardBuf.length === n ? hazardBuf : (hazardBuf = new Uint8Array(n)));
+let lookBuf = new Uint8Array(0);
+const lookScratch = (n: number): Uint8Array => (lookBuf.length === n ? lookBuf : (lookBuf = new Uint8Array(n)));
+
+/** Changed tiles since the last frame, as [index lo, index hi, 10 bytes] records. */
 function tileDiff(s: SimState): Uint8Array | undefined {
   const n = s.width * s.height;
+  const marks = computeMarks(s, marksScratch(n));
+  const hz = computeHazardMarks(s, hazardScratch(n));
+  const look = computeLook(s, lookScratch(n));
   const changed: number[] = [];
   for (let i = 0; i < n; i++) {
-    packTile(s, s.rainNow, s.crossing, i, scratchTile, 0);
+    packTile(s, s.rainNow, s.crossing, marks, hz, look, i, scratchTile, 0);
     const o = i * TILE_BYTES;
     for (let k = 0; k < TILE_BYTES; k++) {
       if (scratchTile[k] !== lastSent[o + k]) { changed.push(i); break; }
@@ -286,7 +418,7 @@ function tileDiff(s: SimState): Uint8Array | undefined {
     const o = k * TILE_UPDATE_BYTES;
     out[o] = i & 255;
     out[o + 1] = i >> 8;
-    packTile(s, s.rainNow, s.crossing, i, out, o + 2);
+    packTile(s, s.rainNow, s.crossing, marks, hz, look, i, out, o + 2);
     lastSent.set(out.subarray(o + 2, o + 2 + TILE_BYTES), i * TILE_BYTES);
   });
   return out;

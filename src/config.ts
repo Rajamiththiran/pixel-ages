@@ -31,7 +31,8 @@ export const CONFIG = {
     seasonRegen: [1.2, 1.0, 0.8, 0.2],
     growPerYear: 26,
     diePerYear: 13,
-    forest: { dieBelowRain: 25, fullAtRain: 50, spreadMinRain: 55, spreadChance: 0.02, groundMult: [1, 0, 0, 0.5] },
+    // spreadMinRain tuned in F4 (TUNING.md pass 5): 55 → 45, so forest returns after clearing at the default rain 50.
+    forest: { dieBelowRain: 25, fullAtRain: 50, spreadMinRain: 45, spreadChance: 0.02, groundMult: [1, 0, 0, 0.5] },
     fruit:  { dieBelowRain: 30, fullAtRain: 40, spreadMinRain: 40, spreadChance: 0.01, groundMult: [1, 0, 0, 0] },
     grass:  { dieBelowRain: 10, fullAtRain: 30, spreadMinRain: 15, spreadChance: 0.05, groundMult: [1, 0.4, 0, 0.5] },
     spreadSourceMinDensity: 128,
@@ -207,7 +208,7 @@ export const CONFIG = {
       copperWood: 4, bronzeWood: 6, ironWood: 10,
       metalWearPerYear: 0.1,     // stored metal (tools, weapons) wears out; it covers years with no smelting
     },
-    bronze: { foodMult: 1.05, warMult: 1.25 }, // Bronze Working: harder tools and weapons than copper
+    bronze: { foodMult: 1.05 },  // Bronze Working: harder tools than copper (its weapons: F6 `weapons`)
 
     // F2 — inventions from practice (§8). Real basis: inventions came from people already doing
     // the related work, under pressure; unused skills were lost (the Tasmanian case).
@@ -262,6 +263,151 @@ export const CONFIG = {
     },
     salt: { rate: 0.01, drainage: 0.02, barrenAbove: 0.8 }, // irrigation without drainage salts the soil (Mesopotamia)
     store: { granaryMonths: 12, granarySpoilMult: 0.5, pestLoss: 0.05, pestAboveMonths: 6 },
+
+    // F4 — people change the landscape (§10).
+    drying: { forestShare: 0.2, mult: 0.9 }, // a climate cell that had ≥20% forest and drops below it: rain × 0.9
+    grazing: {
+      overgrazeLoss: 20,         // grass density lost a year where herds eat more than the land grows
+      overgrazeYears: 10,        // bare, grazed-out dry land for 10 years…
+      dryBelowRain: 30,          // … with rain below 30 …
+      desertifyMult: 3,          // … counts 3 years toward desert each year (the Sahel)
+    },
+    erosion: { rate: 0.03, mountainSlope: 2 }, // fertility lost a year × slope on farmed or bare slopes; Terraces stop it
+    wear: {
+      perWorkerMonth: 1,         // each worker wears the straight line from home to work
+      fadePerYear: 0.8,          // unused paths fade: wear × 0.8 a year
+      path: 60, road: 160,       // wear for a path; a road also needs a group with the Wheel walking it
+      roadTradeMult: 1.5,        // groups joined by a road meet (and trade) from 1.5× as far
+      tradePerYear: 40,          // trade partners wear the line between their homes
+    },
+    ruinYears: 300,              // abandoned settlements fade back into the land
+    burn: {
+      base: 10, preyWeight: 30,  // Burn score = (10 + 30 × (1 − prey availability)), spring only, with Fire Safety
+      maxPerMonth: 1,            // one burner a month per group: a few patches a year
+      grassDensity: 128,         // a burned forest edge becomes grass of this density
+      ashYears: 2,               // ash: grass regrows at double speed, grazers find fresh growth
+      ashPreyBonus: 0.2,         // animal capacity +20% on ash
+    },
+
+    // F5 — elements and hazards (§11). Every hazard: base × natural driver × human driver × (1 − prevention).
+    weather: { sigma: 0.2, min: -0.8, max: 1.5 }, // each climate cell's yearly rain anomaly (wet and dry years)
+    fire: {
+      dryRainFull: 60,           // dryness = clamp(1 − rain / 60) × season
+      seasonDry: [0.3, 1.0, 0.8, 0.1], // spring, summer, autumn, winter
+      igniteBase: 0.003,         // a group's campfire, per month × dryness × forest near home × (1 − fire safety)
+      burnEscape: 0.05,          // a spring burn that escapes × dryness × (1 − fire safety)
+      lightning: 0.00002,        // per forest tile per summer month × dryness
+      townBase: 0.002,           // a settlement's own fire per month × dryness × crowding × thatch × (1 − firebreaks) × (1 − stone)
+      spreadBase: 0.35,          // each burning tile lights each 8-neighbour with 0.35 × fuel × dryness
+      maxSpreadSteps: 6,         // spread rounds within the month
+      safetyCut: 0.8,            // Fire Safety removes 80% of the risk from people's own fires
+      firebreakCut: 0.5,         // Firebreaks halve town fires
+      stoneCut: 0.5,             // Stone Building halves town fires
+      buildingFuel: 0.8,         // fuel of a tile with huts or houses
+      buildingLoss: 0.5, storeLoss: 0.3, deathChance: 0.02, // a settlement on fire: half its buildings, 30% of food, 2% of people
+      ashYears: 2,               // burned land: ash for 2 years (grass regrows fast)
+      logMinTiles: 5,            // wildfires smaller than this go unlogged unless they hit a settlement
+    },
+    flood: {
+      floodplainTiles: 2,        // land within 2 tiles of a river or lake, no more than 1 higher than the water
+      base: 0.04,                // a river stretch floods in a wet year: 0.04 × rain anomaly × (1 − levees × upkeep)
+      minMonths: 1, maxMonths: 3, // spring months of standing water
+      deathChance: 0.005,        // per person living on the flooded plain
+      hutLoss: 0.5,              // share of buildings on the plain damaged
+      flashMinPop: 300, flashRain: 80, flashBase: 0.05, flashDeaths: 0.01, // big villages without drains in heavy rain
+    },
+    disease: {
+      endemicWeight: 0.2,        // village deaths × (1 + 0.2 × crowding × herds near × (1 − wells) × (1 − sewers))
+      cleanWaterCut: 0.5,        // Wells, and Sewers, each halve it
+      herdFull: 50,              // herd size that counts as "herds near home" in full
+      outbreakBase: 0.01,        // per village a year × crowding × (herds ? 1.5 : 1) × (1 + trade links)
+      herdOutbreakMult: 1.5,
+      outbreakMult: 3,           // deaths × 3 while it lasts
+      minYears: 1, maxYears: 3,
+      spreadChance: 0.3,         // each trade partner catches it with 30% a year
+    },
+    blight: { base: 0.02, wetWeight: 5, minFields: 3, harvestMult: 0.3 }, // wet years, no Crop Rotation: harvest × 0.3 for a year
+    landslide: { base: 0.01, deathChance: 0.05 }, // cleared slopes in wet years × anomaly × slope / 9
+    dust: { base: 0.02, dryBelow: -0.1, bareFull: 0.2, fertilityLoss: 0.1 }, // dry years over bare dry land
+    mine: { base: 0.01, deathShare: 0.01 }, // deep mines with little metal-work practice
+    herdPredation: 0.03,         // herd loss a month × predator density in range (× 0.3 with Dogs)
+    dogsHerdLoss: 0.3,
+    maintenance: {
+      decayPerYear: 0.05,        // canals, levees and drains fall into disrepair
+      perWorkerMonth: 0.002,     // a month of upkeep work
+      base: 10, weight: 40,      // Maintain score = (10 + 40 × (1 − upkeep)), only with works to keep
+    },
+
+    // F6 — society, conflict and animals (§12).
+    society: {
+      // Specialists (§12.1): with more than 6 months of food stored (year average) and 150+ people,
+      // min(0.15, 0.02 × months stored) of the workers craft instead of working the land.
+      surplusMonths: 6, specialistMinPop: 150, specialistMax: 0.15, specialistPerSurplus: 0.02,
+      specialistDiscovery: 2,    // each 1% of specialists: discovery chance +2% …
+      specialistTools: 2,        // … and tool and weapon quality +2% (food yield, war power)
+      // Chiefs and inequality (§12.2). Real basis: chiefdoms rose in big villages with surplus.
+      chiefMinPop: 300,          // a chief appears at 300+ people with a surplus …
+      chiefLostBelowPop: 150,    // … and goes when the group falls below 150
+      inequalitySurplusGain: 0.02, // a year with a chief and a surplus
+      inequalityWarWinGain: 0.05,  // each battle or raid won
+      // Tuned in F6 (TUNING.md pass 6): fall 0.05 → 0.1 and weights 20 → 5; at 20 nearly every chiefdom
+      // was at war every year and Scenario D lost two thirds of its people by year 600.
+      inequalityCoopFall: 0.1,     // then × (1 − 0.1 × cooperation/100) a year: cooperative groups level out
+      inequalityWarWeight: 5, inequalityTradeWeight: 5, inequalityAbsorbWeight: 5, // contact scores ± weight × inequality
+      // Marriage between groups and inbreeding (§12.3). Real basis: exogamy linked foraging bands.
+      marriageShare: 0.02,       // share of unpaired young adults exchanged a year between groups at peace
+      marriageMinAge: 16, marriageMaxAge: 30,
+      villageUnpairedShare: 0.15, // villages don't track couples: this share of their 15–49s count as unpaired
+      inbreedPenalty: 0.3, inbreedYears: 200, inbreedBelowPop: 50, // births × (1 − 0.3 × min(1, isolated years / 200)) under 50 people
+      // Culture (§12.4): sharing, warlike, openness 0–100, copied on splits with drift.
+      cultureStart: 50,          // founders' culture (DECISIONS 13.4)
+      cultureDrift: 3,           // gaussian × 3 on each split
+      cultureBlend: 0.02,        // neighbours at peace move 2% of the gap toward each other a year
+      sharingSelfish: 50,        // distribution selfishness × (2 − sharing / 50): ×1 at 50, ×0 at 100
+      warlikeWeight: 0.4,        // war score + 0.4 × (pair's warlike − 50)
+      opennessWeight: 0.4,       // trade score + 0.4 × (pair's openness − 50)
+      // learning (trade, diffusion) × (0.5 + openness / 100)
+      // Language drift (§12.5).
+      languageYears: 500,        // 500 years without meeting a group of its own language → a new language
+      languageMult: 0.5,         // trade and learning between different languages × 0.5
+      languageCoexist: -10,      // coexist score between different languages
+      // Founder lineages each speak their own language, but by default the penalties above apply only
+      // between groups of one lineage that grew apart (§12.5 as written). true = between lineages too:
+      // that tips peaceful neighbours of different lineages into war and changes v1 contact (DECISIONS 13.7).
+      languageBetweenLineages: false,
+      // Raids (§12.7). Real basis: raiding was the most common early conflict.
+      raidHunger: 70,            // groups whose worst month this year had H > 70 may raid (neighbours they don't trade with,
+                                 // or, attacking in a war, instead of that year's battle)
+      raidChance: 0.3,           // a year, × warlike / 50
+      raidShare: 0.2,            // a successful raid takes 20% of the store (and of the herd, with Taming)
+      raidLossWin: 0.01, raidLossLose: 0.03, // fighting adults lost by the winning and losing side
+      // Alliances (§12.7).
+      allianceRatio: 2,          // two groups at peace both facing a third 2× stronger than each ally
+      threatNeed: 0.1,           // war need above this (losses to battles or raids) also counts as a threat (walls)
+    },
+    weapons: {
+      // War power × the best weapon the group can equip (§12.6). The metal tiers keep v1's numbers:
+      // copper 1.2, copper + iron 1.2 × 1.4 = 1.68; bronze 1.2 × 1.25 (F1) = 1.5.
+      spear: 1.1, bow: 1.2, copper: 1.2, bronze: 1.5, iron: 1.68,
+      metalPerFighter: 0.1,      // metal units per fighting adult; the rest fight with wood weapons
+    },
+    fortify: {
+      palisade: 1.3, stoneWall: 1.8, // defence × (the defender is the side under less pressure, DECISIONS 13.9)
+      palisadeWood: 200, stoneWallStone: 500,
+    },
+    workAnimals: {
+      domesticationPerYear: 0.01, domesticationMax: 1, // a herded herd's yield × (1 + domestication)
+      ploughMult: 1.5,           // Plough + oxen: farm yield × 1.5 …
+      oxenPerField: 2,           // … in full with 2 herd animals per field
+      tradeMult: 1.5,            // Riding (horses): contact (and trade) range × 1.5
+    },
+    stoneHouse: { wood: 2, stone: 30 }, // Stone Building: houses of stone (F1 table §7.2)
+
+    // F7 — intervention mode (D5).
+    interventions: {
+      floodRadius: 3,            // a flood dropped off any floodplain covers low land within 3 tiles
+      floodMonths: 2,            // months it stands
+    },
   },
 
   walls: {
@@ -291,7 +437,7 @@ export const CONFIG = {
     gainDiscoveryChance: 0.5,
     tradeLearnChance: 0.10, tradeTileShare: 0.2,
     warAdversityMonths: 3,
-    warMult: { riding: 1.3, copperWorking: 1.2, ironWorking: 1.4 },
+    warMult: { riding: 1.3 },    // metal weapons moved to future.weapons (F6: they must be equipped)
     gridCell: 16,
     // Added in step 5:
     fightingAgeMax: 59,          // "adults" in war power and battle deaths are 15–59 (DECISIONS 5.9)
@@ -323,6 +469,14 @@ export const CONFIG = {
     herdRadiusTiles: 2,          // added in step 5: herd goats wander within 2 tiles of home ("near home", §18.5)
     waterShimmerMs: 500, riverFlowMs: 300,
     fogAlpha: 0.6, rainOverlayAlpha: 0.6, areaHoverAlpha: 0.2,
+    elevationOverlayAlpha: 0.75, // F4: the height view while the Elevation brush is selected
+    riskOverlayAlpha: 0.8,       // F5: fire / flood risk views (alpha = risk × 0.8); F7 heatmaps too
+    // F7 heatmaps (§13): the value that shows at full strength.
+    heat: { populationFull: 10, foodFull: 6, conflictYears: 50, conflictFull: 5 },
+    territoryAlpha: 0.3,         // F7 territory fills
+    relationLineAlpha: 0.8,      // F7 trade / war / alliance lines between homes
+    trailYears: 150,             // F7 migration trails fade over this many years
+    trailAlpha: 0.7,
     idleStepPx: 2,               // §18.6: idle people make a tiny random step of at most this many px
     childOffsetPx: [-3, 1],      // §18.6: children walk at mother's position + this offset
     pickRadiusPx: 3,             // §21.1: clicking within 3 px of a person selects them
@@ -335,7 +489,6 @@ export const CONFIG = {
     desertGrassMaxBlend: 0.4,    // grass on desert blends only up to 40%
     fruitSpeck: 0.08,
     resourceSpeckBase: 0.05, resourceSpeckScale: 0.25,
-    riverStreakEvery: 5,         // (px + py + t) % 5 === 0 → waterLight
     mountainWallInkSpeck: 0.15, mountainWallLightSpeck: 0.05,
     mountainPassSpeck: 0.10,
     // Extra terrain detail (owner request, 14 Oct 2026). All sizes in screen pixels.
@@ -375,6 +528,87 @@ export const CONFIG = {
     // Added in step 4 (§18.5, §19.5):
     campfireFrameMs: 250,        // campfire alternates frames this often
     vesselSearchTiles: 3,        // raft / boat is drawn on the water tile nearest home, within 3 tiles
+    // F4 marks on the land (terrain.ts markPixel).
+    marks: { terraceDark: 0.75, ashSpeck: 0.25, pathBlend: 0.6, roadBlend: 0.8, pitRadius2: 4.5, ruinGap: 0.3,
+      flameShare: 0.35, burnDark: 0.45 }, // F5: flames and char on burning tiles (F8: flood water is the effects layer, f8.effects.floodAlpha)
+    // F8 graphics and sound (future blueprint §14). Visual only: nothing here reaches the simulation,
+    // except `look`, which the worker uses to pack the look byte it sends with each tile.
+    f8: {
+      // The look byte (worker side): soil worn by farming, salt, ash stage. Levels 1–3 start below/above these.
+      look: { wornBelow: [0.75, 0.5, 0.25], saltAbove: [0.15, 0.4, 0.8] },
+      // Seasons (§14.1): a tint per tile class and season, eased in real time so 8× (8 years a
+      // second) blurs toward the yearly average instead of flashing. Colours are palette keys.
+      season: {
+        easeMs: 150,             // time constant of the tint easing (1×: a year lasts 1,000 ms, ~70% of the swing shows; 8×: ~13%)
+        snowElevation: 6,        // winter snow lies on Mountain ground and on land at least this high
+        // [colour, alpha] per class: grass, forest, fruit, farmland, desert, cold (snow line)
+        spring: { grass: ['grassLight', 0.14], forest: ['grassLight', 0.10], fruit: ['flowerWhite', 0.10], farm: ['grassLight', 0.55], desert: ['grassLight', 0.06], cold: ['snow', 0.25] },
+        summer: { grass: ['sand', 0.20], forest: ['forest', 0.10], fruit: ['fruit', 0.18], farm: ['fireYellow', 0.55], desert: ['fireYellow', 0.08], cold: ['stoneLight', 0.0] },
+        autumn: { grass: ['wood', 0.18], forest: ['copper', 0.40], fruit: ['fruit', 0.25], farm: ['wood', 0.55], desert: ['clay', 0.08], cold: ['snow', 0.20] },
+        winter: { grass: ['frost', 0.28], forest: ['frost', 0.22], fruit: ['frost', 0.28], farm: ['frost', 0.45], desert: ['sand', 0.0], cold: ['snow', 0.82] },
+      },
+      // Height shading (§14.1, D7): light from the top-left; brightness changes this much per height step.
+      shade: { perStep: 0.05, max: 0.3 },
+      beachPx: 2,                // land pixels this close to a lake or the sea are beach (Grassland/Desert)
+      river: { cornerRadius: 5, dashLen: 3, dashEvery: 6, shimmer: 0.04 }, // curved banks, flowing dashes, glints
+      stumps: { cell: 4, belowPainted: 0.2, share: 0.6 }, // stumps where forest is this much below its painted density
+      soil: { wornPale: [0.12, 0.25, 0.4], saltWhite: [0.15, 0.35, 0.7], ashGreen: 0.35, siltBlend: 0.5, puddle: 0.04 },
+      trample: { radiusPx: 9, villagePerSqrtPop: 1.2, maxRadiusPx: 22, alpha: 0.55, ragged: 0.35 },
+      // Weather (§14.2): clouds drift over the map; it rains (or snows) under clouds where rain is high.
+      weather: {
+        cellTiles: 2,            // cloud field resolution
+        scaleCells: 9,           // size of a cloud, in cells
+        windPxPerS: 6,           // cloud drift (map px per second at any speed)
+        cover: 0.55,             // share of the sky clouded where rain is 100
+        shadowAlpha: 0.22, shadowOffsetPx: 10,
+        updateMs: 120,
+        rainAbove: 35,           // no rain particles under clouds where rain now is below this
+        maxDrops: 900, dropsPerCellPerS: 1.2, dropFallPx: 18, dropMs: 420,
+        snowMs: 2200, snowFallPx: 14,
+        droughtBelow: 0.6, wetAbove: 1.4, // rain now ÷ painted rain: cracks below, puddles above
+        crackShare: 0.12, puddleShare: 0.06,
+      },
+      // Day and night (§14.2): a real-time cycle that runs while the world plays.
+      light: { dayMs: 48000, nightShare: 0.3, dusk: 0.12, maxDark: 0.5, glowRadiusPx: 7, fireGlowRadiusPx: 12 }, // glows: lit windows, fires
+      // People and animals (§14.3).
+      people: {
+        poseFrameMs: 380,        // work poses (bending, hoeing, chopping) alternate this often
+        nightGatherTiles: 6,     // only people working this close to home walk to the fire at night
+        walkerCarryShare: 0.4,   // village walkers carrying a basket, pot or wood
+        fireRingPx: [5, 11],     // at night people sit this far from their campfire
+        nightGatherAbove: 0.55,  // night darkness above which bands gather at the fire
+        herdFollowers: 2, herdFollowPx: 6,
+        huntDeerPx: 9,           // the hunted deer stays about this far from the hunters
+        battleMax: 14, battleSpreadPx: 10, battleFrameMs: 140,
+      },
+      animals: { herdSpreadPx: 7, gallopMult: 3.5, gallopFrameMs: 110, wolfStalkMult: 0.5, wolfDashMult: 4, wolfSeekPx: 28, fleePx: 12 },
+      // Settlements (§14.4).
+      // Bands below era 2 build lean-tos; a village without Mud Brick draws every 4 huts as one longhouse.
+      buildings: { leanToBelowEra: 2, longhouseHuts: 4, wallPostStepPx: 3, wallMarginTiles: 1, wallMinTiles: 2, gateHalfAngle: 0.35 },
+      traffic: { boatsPer: 40, maxBoats: 3, boatRangeTiles: 6, boatSpeedPx: 5, cartsPer: 60, maxCarts: 2, cartRangeTiles: 8, cartSpeedPx: 7 },
+      smoke: { houseEveryMs: 1800, fireEveryMs: 500, puffMs: 2600, risePx: 14, driftPx: 6, hazeAlpha: 0.12, hazeRadiusTiles: 4 },
+      // Effects (§14.5).
+      effects: {
+        maxParticles: 1500,
+        flamesPerTile: 2, flameFrameMs: 120, fireSmokeEveryMs: 400,
+        floodSpreadMsPerTile: 160, floodFadeMs: 600, floodAlpha: 0.65, rippleShare: 0.05,
+        quakeRocks: 24, quakeDust: 16, quakeMs: 1800,
+        sickAlpha: 0.22, sickPulseMs: 1600, sickRadiusTiles: 3,
+        sparkleMs: 2200, sparkles: 10, iconRisePx: 12, eraGlowMs: 1800, eraGlowRadiusPx: 40,
+        maxBursts: 40,           // discovery / era / quake effects running at once (8× logs many)
+      },
+      // Camera (§14.6).
+      camera: { zooms: [1, 2, 4], easeMs: 180, followEaseMs: 400, labelScaleFromZoom: 2 }, // labels drawn 2× once zoomed this far
+      story: { holdMs: 4500, zoom: 2, queueMax: 6, idleAfterInputMs: 6000 },
+      timelapseTicksPerLoop: 600, // F8 time-lapse: replay up to this many months per worker loop (bounded by maxWorkMsPerLoop)
+      capture: { gifFps: 10, gifSeconds: 4, gifScale: 0.5, gifColours: 255 },
+      // Ambient sound (§14.7, D8: on by default, mute button). Gains 0–1, rates per second.
+      sound: {
+        master: 0.5, updateMs: 250, rampS: 0.6,
+        wind: 0.06, windMountain: 0.10, rain: 0.18, water: 0.04,
+        birdsPerS: 1.6, birdGain: 0.05, crackleGain: 0.07, cracklePerFire: 0.5, workPerS: 2.5, workGain: 0.05,
+      },
+    },
   },
 
   // Editor and setup UI (step 1). Not used by the simulation.
@@ -387,6 +621,7 @@ export const CONFIG = {
     areaDebounceMs: 200,
     areaLabelMinTiles: 30,       // only label areas at least this big, so tiny pockets don't clutter the map
     newMap: { ground: 0, rain: 50 },  // Ground.Grassland, rain 50
+    maxElevation: 9,             // F4 (D7): the Elevation brush paints height 0–9
     defaultSeed: 1,
     maxSeed: 4294967295,         // seeds are uint32 (§7.2)
   },
@@ -407,6 +642,7 @@ export const CONFIG = {
       intelligence: 100, cooperation: 50, strength: 50,
       maxPeople: 40, nameMaxLength: 20,
     },
-    smallGroupWarnBelow: 10,     // setup warning: smaller founder groups often die out by chance (F0)
+    smallGroupWarnBelow: 10,
+    storyMaxEvents: 200,         // F7: life-story lines kept for the followed person     // setup warning: smaller founder groups often die out by chance (F0)
   },
 } as const;

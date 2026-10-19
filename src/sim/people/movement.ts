@@ -9,6 +9,7 @@ import { tilesConnected } from '../world/regions';
 import { hasActive, isKnown, passableFor } from './explore';
 import { homeRange, huntFactor, rangeTiles, tileSustainable } from './food';
 import { logEvent, population, traitAverages } from './groups';
+import { leaveRuins } from '../world/landscape';
 import { partySize, partyViable, shareOfCounts, spawnGroup, takeCounts, takeSlots, type Party } from './transfer';
 
 const P = CONFIG.people;
@@ -66,11 +67,13 @@ export function checkMigration(s: SimState, g: Group): boolean {
   const nx = best % s.width;
   const ny = Math.floor(best / s.width);
   const dist = Math.round(Math.sqrt((nx - g.homeX) ** 2 + (ny - g.homeY) ** 2));
+  // Shelters, fields and walls stay behind; the old camp becomes a ruin (F4).
+  leaveRuins(s, g);
   g.homeX = nx;
   g.homeY = ny;
-  // Shelters and fields stay behind.
   g.huts = 0;
   g.houses = 0;
+  g.fortification = 0;           // F6: walls stay behind too
   g.buildProgress = 0;
   g.farmTiles = [];
   if (dist >= MG.logMinDistance) logEvent(s, 'migrate', `${g.name} moved ${dist} km in search of food`, g);

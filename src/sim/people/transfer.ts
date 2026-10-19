@@ -10,6 +10,7 @@ import { cloneVillage } from '../serialize';
 import { BUCKETS, addGroup, newGroup, population } from './groups';
 import { freePerson } from './persons';
 import { bucketOf, memberOf, mergeSamples, personFromVillage, sampleDealer, toVillage } from './village';
+import { inheritSociety } from '../society/society';
 
 const P = CONFIG.people;
 
@@ -146,6 +147,9 @@ export function spawnGroup(s: SimState, source: Group, party: Party, site: numbe
   g.idleYears.set(source.idleYears);
   g.needs.set(source.needs);
   g.lessons.set(source.lessons);
+  g.maintenance = source.maintenance;
+  // Culture (drifting a little), language and history go with the people; walls and chiefs stay (F6).
+  inheritSociety(s, g, source);
   if (size >= P.groupSize.toVillageAt && party.slots.length === 0) {
     // A village from a village: keep counts and sample as they are.
     g.mode = Mode.Village;

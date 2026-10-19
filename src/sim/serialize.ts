@@ -27,6 +27,7 @@ export function cloneGroup(g: Group): Group {
     needAcc: g.needAcc.slice(),
     needs: g.needs.slice(),
     lessons: g.lessons.slice(),
+    culture: g.culture.slice(),
     fedHistory: g.fedHistory.slice(),
     farmTiles: g.farmTiles.slice(),
     wallTarget: g.wallTarget ? { ...g.wallTarget } : null,
@@ -69,6 +70,21 @@ export function cloneState(s: SimState): SimState {
     salinity: s.salinity.slice(),
     animalLowYears: s.animalLowYears.slice(),
     areaAnimals: s.areaAnimals.slice(),
+    elevation: s.elevation,                        // painted, never changes
+    wear: s.wear.slice(),
+    roadOK: s.roadOK.slice(),
+    ruinAge: s.ruinAge.slice(),
+    quarry: s.quarry.slice(),
+    canal: s.canal.slice(),
+    terrace: s.terrace.slice(),
+    ash: s.ash.slice(),
+    bareYears: s.bareYears.slice(),
+    cellForest0: s.cellForest0,                    // never changes
+    dryCells: s.dryCells.slice(),
+    fireState: s.fireState.slice(),
+    floodMonths: s.floodMonths.slice(),
+    weatherYear: s.weatherYear.slice(),
+    hazardsActive: s.hazardsActive.map((h) => ({ ...h })),
     climate: s.climate.slice(),
     driftMult: s.driftMult.slice(),
     groups: s.groups.map(cloneGroup),
@@ -76,6 +92,8 @@ export function cloneState(s: SimState): SimState {
     persons: clonePool(s.persons),
     relations: s.relations.map((r) => ({ ...r })),
     lineagesMet: s.lineagesMet.slice(),
+    alliances: s.alliances.map((a) => ({ ...a })),
+    languages: s.languages.map((l) => ({ ...l })),
     activeEvents: s.activeEvents.map((e) => ({ ...e })),
     log: [],
     logDropped: 0,
@@ -86,7 +104,7 @@ export function cloneState(s: SimState): SimState {
 /** A group's typed arrays, in a fixed order (kept out of the JSON part of the hash). */
 const GROUP_ARRAYS = [
   'known', 'belowLimitYears', 'fedHistory', 'inactiveWhy', 'discoveries', 'inactive', 'built',
-  'practice', 'practiceYear', 'idleYears', 'needAcc', 'needs', 'lessons',
+  'practice', 'practiceYear', 'idleYears', 'needAcc', 'needs', 'lessons', 'culture',
 ] as const;
 
 /** Typed arrays that make up the state, in a fixed order. */
@@ -96,6 +114,8 @@ function stateArrays(s: SimState): ArrayBufferView[] {
     s.baseRain, s.rainNow, s.animal[0], s.animal[1], s.animal[2], s.animal[3], s.wall, s.crossing,
     s.regionId, s.regionParent, s.dryYears, s.wetYears, s.farmIdleYears, s.farmedThisYear, s.climate, s.driftMult,
     s.fish, s.fertility, s.salinity, s.animalLowYears, s.areaAnimals,
+    s.wear, s.roadOK, s.ruinAge, s.quarry, s.canal, s.terrace, s.ash, s.bareYears, s.dryCells,
+    s.fireState, s.floodMonths, s.weatherYear,
   ];
   for (const k of POOL_ARRAYS) out.push(s.persons[k]);
   for (const g of s.groups) for (const k of GROUP_ARRAYS) out.push(g[k]);
@@ -125,8 +145,9 @@ export function hashState(s: SimState): string {
     village: g.village ? { ...g.village, counts: Array.from(g.village.counts) } : null,
   }));
   const json = JSON.stringify({
-    year: s.year, month: s.month, walls: s.wallSegments, events: s.activeEvents,
+    year: s.year, month: s.month, walls: s.wallSegments, events: s.activeEvents, hazards: s.hazardsActive,
     groups, lineages: s.lineages, nextGroupId: s.nextGroupId, relations: s.relations, met: s.lineagesMet,
+    alliances: s.alliances, languages: s.languages, nextLanguageId: s.nextLanguageId,
     persons: { nextId: s.persons.nextId, free: s.persons.free, capacity: s.persons.capacity },
   });
   for (let k = 0; k < json.length; k++) mix(json.charCodeAt(k) & 255);

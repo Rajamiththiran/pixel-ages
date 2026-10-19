@@ -85,3 +85,21 @@ Each pass: what changed, why, and the results before and after.
 **Real basis:** coastal and river foragers were often among the densest and most settled (salmon rivers, shell middens). At 5.0 a sea tile gives at most ~0.6 FU a month for ever, a river tile ~1.6 FU — still less than a field (20 FU).
 
 **Still open (F3 acceptance, for F9):** "deer vanish from heavily hunted areas" is not reached. On a 20 × 20 island with up to ~200 spear hunters for 200 years, deer stayed at 106–122% of their start. Hunters take at most 20% of the range's prey food a month (`people.brain.food.preyMonthlyShare`, pass 3) and switch to other food as deer thin out, and one success takes only 1% of a tile's deer (`people.food.huntDepletion`), while deer regrow 3% a month. Levers: `huntDepletion`, `preyMonthlyShare`, `animals.prey.growth`. Not changed now because they are v1/F0 numbers.
+
+## Pass 5 — F4 (forest regrowth), 15 Oct 2026
+
+**Goal (future blueprint §10.8):** forest returns over cleared land and ruins at the default rain.
+
+**Change:** `plants.forest.spreadMinRain` 55 → 45. At 55, forest never spread at the new-map rain of 50, so every clearing stayed open for good. At 45 forest spreads at rain 50 and still not in dry land (rain 25–44 keeps existing forest but never gains).
+
+## Pass 6 — F6 (inequality and war), 16 Oct 2026
+
+**Goal (future blueprint §12.9):** conflict gains raids and alliances without F6 turning every big village into a war machine.
+
+**Measured:** Scenario D, 10 seeds, 600 years. At the starting numbers (inequality war, trade and absorb weights 20, cooperation fall 0.05) most villages got a chief, inequality settled near 0.8, and +16 on the war score put it above coexisting: median wars ~170 against ~100 with F6 off, ~3× the conquests, and a third of the people.
+
+**Change:** `future.society.inequalityWarWeight`, `inequalityTradeWeight`, `inequalityAbsorbWeight` 20 → 5; `inequalityCoopFall` 0.05 → 0.1 (inequality settles near 0.38 at cooperation 50).
+
+**Result:** median wars ~38 (fewer than with F6 off: walls and alliances deter), alliances in 9/10 seeds, raids in 5/10.
+
+**Open for F9:** Scenario D population at year 600 is still below the F6-off runs. The largest part was wider contact spreading F5 outbreaks along trade links (now only horses widen contact, DECISIONS 13.16). F5 disease itself is strong: in one seed, turning outbreaks off tripled the population.

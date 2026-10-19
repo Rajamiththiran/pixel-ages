@@ -10,13 +10,15 @@ import { hasActive } from './explore';
 import { woodOfDensity } from './wood';
 import { farmToolMult } from './foodJobs';
 import { yieldMult } from './food';
+import { blightMult } from '../world/hazards';
+import { domesticMult } from '../society/society';
 
 const F = CONFIG.people.food;
 const SO = CONFIG.future.soil;
 const SA = CONFIG.future.salt;
 
 /** Flags in `farmedThisYear` (F3): what kind of farming each tile saw this year. */
-export const Farmed = { Worked: 1, Irrigated: 2, Rotation: 4, Drained: 8 } as const;
+export const Farmed = { Worked: 1, Irrigated: 2, Rotation: 4, Drained: 8, Terraced: 16, Flooded: 32 } as const;
 
 /** Soil quality of a field (F3 §9.4–9.5): yield × (0.4 + 0.6 × fertility) × (1 − salinity). */
 export const soilMult = (s: SimState, i: number): number =>
@@ -118,8 +120,12 @@ export function fieldYield(s: SimState, g: Group, tile: number, mult: number): n
   s.farmedThisYear[tile] = s.farmedThisYear[tile]! | Farmed.Worked
     | (irrigated && rf < 1 ? Farmed.Irrigated : 0)            // water was actually brought in
     | (hasActive(g, Discovery.cropRotation) ? Farmed.Rotation : 0)
-    | (hasActive(g, Discovery.drainage) ? Farmed.Drained : 0);
-  return F.farmerCap * F.farmSeason[season]! * (irrigated ? Math.max(rf, 1) : rf)
+    | (hasActive(g, Discovery.drainage) && g.maintenance >= 0.5 ? Farmed.Drained : 0)   // drains need upkeep (F5)
+    | (hasActive(g, Discovery.terraces) ? Farmed.Terraced : 0);
+  // F5: a flood this year took the harvest; blight cuts it; canals deliver water as well as they are kept up.
+  if (s.farmedThisYear[tile]! & Farmed.Flooded) return 0;
+  const watered = irrigated ? rf + (Math.max(rf, 1) - rf) * g.maintenance : rf;
+  return F.farmerCap * F.farmSeason[season]! * watered * blightMult(s, g)
     * mult * farmToolMult(g) * soilMult(s, tile);
 }
 
@@ -144,6 +150,7 @@ export function yearlySoil(s: SimState): void {
     } else {
       fert += SO.fallowGain;
     }
+    if (flags & Farmed.Flooded) fert += SO.siltGain;   // flood silt (F5, the Nile)
     s.fertility[i] = Math.min(1, Math.max(0, fert));
     if (s.plantType[i] === Plant.Farmland && s.salinity[i]! > SA.barrenAbove) {
       s.plantType[i] = Plant.None;
@@ -217,7 +224,7 @@ export function herdWork(s: SimState, g: Group, mult: number, range: number[], h
   }
   const tend = Math.max(0, Math.min(F.herdPerHerder, g.herd - hm.tended));
   hm.tended += tend;
-  g.foodStock += tend * F.herdYieldPerAnimal * mult;
+  g.foodStock += tend * F.herdYieldPerAnimal * mult * domesticMult(g);   // F6: tamer herds give more
   return best >= 0 ? best : g.homeY * s.width + g.homeX;
 }
 

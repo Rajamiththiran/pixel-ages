@@ -7,7 +7,7 @@ import type { MapData } from '../shared/types';
 export function createMap(width: number = CONFIG.map.width, height: number = CONFIG.map.height): MapData {
   const n = width * height;
   return {
-    version: 2,
+    version: 3,
     width,
     height,
     ground: new Uint8Array(n).fill(CONFIG.editor.newMap.ground),
@@ -18,12 +18,13 @@ export function createMap(width: number = CONFIG.map.width, height: number = CON
     rain: new Uint8Array(n).fill(CONFIG.editor.newMap.rain),
     animals: [new Uint8Array(n), new Uint8Array(n), new Uint8Array(n), new Uint8Array(n)],
     wall: new Uint8Array(n),
+    elevation: new Uint8Array(n),
   };
 }
 
 export function cloneMap(m: MapData): MapData {
   return {
-    version: 2,
+    version: 3,
     width: m.width,
     height: m.height,
     ground: m.ground.slice(),
@@ -34,6 +35,7 @@ export function cloneMap(m: MapData): MapData {
     rain: m.rain.slice(),
     animals: [m.animals[0].slice(), m.animals[1].slice(), m.animals[2].slice(), m.animals[3].slice()],
     wall: m.wall.slice(),
+    elevation: m.elevation.slice(),
   };
 }
 
@@ -47,12 +49,13 @@ export function copyMapInto(dst: MapData, src: MapData): void {
   dst.rain.set(src.rain);
   for (let s = 0; s < 4; s++) dst.animals[s]!.set(src.animals[s]!);
   dst.wall.set(src.wall);
+  dst.elevation.set(src.elevation);
 }
 
 // Layer ids used by undo records. Animals are 6..9 (6 + Species id).
 export const Layer = {
   Ground: 0, PlantType: 1, PlantDensity: 2, ResourceType: 3, ResourceAmount: 4,
-  Rain: 5, Animal0: 6, Animal1: 7, Animal2: 8, Animal3: 9, Wall: 10,
+  Rain: 5, Animal0: 6, Animal1: 7, Animal2: 8, Animal3: 9, Wall: 10, Elevation: 11,
 } as const;
 export type Layer = (typeof Layer)[keyof typeof Layer];
 
@@ -65,6 +68,7 @@ export function layerArray(m: MapData, layer: number): Uint8Array {
     case Layer.ResourceAmount: return m.resourceAmount;
     case Layer.Rain: return m.rain;
     case Layer.Wall: return m.wall;
+    case Layer.Elevation: return m.elevation;
     default: {
       const a = m.animals[layer - Layer.Animal0];
       if (!a) throw new Error(`Unknown layer ${layer}`);

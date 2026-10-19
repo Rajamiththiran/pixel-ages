@@ -1,11 +1,12 @@
 // Groups and lineages: creation, membership, averages and the event log.
 
 import { CONFIG } from '../../config';
-import { HAZARD_COUNT, Mode, NEED_COUNT, PRACTICE_COUNT } from '../../shared/ids';
+import { CULTURE_COUNT, HAZARD_COUNT, Mode, NEED_COUNT, PRACTICE_COUNT } from '../../shared/ids';
 import { DISCOVERY_COUNT, newMask } from '../../shared/discoveries';
 import type { LogType } from '../../shared/types';
 import type { Group, SimState } from '../state';
 import { freePerson } from './persons';
+import { leaveRuins } from '../world/landscape';
 
 const A = CONFIG.people.ages;
 
@@ -19,7 +20,11 @@ export function newGroup(s: SimState, id: number, name: string, lineageId: numbe
     foodStock: 0, fedHistory: fed, fedIndex: 0, wood: 0, metal: 0, built: newMask(), boatYear: 0,
     herd: 0, herders: 0, farmTiles: [], hasHunted: false,
     practice: new Float32Array(PRACTICE_COUNT), practiceYear: new Float32Array(PRACTICE_COUNT), idleYears: new Uint16Array(PRACTICE_COUNT),
-    needAcc: new Float32Array(NEED_COUNT), needs: new Float32Array(NEED_COUNT), lessons: new Uint16Array(HAZARD_COUNT),
+    needAcc: new Float32Array(NEED_COUNT), needs: new Float32Array(NEED_COUNT), lessons: new Uint16Array(HAZARD_COUNT), maintenance: 1,
+    specialists: 0, chief: false, inequality: 0,
+    culture: new Float32Array(CULTURE_COUNT).fill(CONFIG.future.society.cultureStart),
+    languageId: 0, kinContactYear: s.year, isolationYears: 0, domestication: 0, fortification: 0,
+    storeMonthsSum: 0, warWinsYear: 0, underThreat: false, hungerPeak: 0,
     huts: 0, houses: 0, buildProgress: 0,
     hungryMonths: 0, crowdedMonths: 0, wantsSplit: false, wallTarget: null, wallScanKey: '',
     teachBonus: 1, teacherMonths: 0, carers: 0, cannotReproduceLogged: false, village: null, trading: false,
@@ -143,14 +148,16 @@ export function removeEmptyGroups(s: SimState): void {
 }
 
 /**
- * Takes groups off the map (died out, conquered, absorbed): drops their relations and logs
- * the end of a lineage that has no group left.
+ * Takes groups off the map (died out, conquered, absorbed): leaves ruins of their buildings
+ * (F4), drops their relations and logs the end of a lineage that has no group left.
  */
 export function removeGroups(s: SimState, gone: Group[]): void {
   const ids = new Set(gone.map((g) => g.id));
   s.groups = s.groups.filter((g) => !ids.has(g.id));
   s.relations = s.relations.filter((r) => !ids.has(r.a) && !ids.has(r.b));
+  s.alliances = s.alliances.filter((x) => !ids.has(x.a) && !ids.has(x.b) && !ids.has(x.against));
   for (const g of gone) {
+    leaveRuins(s, g);
     const lin = s.lineages.find((l) => l.id === g.lineageId);
     if (lin && lin.extinctYear === null && !s.groups.some((o) => o.lineageId === lin.id)) {
       lin.extinctYear = s.year;

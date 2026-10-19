@@ -10,6 +10,8 @@ import { fixActualTraits, inheritAll } from './inheritance';
 import { hasActive } from './explore';
 import { logEvent } from './groups';
 import { eventDeathMult } from '../events';
+import { hazardDeathMult } from '../world/hazards';
+import { inbreedMult } from '../society/society';
 
 const P = CONFIG.people;
 const AGE = P.ages;
@@ -46,14 +48,15 @@ export function pairing(s: SimState, g: Group): void {
   }
 }
 
-/** Women 16–40 with a living partner and no baby at the breast: 5% a month (2.5% when hungry). */
+/** Women 16–40 with a living partner and no baby at the breast: 7% a month (3.5% when hungry), × inbreeding (F6). */
 export function births(s: SimState, g: Group): void {
   const p = s.persons;
   const B = P.birth;
   const mothers = g.members.filter((w) =>
     p.sex[w] === Sex.Female && p.partnerId[w] !== -1 && p.nursing[w] === 0
     && p.ageMonths[w]! >= B.minAge * 12 && p.ageMonths[w]! < (B.maxAge + 1) * 12);
-  const rate = g.hunger > B.hungryAboveH ? B.hungryMonthlyChance : B.monthlyChance;
+  // F6: small groups long without outsiders have fewer healthy children (inbreeding).
+  const rate = (g.hunger > B.hungryAboveH ? B.hungryMonthlyChance : B.monthlyChance) * inbreedMult(g, g.members.length);
   for (const mom of mothers) {
     if (!chance(s.rng, rate)) continue;
     const dad = p.slotOf.get(p.partnerId[mom]!);
@@ -94,7 +97,8 @@ export function deaths(s: SimState, g: Group): number[] {
   const groupMult = (harshHome ? M.harshHomeNoClothing : 1)
     * (winter && !hasActive(g, Discovery.fire) ? M.winterNoFire : 1)
     * (hasActive(g, Discovery.mudBrick) ? M.mudBrick : 1);
-  const events = eventDeathMult(s, g);
+  // Planned events, and (F5) outbreaks and endemic disease.
+  const events = eventDeathMult(s, g) * hazardDeathMult(s, g);
   const careMult = g.carers > 0 ? Math.max(P.care.minMult, 1 - P.care.reductionPerCarer * g.carers) : 1;
   const dead: number[] = [];
   for (const slot of g.members) {

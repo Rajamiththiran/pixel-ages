@@ -110,11 +110,17 @@ export interface ChanceInputs {
   practiceShare?: number;        // min(1, practice in its activity / (24 × population))
   need?: number;                 // 0–1, last year's pressure of its need
   lesson?: boolean;              // a lesson of one of its hazards is active
+  avgCoop?: number;              // F5: clever, cooperative groups learn more from a disaster
+  specialists?: number;          // F6: share of craftspeople (each 1%: +2%)
 }
+
+/** F5 §11.6: lessons × (0.5 + int/200) × (0.5 + coop/200); 1 when cooperation is not given. */
+const lessonFactor = (x: ChanceInputs): number =>
+  (x.avgCoop === undefined ? 1 : (0.5 + x.avgInt / 200) * (0.5 + x.avgCoop / 200));
 
 /**
  * Yearly chance of one discovery: the v1 formula (§12.3) × learning by doing × necessity ×
- * a lesson from a recent disaster (future blueprint §8.2).
+ * a lesson from a recent disaster (future blueprint §8.2) × craftspeople (F6 §12.1).
  */
 export function discoveryChance(def: DiscoveryDef, x: ChanceInputs): number {
   const spareFood = Math.min(1, Math.max(0, (x.fed12 - D.spareFoodFrom) * D.spareFoodScale));
@@ -126,7 +132,8 @@ export function discoveryChance(def: DiscoveryDef, x: ChanceInputs): number {
     * x.teachBonus
     * (1 + PR.weight * (x.practiceShare ?? 0))
     * (1 + PR.needWeight * (x.need ?? 0))
-    * (x.lesson ? FU.lessons.mult : 1);
+    * (x.lesson ? FU.lessons.mult * lessonFactor(x) : 1)
+    * (1 + FU.society.specialistDiscovery * (x.specialists ?? 0));
 }
 
 /** Era from owned discoveries: every era up to E has at least 60% of its discoveries (F2 §8.3). */
@@ -231,7 +238,8 @@ export function yearlyPractice(g: Group): void {
   const months = CONFIG.time.ticksPerYear;
   for (let k = 0; k < g.needs.length; k++) {
     // Hunger and cold are summed month by month; war losses are added as shares of the full need.
-    const v = k === Need.war ? g.needAcc[k]! : g.needAcc[k]! / months;
+    // Hunger and cold are averaged over the months; war, fires and floods are counted strikes.
+    const v = k === Need.war || k === Need.fires || k === Need.floods ? g.needAcc[k]! : g.needAcc[k]! / months;
     g.needs[k] = Math.min(1, Math.max(0, v));
     g.needAcc[k] = 0;
   }
@@ -299,10 +307,12 @@ export function rollDiscoveries(s: SimState, g: Group): void {
   const found = foundMask(s, g, wantedFound(g));
   const x: ChanceInputs = {
     avgInt: traitAverages(s, g).int,
+    avgCoop: traitAverages(s, g).coop,
     population: pop,
     fed12: fed12(g),
     writing: has(g.discoveries, Discovery.writing),
     teachBonus: g.teachBonus,
+    specialists: g.specialists,
   };
   for (const def of DISCOVERIES) {
     if (!canDiscover(g, def, found, pop)) continue;

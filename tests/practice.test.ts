@@ -242,18 +242,28 @@ describe('contact diffusion (§8.4)', () => {
     expect(s.log.some((e) => e.text === 'Ash learned Fire from Oak')).toBe(true);
   });
 
-  it('the chance is 2% × intelligence / 100 a year', () => {
-    let learned = 0;
-    for (let trial = 0; trial < 4000; trial++) {
-      const s = world(10, true);
-      s.rng[0] = (s.rng[0]! + trial * 104729) >>> 0;
-      s.rng[1] = (s.rng[1]! ^ Math.imul(trial + 1, 2654435761)) >>> 0; // the first draw depends on word 1
-      s.groups[0]!.discoveries = maskOf(D.fire);
-      diffuse(s, s.groups[0]!, s.groups[1]!);
-      if (has(s.groups[1]!.discoveries, D.fire)) learned++;
-    }
-    expect(learned / 4000).toBeGreaterThan(0.013);
-    expect(learned / 4000).toBeLessThan(0.027);
+  it('the chance is 2% × intelligence / 100 a year (× 0.5 between kin who grew apart, F6)', () => {
+    const rate = (shareLanguage: boolean): number => {
+      let learned = 0;
+      for (let trial = 0; trial < 4000; trial++) {
+        const s = world(10, true);
+        s.rng[0] = (s.rng[0]! + trial * 104729) >>> 0;
+        s.rng[1] = (s.rng[1]! ^ Math.imul(trial + 1, 2654435761)) >>> 0; // the first draw depends on word 1
+        s.groups[0]!.discoveries = maskOf(D.fire);
+        // One lineage; the second group either still speaks its language or has grown its own.
+        s.groups[1]!.lineageId = s.groups[0]!.lineageId;
+        if (shareLanguage) s.groups[1]!.languageId = s.groups[0]!.languageId;
+        diffuse(s, s.groups[0]!, s.groups[1]!);
+        if (has(s.groups[1]!.discoveries, D.fire)) learned++;
+      }
+      return learned / 4000;
+    };
+    const same = rate(true);
+    expect(same).toBeGreaterThan(0.013);
+    expect(same).toBeLessThan(0.027);
+    const foreign = rate(false);
+    expect(foreign).toBeGreaterThan(0.005);
+    expect(foreign).toBeLessThan(0.0145);
   });
 });
 

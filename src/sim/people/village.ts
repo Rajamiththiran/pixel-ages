@@ -20,7 +20,10 @@ import { fishTiles } from '../world/fish';
 import { expectedFish, expectedFarm, expectedGather, expectedHerd, expectedHunt, foodOutlook, foodScore, gatherCapOf, huntSuccess } from './foodJobs';
 import { eventDeathMult, plagued } from '../events';
 import { monthlyPractice } from './practice';
+import { hazardDeathMult, herdPredation, maintain, maintainScore, sick } from '../world/hazards';
+import { walk } from '../world/landscape';
 import { bestForest, burnFuel, buildingWood, cutWood, cutWoodScore, fuelUrgent, payBuilding, woodNeedYear, woodShortage } from './wood';
+import { inbreedMult } from '../society/society';
 
 const P = CONFIG.people;
 const V = P.village;
@@ -119,6 +122,9 @@ export function mergeSamples(rng: RngState, a: SampleMember[], popA: number, b: 
   if (b.length === 0 || popB <= 0) { const out = a.slice(); resizeSample(rng, out); return out; }
   if (a.length === 0 || popA <= 0) { const out = b.slice(); resizeSample(rng, out); return out; }
   const fromB = Math.min(V.sampleSize, Math.round((V.sampleSize * popB) / (popA + popB)));
+  // Too few newcomers for a place (a yearly marriage, F6): keep the sample as it is, rather than
+  // redrawing it with replacement, which would wear away its variety year after year.
+  if (fromB === 0) return a.map((m) => ({ ...m, pot: [...m.pot], act: [...m.act] }));
   const out: SampleMember[] = [];
   for (let k = 0; k < V.sampleSize - fromB; k++) out.push(a[int(rng, a.length)]!);
   for (let k = 0; k < fromB; k++) out.push(b[int(rng, b.length)]!);
@@ -261,7 +267,7 @@ export function modeSwitches(s: SimState): void {
 /** Village labour (§11.10): workers per action, shared ∝ score² with no nudge. */
 export interface Labour { [action: number]: number }
 
-const SUPPORT = [Action.Explore, Action.Care, Action.Build, Action.CutWood] as const;
+const SUPPORT = [Action.Explore, Action.Care, Action.Build, Action.CutWood, Action.Maintain] as const;
 
 /**
  * Shares ∝ score². Support jobs get the bands' diminishing returns (DECISIONS 3.5): their
@@ -293,7 +299,9 @@ export function updateVillage(s: SimState, g: Group): void {
   computeSignals(s, g, range, villageNeed(v));
   updateWallTarget(s, g);
 
-  const workers = inBuckets(v, [2, 3]);
+  // F6: specialists craft full time; everyone else shares the other work.
+  const crafters = inBuckets(v, [2, 3]) * g.specialists;
+  const workers = inBuckets(v, [2, 3]) - crafters;
   const children = inBuckets(v, [0, 1]);
   const adults = inBuckets(v, [2, 3, 4, 5]);
   const avg = villageWorkers(g);
@@ -343,6 +351,8 @@ export function updateVillage(s: SimState, g: Group): void {
   if ((shortage > 0 || fuelUrgent(g, pop)) && bestForest(s, range) >= 0) {
     sc.set(Action.CutWood, cutWoodScore(g, pop, shortage));
   }
+  const upkeep = maintainScore(g);                       // F5: canals, levees, drains
+  if (upkeep > 0) sc.set(Action.Maintain, upkeep);
   const L = shareLabour(sc, workers);
   // Farmers and herders beyond what the land and herd can take gather instead (DECISIONS 5.5).
   const farmers = Math.min(L[Action.Farm] ?? 0, farmSlots);
@@ -398,6 +408,7 @@ export function updateVillage(s: SimState, g: Group): void {
       if (left <= 0) break;
       const n = Math.min(F.farmersPerTile, left);
       g.foodStock += n * fieldYield(s, g, tile, mult);
+      walk(s, g, tile, n);                             // F4: farmers wear paths to their fields
       left -= n;
     }
   }
@@ -414,6 +425,7 @@ export function updateVillage(s: SimState, g: Group): void {
   }
   g.herders = herders;
   if (taming) growHerd(g, capacity);
+  herdPredation(s, g, range);                            // F5: wolves take herd animals
   // Explore: stochasticRound(explorers × 0.2) reveals at the average intelligence.
   const reveals = stochasticRound(s.rng, (L[Action.Explore] ?? 0) * V.revealsPerExplorer);
   for (let k = 0; k < reveals; k++) {
@@ -425,8 +437,10 @@ export function updateVillage(s: SimState, g: Group): void {
   // Woodcutters thin the densest forest in range.
   const cutters = L[Action.CutWood] ?? 0;
   if (cutters > 0) cutWood(s, g, range, cutters);
+  maintain(g, L[Action.Maintain] ?? 0);
   // Wall work at the average strength.
   wearWall(s, g, avg.str, L[Action.Wall] ?? 0);
+  if (g.wallTarget) walk(s, g, g.wallTarget.tile, L[Action.Wall] ?? 0);
   // Build toward the wanted number of buildings.
   const builders = L[Action.Build] ?? 0;
   if (builders > 0) {
@@ -443,7 +457,7 @@ export function updateVillage(s: SimState, g: Group): void {
   }
   g.carers = L[Action.Care] ?? 0;
   // Practice (F2): farmers and herders beyond what the land takes counted as gatherers above.
-  const worked: Record<number, number> = { [Action.Gather]: gatherers, [Action.Farm]: farmers, [Action.Herd]: herders };
+  const worked: Record<number, number> = { [Action.Gather]: gatherers, [Action.Farm]: farmers, [Action.Herd]: herders, [Action.Craft]: crafters };
   monthlyPractice(s, g, (a) => worked[a] ?? L[a] ?? 0, adults);
   // Teachers: people 50+ × (share of sample 50+ with intelligence ≥ 90) × 0.3.
   const T = P.teach;
@@ -473,7 +487,7 @@ function distributeVillage(s: SimState, g: Group): void {
   // Childhood averages over the last 15 years (the length of a childhood).
   const months = P.childMonths;
   v.childFed += (fed - v.childFed) / months;
-  const hard = fed < P.fed.starvingBelow || plagued(s, g);
+  const hard = fed < P.fed.starvingBelow || plagued(s, g) || sick(s, g);
   v.childAdversity += ((hard ? 1 : 0) - v.childAdversity) / months;
 }
 
@@ -481,7 +495,8 @@ function distributeVillage(s: SimState, g: Group): void {
 function villageBirths(s: SimState, g: Group): void {
   const v = g.village!;
   const fertile = v.counts[cell(Sex.Female, 2)]! * V.fertileShare;
-  const births = stochasticRound(s.rng, (fertile / V.birthIntervalMonths) * (g.hunger > P.birth.hungryAboveH ? V.hungryBirthMult : 1));
+  const births = stochasticRound(s.rng, (fertile / V.birthIntervalMonths) * (g.hunger > P.birth.hungryAboveH ? V.hungryBirthMult : 1)
+    * inbreedMult(g, population(g)));
   for (let k = 0; k < births; k++) v.counts[cell(chance(s.rng, 0.5) ? Sex.Female : Sex.Male, 0)]! += 1;
   v.birthsThisYear += births;
 }
@@ -497,7 +512,8 @@ function groupDeathMult(s: SimState, g: Group): number {
     * (winter && !hasActive(g, Discovery.fire) ? M.winterNoFire : 1)
     * (hasActive(g, Discovery.mudBrick) ? M.mudBrick : 1)
     * (v.fed < P.fed.starvingBelow ? M.starving : v.fed < P.fed.malnourishedBelow ? M.malnourished : 1)
-    * eventDeathMult(s, g);
+    * eventDeathMult(s, g)
+    * hazardDeathMult(s, g);   // F5: outbreaks and endemic disease
 }
 
 /** Expected deaths per bucket = count × monthly rate × multipliers, stochastically rounded. */

@@ -18,7 +18,7 @@ export interface BottomBarHandlers {
 }
 
 export interface BottomBarApi {
-  setFps(fps: number): void;
+  setFps(fps: number, frameMs?: number): void;
   setSetupMode(text: string): void;
   setRunMode(): void;
   update(f: Frame): void;
@@ -116,5 +116,9 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
   }
 
   setSetupMode('');
-  return { setFps: (v) => { fps.textContent = `${v} fps`; }, setSetupMode, setRunMode, update };
+  return {
+    // F8: the frame's drawing time beside the fps (the 60 fps budget is 16.7 ms).
+    setFps: (v, ms) => { fps.textContent = ms === undefined ? `${v} fps` : `${v} fps · ${ms.toFixed(1)} ms`; fps.title = 'Frames per second and the average time one frame takes to draw'; },
+    setSetupMode, setRunMode, update,
+  };
 }
