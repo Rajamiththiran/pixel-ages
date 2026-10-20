@@ -108,11 +108,11 @@ export interface Group {
   inactive: Mask;                // owned but missing a resource or wood
   inactiveWhy: Uint8Array;       // per discovery: what it lacks while inactive (Lack id)
   era: number;                   // 0–6
-  belowLimitYears: Uint8Array;   // per discovery, years under forget limit
   foodStock: number;             // FU
   fedHistory: Float32Array;      // last 12 months of group average fed ratio (ring buffer)
   fedIndex: number;              // next write position in fedHistory
   wood: number;                  // stored wood units (F1)
+  spareFuel: number;             // dung and straw gathered this year but not burned: kiln fuel (DECISIONS 17.6)
   metal: number;                 // stored smelted metal units: tools and weapons (F1)
   built: Mask;                   // raft, boat, cart built, by discovery id (F1)
   boatYear: number;              // year the boat was built; it wears out (F1)

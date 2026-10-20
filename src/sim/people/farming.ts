@@ -113,6 +113,23 @@ export function farmWork(s: SimState, g: Group, slot: number, k: number): number
  * One farmer-month on field `tile` (§11.5): 2 FU × season × rain (irrigated ≥ 1) × yield × tools
  * × soil (F3). Marks how the field was farmed this year (soil and salt, F3).
  */
+/**
+ * What the group's fields give a month, averaged over the year (the seasons average 1), fully
+ * worked, at today's rain, canals and soil: the fields' part of the sustainable yield (§11.5).
+ * It counts worn soil like the harvest does, so a village on tired fields feels crowded and
+ * sends people to new land (DECISIONS 17.7).
+ */
+export function fieldsSustainable(s: SimState, g: Group): number {
+  const irrigation = hasActive(g, Discovery.irrigation);
+  let sum = 0;
+  for (const tile of g.farmTiles) {
+    const rf = rainFactor(s.rainNow[tile]!);
+    const watered = irrigation && nearWater(s, tile) ? rf + (Math.max(rf, 1) - rf) * g.maintenance : rf;
+    sum += watered * soilMult(s, tile);
+  }
+  return sum * F.farmersPerTile * F.farmerCap;
+}
+
 export function fieldYield(s: SimState, g: Group, tile: number, mult: number): number {
   const rf = rainFactor(s.rainNow[tile]!);
   const irrigated = hasActive(g, Discovery.irrigation) && nearWater(s, tile);

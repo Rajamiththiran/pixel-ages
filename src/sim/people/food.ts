@@ -15,6 +15,7 @@ import { learnLesson } from '../progress/discoveryRules';
 import { fishSustainable, fishTiles } from '../world/fish';
 import { sick } from '../world/hazards';
 import { forEach8Passable } from '../../shared/grid';
+import { fieldsSustainable } from './farming';
 import { craftMult, domesticMult, noteStore, selfishMult } from '../society/society';
 
 const P = CONFIG.people;
@@ -29,10 +30,10 @@ export function needOf(p: PersonPool, slot: number): number {
 /**
  * The forage range: known tiles within radius R of (cx, cy) that the group can actually walk
  * to from there (8-way, no corner cutting). A river without a raft cuts the range in two
- * (DECISIONS 3.3). Ascending tile order.
+ * (DECISIONS 3.3). Ascending tile order. `radius` other than R: the far woodcutting range (F1).
  */
-export function rangeTiles(s: SimState, g: Group, cx = g.homeX, cy = g.homeY): number[] {
-  const R2 = P.range.forage * P.range.forage;
+export function rangeTiles(s: SimState, g: Group, cx = g.homeX, cy = g.homeY, radius: number = P.range.forage): number[] {
+  const R2 = radius * radius;
   const w = s.width;
   const start = cy * w + cx;
   if (!passableFor(s, g, start)) return [];
@@ -119,9 +120,9 @@ export function computeSignals(s: SimState, g: Group, range: number[], need = ba
   for (const i of range) { plant += s.plantFood[i]!; prey += s.animal[Species.Prey][i]!; }
   g.plantAvail = need > 0 ? Math.min(1, Math.max(0, plant / (2 * need))) : 1;
   g.preyAvail = range.length > 0 ? Math.min(1, Math.max(0, (4 * prey) / range.length)) : 0;
-  // Wild food, plus fields (10 farmers × 2 FU each) and last month's tended herd (§11.5).
+  // Wild food, plus fields (10 farmers × 2 FU each, at their rain and soil) and last month's tended herd (§11.5).
   g.sustainable = rangeSustainable(s, range, g)
-    + g.farmTiles.length * F.farmersPerTile * F.farmerCap
+    + fieldsSustainable(s, g)
     + Math.min(g.herd, g.herders * F.herdPerHerder) * F.herdYieldPerAnimal * domesticMult(g)
     + waterSustainable(s, g);
   g.crowding = g.sustainable > 0 ? Math.min(P.crowdingMax, need / g.sustainable) : P.crowdingMax;

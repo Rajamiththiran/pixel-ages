@@ -14,7 +14,7 @@ import { aging, births, checkCanReproduce, deaths, pairing, updateHealth } from 
 import { buryDead, traitAverages } from './groups';
 import { pressure, updateWallTarget } from '../society/walls';
 import { ACTION_NAMES, Season } from '../../shared/ids';
-import { bestForest, burnFuel, buildingWood, woodNeedYear, woodShortage } from './wood';
+import { burnFuel, buildingWood, otherFuel, woodNeedYear, woodShortage, woodSource } from './wood';
 import { monthlyPractice } from './practice';
 import { fishTiles } from '../world/fish';
 import { burnTarget } from '../world/landscape';
@@ -32,7 +32,7 @@ export function updateBand(s: SimState, g: Group): void {
   for (const slot of g.members) p.action[slot] = chooseAction(s, g, ctx, slot);
   const { carers, killed } = doActions(s, g, ctx);
   buryDead(s, g, killed);
-  burnFuel(s, g, g.members.length);
+  burnFuel(s, g, g.members.length, otherFuel(s, g, range));
   monthlyPractice(s, g, (a) => ctx.chosen[a] ?? 0, ctx.adults);
 
   spoil(s, g);
@@ -99,6 +99,6 @@ function bandContext(s: SimState, g: Group, range: number[]): BandContext {
     adults,
     chosen: new Int32Array(ACTION_NAMES.length),
     woodShortage: woodShortage(g, woodNeedYear(g, g.members.length, shelterWood)),
-    hasForest: bestForest(s, range) >= 0,
+    wood: woodSource(s, g, range),
   };
 }

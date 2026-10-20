@@ -131,7 +131,6 @@ export function spawnGroup(s: SimState, source: Group, party: Party, site: numbe
   g.inactiveWhy.set(source.inactiveWhy);
   // Rafts, boats and carts stay with the old group (built = 0): the new one builds its own (F1).
   g.era = source.era;
-  g.belowLimitYears.set(source.belowLimitYears);
   g.hasHunted = source.hasHunted;
   g.fedHistory.set(source.fedHistory);
   g.fedIndex = source.fedIndex;

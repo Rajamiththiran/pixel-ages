@@ -176,10 +176,14 @@ export const CONFIG = {
 
   discoveries: {
     baseChanceByEra: [0.02, 0.015, 0.01, 0.007, 0.005, 0.003],
-    forgetLimitByEra: [5, 10, 20, 40, 80, 150],
-    forgetYears: 10,
     writingChanceMult: 1.3,
     resourceUsePer: 50,
+    // Stone Tools use a tenth as much: a knapper makes dozens of tools from a kilo of flint, and a
+    // known outcrop served a region for millennia (DECISIONS 17.4).
+    stoneUsePer: 500,
+    // Painted clay beside water (river banks, lake shores) comes back with silt: 5 units a year,
+    // up to what was painted, so a dug-out bank refills in about 50 years (DECISIONS 17.5).
+    clayRenewPerYear: 5,
     cityMinPop: 500,
     // Added in step 4 (numbers inside the §12.3 formula):
     spareFoodFrom: 0.5,          // spareFood = clamp((fed12 − 0.5) × 2, 0, 1)
@@ -202,6 +206,19 @@ export const CONFIG = {
       cutBase: 0,                // CutWood score = cutBase + needWeight × shortage (0–1 of the next 12 months' need)
       needWeight: 40,            // a full shortage beats gathering at low hunger (15), loses to it when hungry
       fuelUrgentMonths: 2,       // with less fuel than 2 winter months, cutting is scored by the fire's cooking bonus
+      // Once the forest within the forage range is gone, woodcutters walk to known forest up to 10 km
+      // away and bring back half as much (the rest of the day is the walk). Real basis: where land is
+      // cleared, people walk 5–10 km for firewood (DECISIONS 17.3).
+      farRangeTiles: 10,
+      farEfficiency: 0.5,
+      // Where wood falls short, a group burns dung, straw and dry grass (DECISIONS 17.6). Fuel a
+      // month: per herd animal, per field tile in the range (straw: a wheat field leaves 3–5 t a
+      // hectare, about a third of it spare after fodder and thatch) and per Grass tile (dry grass
+      // and brush). Real basis: steppe, plains and treeless farming peoples cooked and heated
+      // with dung and straw. 1 wood unit ≈ 2.4 person-years of fuel (see fireWinter / fireOther).
+      dungPerAnimal: 0.05,
+      strawPerField: 3,
+      grassPerTile: 1,
     },
     // Smelting (charcoal): wood per metal unit. Real iron ages stripped whole regions of forest.
     smelt: {

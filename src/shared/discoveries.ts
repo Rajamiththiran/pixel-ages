@@ -169,7 +169,7 @@ export const DISCOVERIES: readonly DiscoveryDef[] = [
   def('copperWorking', 'Copper Working', 5, F.Copper, [D.pottery], 'All food ×1.15, war ×1.2', { uses: Resource.Copper, practice: P.fireUse }),
   def('mining', 'Mining', 5, F.Mountain, [D.copperWorking], 'Can work on Mountain walls', { practice: P.metalWork }),
   def('cart', 'Cart', 5, 0, [D.wheel, D.taming], 'Explore ×2, migrate ×2', { practice: P.woodWork }),
-  def('writing', 'Writing', 6, 0, [D.pottery, D.farming], 'Discovery chance ×1.3, forget limits halved, +3 intelligence', { practice: P.clayWork }),
+  def('writing', 'Writing', 6, 0, [D.pottery, D.farming], 'Discovery chance ×1.3, +3 intelligence', { practice: P.clayWork }),
   def('ironWorking', 'Iron Working', 6, F.Iron, [D.copperWorking], 'War ×1.4, farm yield ×1.2', { uses: Resource.Iron, practice: P.metalWork, need: N.war }),
   def('city', 'City', 6, 0, [D.writing, D.mudBrick], 'Top era; city buildings', { minPopulation: CONFIG.discoveries.cityMinPop, practice: P.building }),
   // F1: copper + tin. Tin is rare, so bronze makes far-off deposits worth reaching (real Bronze Age).

@@ -22,7 +22,7 @@ import { eventDeathMult, plagued } from '../events';
 import { monthlyPractice } from './practice';
 import { hazardDeathMult, herdPredation, maintain, maintainScore, sick } from '../world/hazards';
 import { walk } from '../world/landscape';
-import { bestForest, burnFuel, buildingWood, cutWood, cutWoodScore, fuelUrgent, payBuilding, woodNeedYear, woodShortage } from './wood';
+import { burnFuel, buildingWood, cutWood, cutWoodScore, fuelUrgent, otherFuel, payBuilding, woodNeedYear, woodShortage, woodSource } from './wood';
 import { inbreedMult } from '../society/society';
 
 const P = CONFIG.people;
@@ -348,7 +348,8 @@ export function updateVillage(s: SimState, g: Group): void {
   }
   if (deficit > 0 && g.wood >= buildingWood(mudBrick)) sc.set(Action.Build, B.buildBase + B.buildPerFamily * deficit);
   if (g.wallTarget) sc.set(Action.Wall, B.wallWeight * P_ * (avg.str / 100));
-  if ((shortage > 0 || fuelUrgent(g, pop)) && bestForest(s, range) >= 0) {
+  const wood = woodSource(s, g, range);
+  if ((shortage > 0 || fuelUrgent(g, pop)) && wood.tiles.length > 0) {
     sc.set(Action.CutWood, cutWoodScore(g, pop, shortage));
   }
   const upkeep = maintainScore(g);                       // F5: canals, levees, drains
@@ -436,7 +437,7 @@ export function updateVillage(s: SimState, g: Group): void {
   }
   // Woodcutters thin the densest forest in range.
   const cutters = L[Action.CutWood] ?? 0;
-  if (cutters > 0) cutWood(s, g, range, cutters);
+  if (cutters > 0) cutWood(s, g, wood.tiles, cutters, wood.eff);
   maintain(g, L[Action.Maintain] ?? 0);
   // Wall work at the average strength.
   wearWall(s, g, avg.str, L[Action.Wall] ?? 0);
@@ -465,7 +466,7 @@ export function updateVillage(s: SimState, g: Group): void {
   for (const m of v.sample) if (m.ageYears >= T.minAge) { old++; if (m.act[0] >= T.minInt) clever++; }
   g.teacherMonths += inBuckets(v, [3, 4, 5]) * (old > 0 ? clever / old : 0) * T.villageShare;
 
-  burnFuel(s, g, pop);
+  burnFuel(s, g, pop, otherFuel(s, g, range));
   spoil(s, g);
   distributeVillage(s, g);
   villageBirths(s, g);
