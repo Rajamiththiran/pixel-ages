@@ -10,7 +10,7 @@ import { addWear, roadBetween } from '../world/landscape';
 import { chance, float, int, stochasticRound } from '../../shared/rng';
 import type { Alliance, Group, SimState } from '../state';
 import { tilesConnected } from '../world/regions';
-import { addKnownTiles, hasActive, isKnown } from '../people/explore';
+import { addKnownTiles, hasActive } from '../people/explore';
 import { BUCKETS, buryDead, logEvent, population, removeGroups, traitAverages } from '../people/groups';
 import { strengthNow } from '../people/inheritance';
 import { freePerson } from '../people/persons';
@@ -184,9 +184,15 @@ function learnFrom(s: SimState, learner: Group, teacher: Group, p: number): void
   if (learned) updateEra(s, learner);
 }
 
+/** Every tile g knows, ascending (whole empty bytes of the bitset are skipped: speed only). */
 const knownTiles = (s: SimState, g: Group): number[] => {
   const out: number[] = [];
-  for (let i = 0; i < s.width * s.height; i++) if (isKnown(g, i)) out.push(i);
+  const n = s.width * s.height;
+  for (let b = 0; b < g.known.length; b++) {
+    const byte = g.known[b]!;
+    if (byte === 0) continue;
+    for (let k = 0; k < 8; k++) if ((byte >> k) & 1 && b * 8 + k < n) out.push(b * 8 + k);
+  }
   return out;
 };
 
@@ -402,9 +408,16 @@ export function trade(s: SimState, a: Group, b: Group): void {
     learnFrom(s, x, y, ((C.tradeLearnChance * traitAverages(s, x).int) / 100) * learnMult(x, y));
     const home = x.homeY * s.width + x.homeX;
     const share: number[] = [];
-    for (const i of knownTiles(s, y)) {
-      if (isKnown(x, i) || !tilesConnected(s.regionId, s.regionParent, home, i)) continue;
-      if (chance(s.rng, C.tradeTileShare)) share.push(i);
+    // Tiles y knows and x doesn't, ascending: compared 8 at a time on the bitsets (speed only).
+    const n = s.width * s.height;
+    for (let b = 0; b < y.known.length; b++) {
+      const fresh = y.known[b]! & ~x.known[b]!;
+      if (fresh === 0) continue;
+      for (let k = 0; k < 8; k++) {
+        const i = b * 8 + k;
+        if (!((fresh >> k) & 1) || i >= n || !tilesConnected(s.regionId, s.regionParent, home, i)) continue;
+        if (chance(s.rng, C.tradeTileShare)) share.push(i);
+      }
     }
     addKnownTiles(s, x, share);
   }
@@ -508,6 +521,8 @@ export function yearlyContact(s: SimState): void {
   s.relations = s.relations.filter((r) => inContact.has(r.a * 65536 + r.b));
   updateAlliances(s, pairs);
   const gone = new Set<number>();
+  // Each pair's relation, looked up by key instead of searching the list (speed only).
+  const relOf = new Map(s.relations.map((r) => [pairKey(r.a, r.b), r] as const));
 
   for (const [a, b] of pairs) {
     if (gone.has(a.id) || gone.has(b.id)) continue;
@@ -520,7 +535,7 @@ export function yearlyContact(s: SimState): void {
         logEvent(s, 'firstContact', `${a.name} met ${b.name}`, a, b);
       }
     }
-    let rel = s.relations.find((r) => r.a === a.id && r.b === b.id);
+    let rel = relOf.get(pairKey(a.id, b.id));
     const pa = pressure(a);
     const pb = pressure(b);
     const review = !rel || s.year >= rel.reviewYear
@@ -537,6 +552,7 @@ export function yearlyContact(s: SimState): void {
       if (!rel) {
         rel = { a: a.id, b: b.id, kind: choice, sinceYear: s.year, reviewYear: 0, pa, pb };
         s.relations.push(rel);
+        relOf.set(pairKey(a.id, b.id), rel);
         s.relations.sort((x1, y1) => x1.a - y1.a || x1.b - y1.b);
         if (choice === 'trade') logEvent(s, 'tradeStart', `${a.name} and ${b.name} began to trade`, a, b);
       } else if (rel.kind !== choice) {

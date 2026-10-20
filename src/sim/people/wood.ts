@@ -11,7 +11,7 @@ import { hasActive, rebuildFrontier } from './explore';
 import { maxStock } from '../world/plants';
 import { takeResource } from '../progress/deposits';
 import { palisadeWoodWanted } from '../society/society';
-import { rangeTiles } from './food';
+import { homeRangeOf } from './food';
 
 const W = CONFIG.future.wood;
 const S = CONFIG.future.smelt;
@@ -98,7 +98,7 @@ export interface WoodSource { tiles: readonly number[]; eff: number }
  */
 export function woodSource(s: SimState, g: Group, range: readonly number[]): WoodSource {
   if (bestForest(s, range) >= 0) return { tiles: range, eff: 1 };
-  const far = rangeTiles(s, g, g.homeX, g.homeY, W.farRangeTiles);
+  const far = homeRangeOf(s, g, W.farRangeTiles);
   return bestForest(s, far) >= 0 ? { tiles: far, eff: W.farEfficiency } : { tiles: [], eff: 1 };
 }
 

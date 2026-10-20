@@ -77,6 +77,19 @@ export function homeRange(s: SimState, g: Group): number[] {
   return tiles;
 }
 
+// The far woodcutting range (F1, DECISIONS 17.3), cached the same way (speed only).
+const farRanges = new WeakMap<Group, { key: string; tiles: number[] }>();
+
+/** rangeTiles of `radius` around home, cached like homeRange. Don't mutate. */
+export function homeRangeOf(s: SimState, g: Group, radius: number): number[] {
+  const key = `${g.knownVersion}|${g.homeX},${g.homeY}|${hasActive(g, Discovery.raft) ? 1 : 0}|${breachCount(s)}|${radius}`;
+  const c = farRanges.get(g);
+  if (c && c.key === key) return c.tiles;
+  const tiles = rangeTiles(s, g, g.homeX, g.homeY, radius);
+  farRanges.set(g, { key, tiles });
+  return tiles;
+}
+
 /**
  * What a tile can give per month without running down (§11.5 sustainableYield). Prey only
  * count as much as the group can hunt them: half without Stone Tools (DECISIONS 3.4).
