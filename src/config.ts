@@ -128,6 +128,9 @@ export const CONFIG = {
         preyMonthlyShare: 0.2,   // hunters can take up to ~20% of the range's prey food a month without emptying it
         villageHunterShare: 0.25, // villages estimate a quarter of workers might hunt when sharing prey
       },
+      // Item 2a: for its first stickMonths a job's score counts × (1 + stickBonus), so people keep a
+      // job for a season unless something else is clearly better (switching costs walking, tools, skill).
+      stickMonths: 3, stickBonus: 0.5,
       exploreBase: 10, exploreIntDivisor: 2, exploreCrowdWeight: 40, exploreCrowdStart: 0.9, exploreHungerWeight: 0.5,
       careKidsWeight: 40, careHungerWeight: 0.5,
       buildBase: 25, buildPerFamily: 5,
@@ -175,7 +178,9 @@ export const CONFIG = {
   },
 
   discoveries: {
-    baseChanceByEra: [0.02, 0.015, 0.01, 0.007, 0.005, 0.003],
+    // Perfection pass item 1 (TUNING.md pass 7, provisional until the final Scenario A check):
+    // blueprint [0.02, 0.015, 0.01, 0.007, 0.005, 0.003] gave era 6 at years 180–380.
+    baseChanceByEra: [0.0015, 0.0007, 0.00006, 0.0000036, 0.0000027, 0.0000018],
     writingChanceMult: 1.3,
     resourceUsePer: 50,
     // Stone Tools use a tenth as much: a knapper makes dozens of tools from a kilo of flint, and a
@@ -481,6 +486,12 @@ export const CONFIG = {
     maxAnimalSprites: 400, animalBlock: 4, animalsPerBlockMax: 2,
     villageWalkersPer: 10, villageWalkersMax: 40, villageWalkRadius: 3,
     walkSpeedPx: 24, fastWalkMult: 4, walkFrameMs: 250, idleStepMs: 2000, personOffsetPx: 3,
+    // Item 2b: a walker goes at least walkSpeedPx, but fast enough to reach the work spot within
+    // arriveMs of screen time (a season at 1×; ÷ fastWalkMult at 8×), at most maxWalkMult × walkSpeedPx.
+    arriveMs: 250, maxWalkMult: 12,
+    // Item 2b: routes round water and walls (render/paths.ts): A* gives up after maxNodes tiles; at
+    // most cacheSize routes are kept.
+    paths: { maxNodes: 4000, cacheSize: 20000 },
     maxHutsDrawnBand: 12, maxBuildingsDrawn: 30, cityShare: 0.3, maxCityDrawn: 12,
     herdPerSprite: 10, maxHerdDrawn: 12,
     herdRadiusTiles: 2,          // added in step 5: herd goats wander within 2 tiles of home ("near home", §18.5)

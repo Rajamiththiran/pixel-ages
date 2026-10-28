@@ -48,20 +48,21 @@ describe('discovery table (§12.1)', () => {
 });
 
 describe('discovery chance (§12.3)', () => {
-  it('matches the worked Pottery example: about 0.83% a year', () => {
+  it('follows the worked Pottery example (§12.3) with the tuned era-3 base chance', () => {
     const p = discoveryChance(DISCOVERIES[Discovery.pottery]!, {
       avgInt: 110, population: 40, fed12: 0.8, writing: false, teachBonus: 1,
     });
-    expect(p).toBeCloseTo(0.01 * 1.1 * (Math.sqrt(40) / 5) * 0.6, 10);
-    expect(p).toBeCloseTo(0.0083, 4);
+    // The blueprint's example used 1% (≈ 0.83% a year); TUNING.md pass 7 lowered the base.
+    expect(p).toBeCloseTo(CONFIG.discoveries.baseChanceByEra[2]! * 1.1 * (Math.sqrt(40) / 5) * 0.6, 12);
   });
 
   it('a hungry group (fed12 ≤ 0.5) invents nothing; Writing and teaching raise the chance', () => {
     const def = DISCOVERIES[Discovery.fire]!;
     const base = { avgInt: 100, population: 25, fed12: 1, writing: false, teachBonus: 1 };
     expect(discoveryChance(def, { ...base, fed12: 0.5 })).toBe(0);
-    expect(discoveryChance(def, base)).toBeCloseTo(0.02);
-    expect(discoveryChance(def, { ...base, writing: true, teachBonus: 1.3 })).toBeCloseTo(0.02 * 1.3 * 1.3);
+    const era1 = CONFIG.discoveries.baseChanceByEra[0]!;
+    expect(discoveryChance(def, base)).toBeCloseTo(era1, 12);
+    expect(discoveryChance(def, { ...base, writing: true, teachBonus: 1.3 })).toBeCloseTo(era1 * 1.3 * 1.3, 12);
   });
 });
 

@@ -36,6 +36,9 @@ Code style: TypeScript `strict`, small pure functions, short comments that expla
 - F6 (society, conflict and animals, §12): built on the owner's request.
 - F7 (observer tools, §13; D5 intervention mode added): built on the owner's request; approved.
 - F8 (graphics and sound, §14; D6 keep the style, D8 sound on by default): built on the owner's request; awaiting the owner's approval.
+- Perfection pass (owner, 20 Oct 2026: perfect what exists before adding features; 11 items, owner's choices in DECISIONS.md §17–19):
+  - Item 1 (slow down history): built (DECISIONS 17.1–17.7); final discovery numbers being calibrated (TUNING.md pass 7).
+  - Item 2 (readable people): 2b walking routes and pace built (DECISIONS 18.x); 2a jobs last a season built (19.1). Awaiting the owner's try.
 
 ## Test bench (fast checks of simulation changes)
 

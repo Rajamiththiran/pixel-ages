@@ -1,5 +1,7 @@
 // The brain (§11.6): every person aged 15+ scores each allowed action from the group's needs
 // and their own traits, adds a small seeded nudge, and takes the highest score.
+// Item 2a: a job is kept for a season — its score counts × 1.5 in its first 3 months — so
+// people switch only when something else is clearly better.
 
 import { CONFIG } from '../../config';
 import { Action, Season } from '../../shared/ids';
@@ -61,8 +63,11 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
 
   let best: number = Action.Gather;
   let bestScore = -1;
+  // Item 2a: last month's job, kept with a bonus during its first season (stickMonths).
+  const last = p.action[slot]!;
+  const keep = p.jobMonths[slot]! < B.stickMonths ? last : -1;
   const consider = (action: number, score: number): void => {
-    const total = Math.max(0, score) + float(s.rng) * B.nudge;
+    const total = Math.max(0, score) * (action === keep ? 1 + B.stickBonus : 1) + float(s.rng) * B.nudge;
     if (total > bestScore) { bestScore = total; best = action; }
   };
 
@@ -120,5 +125,6 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
     consider(Action.Burn, Bn.base + Bn.preyWeight * (1 - g.preyAvail));
   }
   ctx.chosen[best] = ctx.chosen[best]! + 1;
+  p.jobMonths[slot] = best === last ? Math.min(255, p.jobMonths[slot]! + 1) : 1;
   return best;
 }
