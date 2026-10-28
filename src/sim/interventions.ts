@@ -72,7 +72,7 @@ function flood(s: SimState, x: number, y: number): void {
   for (const g of s.groups) {
     if (!hit.has(g.homeY * s.width + g.homeX)) continue;
     const dead = floodDamage(s, g);
-    strike(s, g, Hazard.RiverFlood, `The flood reached ${g.name}'s homes (${dead} drowned)`);
+    strike(s, g, Hazard.RiverFlood, `The flood reached ${g.name}'s homes (${dead} drowned)`, dead, true); // the owner did it: always shown
   }
 }
 
@@ -84,7 +84,7 @@ function fire(s: SimState, x: number, y: number): void {
     const g = groupOf(s, id);
     if (!g) continue;
     const dead = burnSettlement(s, g);
-    strike(s, g, Hazard.Wildfire, `The fire reached ${g.name} (${dead} died)`);
+    strike(s, g, Hazard.Wildfire, `The fire reached ${g.name} (${dead} died)`, dead, true);
   }
 }
 

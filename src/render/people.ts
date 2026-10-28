@@ -18,6 +18,8 @@ import { GROUP_COLORS } from './palette';
 import { animalSprite } from './decor';
 import { Species } from '../shared/ids';
 import { drawPixelText } from './pixelFont';
+import { RouteCache, type WalkMap } from './paths';
+import { Discovery, has } from '../shared/discoveries';
 
 const TILE = CONFIG.map.tilePx;
 const R = CONFIG.render;
@@ -105,6 +107,9 @@ interface VisualPerson {
   poseFlip: [HTMLCanvasElement, HTMLCanvasElement] | null; // fishers facing water on their left
   flock: Float32Array | null;    // herders: two goats following (x, y, x, y)
   flockLeft: Uint8Array | null;
+  route: number[];               // item 2b: waypoint tiles still to pass on the way to the target
+  routeTo: number;               // the target tile the route leads to (−1 none)
+  lastStep: number;              // px moved in the last animation step (goats keep pace)
   seen: number;
 }
 
@@ -120,6 +125,10 @@ export class PeopleLayer {
   // F8 night: darkness and each group's campfire.
   private darkness = 0;
   private fires = new Map<number, [number, number]>();
+  // Item 2b: routes round water and walls; breached wall tiles; groups with a Raft (walk on water).
+  private readonly routes = new RouteCache();
+  private crossing: Uint8Array | null = null;
+  private rafts = new Set<number>();
   /** F8: a splash at a fisher's line (the effects layer draws it). */
   splash: ((x: number, y: number) => void) | null = null;
 
@@ -132,6 +141,30 @@ export class PeopleLayer {
   setMap(map: MapData): void {
     this.map = map;
     this.shore.clear();
+  }
+
+  /** Breached wall tiles (run mode; updated in place by the session). */
+  setCrossing(crossing: Uint8Array | null): void {
+    this.crossing = crossing;
+  }
+
+  private walkMap(): WalkMap | null {
+    const m = this.map;
+    return m ? { width: m.width, height: m.height, ground: m.ground, wall: m.wall, crossing: this.crossing } : null;
+  }
+
+  /** The tile under a feet position (map px). */
+  private tileAt(x: number, y: number): number {
+    const m = this.map!;
+    const tx = Math.min(m.width - 1, Math.max(0, Math.floor(x / TILE)));
+    const ty = Math.min(m.height - 1, Math.max(0, Math.floor((y - TILE / 2) / TILE)));
+    return ty * m.width + tx;
+  }
+
+  /** Feet position (map px) at the centre of tile i. */
+  private tileCentre(i: number): [number, number] {
+    const w = this.map!.width;
+    return [(i % w + 0.5) * TILE, (Math.floor(i / w) + 0.5) * TILE + TILE / 2];
   }
 
   /** Forget cached sprites (the lineage palette changed). */
@@ -172,7 +205,10 @@ export class PeopleLayer {
     this.frameNo++;
     this.speedMult = fast ? R.fastWalkMult : 1;
     this.homes = new Map(groups.map((g) => [g.id, [(g.homeX + 0.5) * TILE, (g.homeY + 0.5) * TILE + TILE / 2]]));
+    this.rafts = new Set(groups.filter((g) => has(g.discoveries, Discovery.raft)).map((g) => g.id));
     const m = this.map;
+    const wm = this.walkMap();
+    if (wm) this.routes.check(wm);
     const range = P8.nightGatherTiles * TILE;
     for (let o = 0; o < data.length; o += PERSON_FLOATS) {
       const id = data[o]!;
@@ -205,9 +241,18 @@ export class PeopleLayer {
           child: false, rider, facingLeft: false, moving: false, homeward: false, poseLeft, nearHome: true,
           nextIdleMs: nowMs + Math.random() * R.idleStepMs, lookKey: -1,
           walk: undefined as unknown as [HTMLCanvasElement, HTMLCanvasElement], riderLeft: null, tool: null, carry: null, pose: null, poseFlip: null,
-          flock: null, flockLeft: null, seen: 0,
+          flock: null, flockLeft: null, route: [], routeTo: -1, lastStep: 0, seen: 0,
         };
         this.people.set(id, v);
+      }
+      // A new work spot: find the way there from where the sprite stands (item 2b). A clear line
+      // gives no waypoints; no route at all (shouldn't happen) falls back to the straight line.
+      if (wm) {
+        const to = this.tileAt(tx, ty);
+        if (to !== v.routeTo) {
+          v.route = (this.routes.get(wm, this.tileAt(v.x, v.y), to, this.rafts.has(groupId)) ?? []).slice();
+          v.routeTo = to;
+        }
       }
       v.tx = tx;
       v.ty = ty;
@@ -257,17 +302,34 @@ export class PeopleLayer {
     this.list = [...this.people.values()];
   }
 
-  /** Moves everyone toward their target (children toward their mother; at night, to the fire). */
+  /**
+   * Moves everyone toward their target (children toward their mother; at night, to the fire).
+   * Item 2b: workers follow their route's waypoints, and everyone walks fast enough to arrive
+   * within `arriveMs` (÷ the speed button) — never slower than the normal pace, never faster
+   * than `maxWalkMult` × it.
+   */
   animate(nowMs: number, dtMs: number): void {
-    const step = (R.walkSpeedPx * this.speedMult * dtMs) / 1000;
+    const base = R.walkSpeedPx * this.speedMult;
+    const arriveSec = R.arriveMs / 1000 / this.speedMult;
+    const pace = (left: number): number => (Math.min(base * R.maxWalkMult, Math.max(base, left / arriveSec)) * dtMs) / 1000;
     const [cox, coy] = R.childOffsetPx;
     const night = this.darkness > P8.nightGatherAbove;
     const [r0, r1] = P8.fireRingPx;
     for (const v of this.list) {
       let tx = v.tx, ty = v.ty;
+      let left = 0;                 // route length still to walk after the next waypoint
       if (v.child) {
         const mom = this.people.get(v.motherId);
         if (mom) { tx = mom.x + cox; ty = mom.y + coy; }
+      } else if (v.route.length > 0 && !(night && v.nearHome && !v.rider)) {
+        // Head for the next waypoint; the rest of the route counts toward the pace.
+        let [px, py] = this.tileCentre(v.route[0]!);
+        tx = px; ty = py;
+        for (let k = 1; k <= v.route.length; k++) {
+          const [nx, ny] = k < v.route.length ? this.tileCentre(v.route[k]!) : [v.tx, v.ty];
+          left += Math.sqrt((nx - px) * (nx - px) + (ny - py) * (ny - py));
+          px = nx; py = ny;
+        }
       } else if (night && v.nearHome && !v.rider) {
         const fire = this.fires.get(v.groupId);
         if (fire) {
@@ -281,6 +343,8 @@ export class PeopleLayer {
       const dx = tx - v.x;
       const dy = ty - v.y;
       const len = Math.sqrt(dx * dx + dy * dy);
+      const step = pace(len + left);
+      v.lastStep = step;
       if (len > step) {
         v.x += (dx / len) * step;
         v.y += (dy / len) * step;
@@ -288,6 +352,12 @@ export class PeopleLayer {
         if (Math.abs(dx) > 0.5) v.facingLeft = dx < 0;
         const home = this.homes.get(v.groupId);
         v.homeward = home !== undefined && (home[0] - v.x) * dx + (home[1] - v.y) * dy > 0;
+      } else if (left > 0) {
+        // Reached a waypoint: straight on toward the next one, still walking.
+        v.x = tx;
+        v.y = ty;
+        v.route.shift();
+        v.moving = true;
       } else {
         v.x = tx;
         v.y = ty;
@@ -305,9 +375,11 @@ export class PeopleLayer {
           const gx = v.x + (k === 0 ? -P8.herdFollowPx : P8.herdFollowPx), gy = v.y + 1 + k;
           const fx = gx - v.flock[k * 2]!, fy = gy - v.flock[k * 2 + 1]!;
           const fl = Math.sqrt(fx * fx + fy * fy);
-          if (fl > step * 0.8) {
-            v.flock[k * 2] = v.flock[k * 2]! + (fx / fl) * step * 0.8;
-            v.flock[k * 2 + 1] = v.flock[k * 2 + 1]! + (fy / fl) * step * 0.8;
+          // Goats keep pace with their herder (a little slower, so they trail behind).
+          const gs = Math.max(v.lastStep, (base * dtMs) / 1000) * 0.8;
+          if (fl > gs) {
+            v.flock[k * 2] = v.flock[k * 2]! + (fx / fl) * gs;
+            v.flock[k * 2 + 1] = v.flock[k * 2 + 1]! + (fy / fl) * gs;
             if (Math.abs(fx) > 0.5) v.flockLeft![k] = fx < 0 ? 1 : 0;
           }
         }

@@ -8,17 +8,17 @@ import { Discovery, DISCOVERIES, has, sameMask } from '../../shared/discoveries'
 import { battlePractice } from '../people/practice';
 import { addWear, roadBetween } from '../world/landscape';
 import { chance, float, int, stochasticRound } from '../../shared/rng';
-import type { Alliance, Group, SimState } from '../state';
+import type { Alliance, Group, Relation, SimState } from '../state';
 import { tilesConnected } from '../world/regions';
-import { addKnownTiles, hasActive, isKnown } from '../people/explore';
-import { BUCKETS, buryDead, logEvent, population, removeGroups, traitAverages } from '../people/groups';
+import { addKnownTiles, hasActive } from '../people/explore';
+import { BUCKETS, buryDead, logEvent, logQuiet, population, removeGroups, traitAverages } from '../people/groups';
 import { strengthNow } from '../people/inheritance';
 import { freePerson } from '../people/persons';
-import { bestSite } from '../people/movement';
-import { addParty, partySize, partyViable, takeAll, takeCounts, takeSlots, shareOfCounts, spawnGroup } from '../people/transfer';
+import { bestSite, groupViable, moveHome } from '../people/movement';
+import { addParty, partySize, takeAll, takeCounts, takeSlots, shareOfCounts } from '../people/transfer';
 import { resizeSample, toVillage, villageWorkers } from '../people/village';
 import { canDiscover, foundMask, gainDiscovery, updateEra, wantedFound } from '../progress/discoveryRules';
-import { pressure } from './walls';
+import { pressure, warPressure } from './walls';
 import {
   blendCulture, craftMult, fortMult, intermarry, learnMult, mixCulture, noteContact, noteWin, outsidersJoined, pairCulture,
   rollRaid, sameLanguage, understand, weaponMult, workingAnimals,
@@ -114,10 +114,15 @@ export interface DecisionInputs {
   inequality?: number;           // pair average 0–1
   warlike?: number;              // pair average 0–100
   openness?: number;             // pair average 0–100
+  // Perfection pass (DECISIONS 20.4–20.6); left out = the F6 scores.
+  kin?: number;                  // 0–1: parent or sister group, fading over the generations
+  weakFailing?: boolean;         // the weaker side is starving or too small to carry on
+  truce?: boolean;               // they made peace less than a generation ago
 }
 
 /**
- * The four scores before the random nudge. Absorb is only possible when one side is 3× stronger.
+ * The four scores before the random nudge. Absorb is only possible when one side is 3× stronger
+ * and the weaker one is failing; war is impossible during a truce and unlikely between close kin.
  * F6: inequality raises war and lowers trade and absorb; warlike and open cultures lean to war
  * and to trade; groups without a shared language coexist less easily.
  */
@@ -133,9 +138,9 @@ export function decisionScores(x: DecisionInputs): Record<Choice, number | null>
     coexist: C.coexistScore + (x.sameLanguage === false ? SO.languageCoexist : 0),
     trade: C.tradeCoopWeight * coopAvg + (x.hA < C.tradeFedBelowH && x.hB < C.tradeFedBelowH ? C.tradeFedBonus : 0)
       + (x.discoveriesDiffer ? C.tradeDiffBonus : 0) - SO.inequalityTradeWeight * ineq + SO.opennessWeight * open,
-    war: C.warPressureWeight * pPair + C.warCoopWeight * (100 - coopAvg) + (ratio >= C.warRatioBonusAt ? C.warRatioBonus : 0)
-      + SO.inequalityWarWeight * ineq + SO.warlikeWeight * warlike,
-    absorb: ratio >= C.absorbRatio
+    war: x.truce ? null : C.warPressureWeight * pPair + C.warCoopWeight * (100 - coopAvg) + (ratio >= C.warRatioBonusAt ? C.warRatioBonus : 0)
+      + SO.inequalityWarWeight * ineq + SO.warlikeWeight * warlike - C.kinWarPenalty * (x.kin ?? 0),
+    absorb: ratio >= C.absorbRatio && x.weakFailing !== false
       ? C.absorbBase + C.absorbRatioWeight * Math.min(ratio, C.absorbRatioCap) + C.absorbHungerWeight * hWeaker
         - SO.inequalityAbsorbWeight * ineq
       : null,
@@ -156,15 +161,33 @@ export function decide(s: SimState, x: DecisionInputs): Choice {
   return best;
 }
 
-function inputsFor(s: SimState, a: Group, b: Group): DecisionInputs {
+/**
+ * How close kin two groups are, 0–1: a group and the one it split from, or two sisters split
+ * from the same group, count 1 when the younger is new and 0 after kinFadeYears (DECISIONS 20.4).
+ */
+export function kinship(s: SimState, a: Group, b: Group): number {
+  const close = a.parentId === b.id || b.parentId === a.id || (a.parentId >= 0 && a.parentId === b.parentId);
+  if (!close || !sameLanguage(a, b)) return 0;
+  const age = s.year - Math.max(a.foundedYear, b.foundedYear);
+  return Math.max(0, 1 - age / C.kinFadeYears);
+}
+
+/** A group that is starving or too small to carry on alone may join a stronger one (DECISIONS 20.5). */
+export const failing = (g: Group): boolean => g.hunger >= C.absorbFailingHunger || population(g) < C.absorbFailingPop;
+
+export function inputsFor(s: SimState, a: Group, b: Group, rel: Relation | undefined): DecisionInputs {
   const lang = sameLanguage(a, b);
+  const powerA = forceOf(s, a).power;
+  const powerB = forceOf(s, b).power;
   return {
     // Kin who no longer share a language are strangers (F6 §12.5).
     coopA: traitAverages(s, a).coop, coopB: traitAverages(s, b).coop, sameLineage: a.lineageId === b.lineageId && lang,
-    pA: pressure(a), pB: pressure(b), hA: a.hunger, hB: b.hunger,
-    powerA: forceOf(s, a).power, powerB: forceOf(s, b).power, discoveriesDiffer: !sameMask(a.discoveries, b.discoveries),
+    pA: warPressure(a, b), pB: warPressure(b, a), hA: a.hunger, hB: b.hunger,
+    powerA, powerB, discoveriesDiffer: !sameMask(a.discoveries, b.discoveries),
     sameLanguage: understand(a, b), inequality: (a.inequality + b.inequality) / 2,
     warlike: pairCulture(a, b, Culture.warlike), openness: pairCulture(a, b, Culture.openness),
+    kin: kinship(s, a, b), weakFailing: failing(powerA < powerB ? a : b),
+    truce: rel !== undefined && s.year < rel.truceUntil,
   };
 }
 
@@ -178,15 +201,21 @@ function learnFrom(s: SimState, learner: Group, teacher: Group, p: number): void
   for (const def of DISCOVERIES) {
     if (!has(teacher.discoveries, def.id) || !canDiscover(learner, def, found, pop)) continue;
     if (p < 1 && !chance(s.rng, p)) continue;
-    gainDiscovery(s, learner, def.id, `${learner.name} learned ${def.name} from ${teacher.name}`);
+    gainDiscovery(s, learner, def.id, `${learner.name} learned ${def.name} from ${teacher.name}`, true);
     learned = true;
   }
   if (learned) updateEra(s, learner);
 }
 
+/** Every tile g knows, ascending (whole empty bytes of the bitset are skipped: speed only). */
 const knownTiles = (s: SimState, g: Group): number[] => {
   const out: number[] = [];
-  for (let i = 0; i < s.width * s.height; i++) if (isKnown(g, i)) out.push(i);
+  const n = s.width * s.height;
+  for (let b = 0; b < g.known.length; b++) {
+    const byte = g.known[b]!;
+    if (byte === 0) continue;
+    for (let k = 0; k < 8; k++) if ((byte >> k) & 1 && b * 8 + k < n) out.push(b * 8 + k);
+  }
   return out;
 };
 
@@ -299,7 +328,9 @@ export function battle(s: SimState, a: Group, b: Group, alliesA: Group[] = [], a
   noteWin(winner);
   for (const { g } of helpW) noteWin(g);
   const withAllies = (list: ReadonlyArray<{ g: Group }>): string => (list.length ? ` (with ${list.map((x) => x.g.name).join(', ')})` : '');
-  logEvent(s, 'war', `${winner.name}${withAllies(helpW)} beat ${loser.name}${withAllies(helpL)} (${loser.name} lost ${loserDeaths} people)`, winner, loser);
+  // One battle of a war: a small event; the war's start and end are the big ones (DECISIONS 20.9).
+  logEvent(s, 'war', `${winner.name}${withAllies(helpW)} beat ${loser.name}${withAllies(helpL)} (${loser.name} lost ${loserDeaths} people)`,
+    winner, loser, null, null, true);
   const conquered = population(loser) < C.conquerMinPop || effL < C.conquerPowerShare * effW;
   return { winner, loser, effW, effL, share, loserDeaths, winnerDeaths, conquered };
 }
@@ -342,14 +373,16 @@ export function raid(s: SimState, raider: Group, target: Group): boolean {
 }
 
 /**
- * Conquest (§14.4): half the survivors are taken captive; the rest flee as a new group if they
- * can carry on and there is somewhere 12+ tiles away; the winner may learn the loser's
- * discoveries and learns its land. The loser group is gone.
+ * Conquest (§14.4): half the survivors are taken captive; the winner may learn the loser's
+ * discoveries and learns its land. The rest are driven off their land: if they can carry on and
+ * there is somewhere 12+ tiles away, the loser moves there and stays itself (same name, skills
+ * and ways, DECISIONS 20.11); otherwise they scatter and the group is gone. Returns true if the
+ * loser lives on. Real basis: tribes beaten in war lost their land and moved, as the Iroquois
+ * drove out the Huron; whole peoples rarely vanished in one battle.
  */
-export function conquer(s: SimState, winner: Group, loser: Group): void {
+export function conquer(s: SimState, winner: Group, loser: Group): boolean {
   const p = s.persons;
   let captives = 0;
-  let fled = 0;
   // 1. Captives: a random half of the survivors.
   if (loser.village) {
     const party = takeCounts(loser, shareOfCounts(s, loser.village, C.captureShare));
@@ -370,24 +403,22 @@ export function conquer(s: SimState, winner: Group, loser: Group): void {
     mixCulture(winner, loser, captives / Math.max(1, population(winner)));
     outsidersJoined(winner);
   }
-  // 2. Refugees.
-  const rest = takeAll(loser);
-  if (partyViable(s, rest)) {
-    const site = bestSite(s, loser, [[winner.homeX, winner.homeY]], C.refugeeMinDistance);
-    if (site >= 0) {
-      const g = spawnGroup(s, loser, rest, site);
-      fled = partySize(rest);
-      logEvent(s, 'split', `${fled} people fled from ${loser.name} and founded ${g.name}`, g, loser);
-    }
-  }
-  // Refugees who can't found a group scatter and are gone.
-  if (fled === 0) for (const slot of rest.slots) freePerson(p, slot);
-  // 3–4. Discoveries (50% each, requirements apply) and land.
+  // 2. Discoveries (50% each, requirements apply) and land.
   learnFrom(s, winner, loser, C.gainDiscoveryChance);
   addKnownTiles(s, winner, knownTiles(s, loser));
   if (winner.mode === Mode.Band && winner.members.length >= P.groupSize.toVillageAt) toVillage(s, winner);
-  logEvent(s, 'conquered', `${winner.name} conquered ${loser.name} (${captives} captured${fled > 0 ? `, ${fled} fled` : ''})`, winner, loser);
+  // 3. The rest are driven off, or scatter.
+  const site = groupViable(s, loser) ? bestSite(s, loser, [[winner.homeX, winner.homeY]], C.refugeeMinDistance) : -1;
+  if (site >= 0) {
+    const fled = population(loser);
+    const km = moveHome(s, loser, site);
+    logEvent(s, 'conquered', `${winner.name} drove ${loser.name} from its land (${captives} captured; ${fled} fled ${km} km)`, winner, loser);
+    return true;
+  }
+  for (const slot of takeAll(loser).slots) freePerson(p, slot);
+  logEvent(s, 'conquered', `${winner.name} conquered ${loser.name} (${captives} captured, the rest scattered)`, winner, loser);
   removeGroups(s, [loser]);
+  return false;
 }
 
 // ---------- trade and absorb ----------
@@ -402,9 +433,16 @@ export function trade(s: SimState, a: Group, b: Group): void {
     learnFrom(s, x, y, ((C.tradeLearnChance * traitAverages(s, x).int) / 100) * learnMult(x, y));
     const home = x.homeY * s.width + x.homeX;
     const share: number[] = [];
-    for (const i of knownTiles(s, y)) {
-      if (isKnown(x, i) || !tilesConnected(s.regionId, s.regionParent, home, i)) continue;
-      if (chance(s.rng, C.tradeTileShare)) share.push(i);
+    // Tiles y knows and x doesn't, ascending: compared 8 at a time on the bitsets (speed only).
+    const n = s.width * s.height;
+    for (let b = 0; b < y.known.length; b++) {
+      const fresh = y.known[b]! & ~x.known[b]!;
+      if (fresh === 0) continue;
+      for (let k = 0; k < 8; k++) {
+        const i = b * 8 + k;
+        if (!((fresh >> k) & 1) || i >= n || !tilesConnected(s.regionId, s.regionParent, home, i)) continue;
+        if (chance(s.rng, C.tradeTileShare)) share.push(i);
+      }
     }
     addKnownTiles(s, x, share);
   }
@@ -443,7 +481,8 @@ const pairKey = (x: number, y: number): number => Math.min(x, y) * 65536 + Math.
 /**
  * Alliances (F6 §12.7), recomputed each year before the battles: two groups at peace (coexist or
  * trade) that are both in contact with a third at least 2× stronger than either of them stand
- * together against it. New alliances are logged; ones whose threat is gone end quietly.
+ * together against it. An alliance outlives its threat by allianceKeepYears while all three are
+ * still there and the two are at peace (DECISIONS 20.8). New alliances are logged; ended ones quietly.
  */
 export function updateAlliances(s: SimState, pairs: ReadonlyArray<readonly [Group, Group]>): void {
   const near = new Map<number, Set<number>>();
@@ -463,8 +502,10 @@ export function updateAlliances(s: SimState, pairs: ReadonlyArray<readonly [Grou
     return v;
   };
   const next: Alliance[] = [];
+  const atPeace = new Set<number>();
   for (const r of s.relations) {
     if (r.kind === 'war') continue;
+    atPeace.add(pairKey(r.a, r.b));
     const na = near.get(r.a);
     const nb = near.get(r.b);
     if (!na || !nb) continue;
@@ -473,12 +514,34 @@ export function updateAlliances(s: SimState, pairs: ReadonlyArray<readonly [Grou
       if (c === r.b || !nb.has(c)) continue;
       if (strongest <= 0 || powerOf(c) < SO.allianceRatio * strongest) continue;
       const old = s.alliances.find((x) => x.a === r.a && x.b === r.b && x.against === c);
-      next.push({ a: r.a, b: r.b, against: c, sinceYear: old?.sinceYear ?? s.year });
-      if (!old) {
-        const [ga, gb, gc] = [r.a, r.b, c].map((id) => s.groups.find((o) => o.id === id)!);
-        logEvent(s, 'alliance', `${ga!.name} and ${gb!.name} allied against ${gc!.name}`, ga!, gb!);
-      }
+      next.push({ a: r.a, b: r.b, against: c, sinceYear: old?.sinceYear ?? s.year, lastYear: s.year });
     }
+  }
+  // One line per bloc (DECISIONS 20.8): when neighbours first band together against a group,
+  // "A, B and C allied against D"; allies who join later or pairs that re-form are not news.
+  const name = (id: number): Group => s.groups.find((o) => o.id === id)!;
+  const announced = new Set<number>();
+  for (const c of [...new Set(next.map((x) => x.against))].sort((x, y) => x - y)) {
+    if (s.alliances.some((x) => x.against === c)) continue;
+    // Allies who were already allied (against anyone) are not a new alliance.
+    const pairs = next.filter((x) => x.against === c);
+    const fresh = pairs.some((x) => !announced.has(pairKey(x.a, x.b)) && !s.alliances.some((o) => o.a === x.a && o.b === x.b));
+    for (const x of pairs) announced.add(pairKey(x.a, x.b));
+    if (!fresh) continue;
+    const members = [...new Set(next.filter((x) => x.against === c).flatMap((x) => [x.a, x.b]))].sort((x, y) => x - y);
+    const names = members.map((id) => name(id).name);
+    const list = names.length <= 4 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+      : `${names.slice(0, 3).join(', ')} and ${names.length - 3} others`;
+    logQuiet(s, `ally:${c}`, CONFIG.log.quietYears, 'alliance', `${list} allied against ${name(c).name}`,
+      name(members[0]!), name(c), null, null, false);
+  }
+  // Alliances whose threat faded stay for a while: no flapping around the 2× line.
+  const alive = new Set(s.groups.map((g) => g.id));
+  for (const old of s.alliances) {
+    if (s.year - old.lastYear >= SO.allianceKeepYears) continue;
+    if (!alive.has(old.a) || !alive.has(old.b) || !alive.has(old.against) || !atPeace.has(pairKey(old.a, old.b))) continue;
+    if (next.some((x) => x.a === old.a && x.b === old.b && x.against === old.against)) continue;
+    next.push({ ...old });
   }
   s.alliances = next.sort((x, y) => x.a - y.a || x.b - y.b || x.against - y.against);
 }
@@ -496,6 +559,39 @@ function alliesOf(s: SimState, g: Group, enemy: Group, gone: ReadonlySet<number>
   return out;
 }
 
+/** A war begins (C3): its size is measured against the populations now. */
+function startWar(s: SimState, rel: Relation, a: Group, b: Group): void {
+  rel.warPopA = population(a);
+  rel.warPopB = population(b);
+  rel.warDeadA = 0;
+  rel.warDeadB = 0;
+  logEvent(s, 'war', `War broke out between ${a.name} and ${b.name}`, a, b);
+}
+
+/**
+ * A war ends in peace when one side has lost warWearyShare of its people in it, or after
+ * warMaxYears; then a truce of truceYears (DECISIONS 20.6). Real basis: early wars were seasons of
+ * raids and battles until one side could bear no more losses, then a peace sealed by gifts or marriage.
+ */
+function endWarIfWeary(s: SimState, rel: Relation, a: Group, b: Group): void {
+  const years = s.year - rel.sinceYear + 1;
+  const weary = rel.warDeadA >= C.warWearyShare * Math.max(1, rel.warPopA) || rel.warDeadB >= C.warWearyShare * Math.max(1, rel.warPopB);
+  if (!weary && years < C.warMaxYears) return;
+  setTruce(s, rel, a, b);
+  const span = years === 1 ? '1 year' : `${years} years`;
+  logEvent(s, 'war', `${a.name} and ${b.name} made peace after ${span} of war (${a.name} lost ${rel.warDeadA}, ${b.name} lost ${rel.warDeadB})`, a, b);
+}
+
+/** The war is over: they live side by side, with no war for truceYears. */
+function setTruce(s: SimState, rel: Relation, a: Group, b: Group): void {
+  rel.kind = 'coexist';
+  rel.sinceYear = s.year;
+  rel.truceUntil = s.year + C.truceYears;
+  rel.reviewYear = s.year + C.reviewYears;
+  rel.pa = warPressure(a, b);
+  rel.pb = warPressure(b, a);
+}
+
 /** Yearly step 5 (§5.1): detect contacts, decide or continue relations, resolve them. */
 export function yearlyContact(s: SimState): void {
   for (const g of s.groups) {
@@ -508,6 +604,8 @@ export function yearlyContact(s: SimState): void {
   s.relations = s.relations.filter((r) => inContact.has(r.a * 65536 + r.b));
   updateAlliances(s, pairs);
   const gone = new Set<number>();
+  // Each pair's relation, looked up by key instead of searching the list (speed only).
+  const relOf = new Map(s.relations.map((r) => [pairKey(r.a, r.b), r] as const));
 
   for (const [a, b] of pairs) {
     if (gone.has(a.id) || gone.has(b.id)) continue;
@@ -520,13 +618,14 @@ export function yearlyContact(s: SimState): void {
         logEvent(s, 'firstContact', `${a.name} met ${b.name}`, a, b);
       }
     }
-    let rel = s.relations.find((r) => r.a === a.id && r.b === b.id);
-    const pa = pressure(a);
-    const pb = pressure(b);
-    const review = !rel || s.year >= rel.reviewYear
-      || Math.abs(pa - rel.pa) > C.pressureChangeReview || Math.abs(pb - rel.pb) > C.pressureChangeReview;
+    let rel = relOf.get(pairKey(a.id, b.id));
+    const pa = warPressure(a, b);
+    const pb = warPressure(b, a);
+    // A war runs its course (C3): it is not re-decided until it ends in peace or conquest.
+    const review = !rel || (rel.kind !== 'war' && (s.year >= rel.reviewYear
+      || Math.abs(pa - rel.pa) > C.pressureChangeReview || Math.abs(pb - rel.pb) > C.pressureChangeReview));
     if (review) {
-      const x = inputsFor(s, a, b);
+      const x = inputsFor(s, a, b, rel);
       const choice = decide(s, x);
       if (choice === 'absorb') {
         const [strong, weak] = x.powerA >= x.powerB ? [a, b] : [b, a];
@@ -534,16 +633,20 @@ export function yearlyContact(s: SimState): void {
         gone.add(weak.id);
         continue;
       }
+      const changed = !rel || rel.kind !== choice;
       if (!rel) {
-        rel = { a: a.id, b: b.id, kind: choice, sinceYear: s.year, reviewYear: 0, pa, pb };
+        rel = { a: a.id, b: b.id, kind: choice, sinceYear: s.year, reviewYear: 0, pa, pb, warPopA: 0, warPopB: 0, warDeadA: 0, warDeadB: 0, truceUntil: 0 };
         s.relations.push(rel);
+        relOf.set(pairKey(a.id, b.id), rel);
         s.relations.sort((x1, y1) => x1.a - y1.a || x1.b - y1.b);
-        if (choice === 'trade') logEvent(s, 'tradeStart', `${a.name} and ${b.name} began to trade`, a, b);
-      } else if (rel.kind !== choice) {
-        if (choice === 'trade') logEvent(s, 'tradeStart', `${a.name} and ${b.name} began to trade`, a, b);
+      } else if (changed) {
         rel.kind = choice;
         rel.sinceYear = s.year;
       }
+      if (changed && choice === 'trade') {
+        logQuiet(s, `trade:${pairKey(a.id, b.id)}`, CONFIG.log.quietYears, 'tradeStart', `${a.name} and ${b.name} began to trade`, a, b);
+      }
+      if (changed && choice === 'war') startWar(s, rel, a, b);
       rel.reviewYear = s.year + C.reviewYears;
       rel.pa = pa;
       rel.pb = pb;
@@ -555,13 +658,18 @@ export function yearlyContact(s: SimState): void {
       const attacker = attackerOf(a, b);
       if (attacker.hungerPeak > SO.raidHunger && rollRaid(s, attacker)) {
         raid(s, attacker, attacker === a ? b : a);
-        continue;
+      } else {
+        const r = battle(s, a, b, alliesOf(s, a, b, gone), alliesOf(s, b, a, gone));
+        if (r.conquered) {
+          // Driven off, the loser lives on elsewhere: the war is over, and a truce follows.
+          if (conquer(s, r.winner, r.loser)) setTruce(s, rel!, a, b);
+          gone.add(r.loser.id);
+          continue;
+        }
+        rel!.warDeadA += r.winner === a ? r.winnerDeaths : r.loserDeaths;
+        rel!.warDeadB += r.winner === b ? r.winnerDeaths : r.loserDeaths;
       }
-      const r = battle(s, a, b, alliesOf(s, a, b, gone), alliesOf(s, b, a, gone));
-      if (r.conquered) {
-        conquer(s, r.winner, r.loser);
-        gone.add(r.loser.id);
-      }
+      endWarIfWeary(s, rel!, a, b);
       continue;
     }
     if (rel!.kind === 'trade') trade(s, a, b);

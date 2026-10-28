@@ -6,11 +6,12 @@ import { CONFIG } from '../../config';
 import { Plant, Resource, Season } from '../../shared/ids';
 import { Discovery, DISCOVERIES, addBit, clearBit, has } from '../../shared/discoveries';
 import type { Group, SimState } from '../state';
-import { logEvent } from './groups';
+import { logQuiet } from './groups';
 import { hasActive, rebuildFrontier } from './explore';
 import { maxStock } from '../world/plants';
 import { takeResource } from '../progress/deposits';
 import { palisadeWoodWanted } from '../society/society';
+import { homeRangeOf } from './food';
 
 const W = CONFIG.future.wood;
 const S = CONFIG.future.smelt;
@@ -52,15 +53,16 @@ function thin(s: SimState, i: number, density: number): void {
 
 /**
  * `workers` woodcutter-months (may be fractional in villages). Each worker's 10 density points
- * come from the densest forest tile in range at that moment, so forest thins evenly around
- * home before any tile is cleared. Returns the last tile cut, −1 if there was no forest.
+ * (× `eff` when the forest is far, see woodSource) come from the densest forest tile in range at
+ * that moment, so forest thins evenly around home before any tile is cleared. Returns the last
+ * tile cut, −1 if there was no forest.
  */
-export function cutWood(s: SimState, g: Group, range: readonly number[], workers = 1): number {
+export function cutWood(s: SimState, g: Group, range: readonly number[], workers = 1, eff = 1): number {
   let tile = -1;
   const whole = Math.floor(workers);
   const chunks = whole + (workers > whole ? 1 : 0);
   for (let k = 0; k < chunks; k++) {
-    let left = k < whole ? CUT_DENSITY : Math.round((workers - whole) * CUT_DENSITY);
+    let left = Math.round((k < whole ? 1 : workers - whole) * CUT_DENSITY * eff);
     while (left > 0) {
       const i = bestForest(s, range);
       if (i < 0) return tile;
@@ -74,14 +76,43 @@ export function cutWood(s: SimState, g: Group, range: readonly number[], workers
   return tile;
 }
 
+/**
+ * Fuel other than wood a group can gather this month (DECISIONS 17.6): the herd's dung, straw
+ * from the range's fields and dry grass from its Grass tiles. It is burned only where wood falls short.
+ */
+export function otherFuel(s: SimState, g: Group, range: readonly number[]): number {
+  let grass = 0, fields = 0;
+  for (const i of range) {
+    if (s.plantType[i] === Plant.Grass) grass++;
+    else if (s.plantType[i] === Plant.Farmland) fields++;
+  }
+  return g.herd * W.dungPerAnimal + fields * W.strawPerField + grass * W.grassPerTile;
+}
+
+/** Where woodcutters work and how much of a full day's cut they bring home. */
+export interface WoodSource { tiles: readonly number[]; eff: number }
+
+/**
+ * The forage range while it has forest; once that is cleared, known forest within 10 km that can
+ * be walked to, at half the cut (DECISIONS 17.3). Without either: no forest (tiles empty).
+ */
+export function woodSource(s: SimState, g: Group, range: readonly number[]): WoodSource {
+  if (bestForest(s, range) >= 0) return { tiles: range, eff: 1 };
+  const far = homeRangeOf(s, g, W.farRangeTiles);
+  return bestForest(s, far) >= 0 ? { tiles: far, eff: W.farEfficiency } : { tiles: [], eff: 1 };
+}
+
 // ---------- inactive because something is missing ----------
 
-/** Marks d inactive (logged once, when it stops working). */
+/**
+ * Marks d inactive, logged when it stops working: a small event, and only once in quietYears for
+ * the same group and skill, since supplies that run short every winter flip it back and forth.
+ */
 export function setInactive(s: SimState, g: Group, d: number, why: number, text: string): void {
   g.inactiveWhy[d] = why;
   if (has(g.inactive, d)) return;
   addBit(g.inactive, d);
-  logEvent(s, 'ranOut', text, g);
+  logQuiet(s, `ranOut:${g.id}:${d}`, CONFIG.log.quietYears, 'ranOut', text, g);
 }
 
 export function setActive(g: Group, d: number): void {
@@ -102,16 +133,22 @@ export const fuelPerYear = (pop: number): number =>
  * out is lit again only with fuel for `fuelUrgentMonths` winter months in store, so a group
  * living on scraps of wood doesn't flicker on and off every month.
  */
-export function burnFuel(s: SimState, g: Group, pop: number): void {
+export function burnFuel(s: SimState, g: Group, pop: number, other = 0): void {
   if (!has(g.discoveries, Discovery.fire)) return;
   const winter = CONFIG.seasonOfMonth[s.month] === Season.Winter;
   const need = pop * (winter ? W.fireWinter : W.fireOther);
   if (has(g.inactive, Discovery.fire)) {
-    if (fuelUrgent(g, pop)) return;              // still out: the scraps are kept for later
+    // Still out: the scraps are kept for later, and the dung for the kiln.
+    if (other < need && fuelUrgent(g, pop)) { g.spareFuel += other; return; }
     setActive(g, Discovery.fire);
   }
-  if (g.wood >= need) {
-    g.wood -= need;
+  // Wood first; dung and straw make up what the woodpile can't (DECISIONS 17.6). What isn't
+  // burned can fire a kiln this year.
+  const fromWood = Math.min(g.wood, need);
+  const fromOther = Math.min(other, need - fromWood);
+  g.spareFuel += other - fromOther;
+  if (fromWood + fromOther >= need) {
+    g.wood -= fromWood;
   } else {
     g.wood = 0;
     setInactive(s, g, Discovery.fire, Lack.Wood, `${g.name} ran out of wood (Fire stops working)`);

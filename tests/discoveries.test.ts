@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createMap } from '../src/editor/mapState';
 import { Ground, Plant, Resource } from '../src/shared/ids';
-import { Discovery, DISCOVERIES, ERA_SIZES, has, ERA_NEEDED, idsOf, isEmpty, maskOf } from '../src/shared/discoveries';
+import { Discovery, DISCOVERIES, ERA_SIZES, Found, has, ERA_NEEDED, idsOf, isEmpty, maskOf } from '../src/shared/discoveries';
+import { CONFIG } from '../src/config';
 import type { FounderPerson } from '../src/shared/types';
 import { createState } from '../src/sim/state';
 import {
-  discoveryChance, eraOf, forgetting, gainDiscovery, loseDiscovery, rollDiscoveries, updateEra, useResources,
+  canDiscover, discoveryChance, eraOf, gainDiscovery, loseDiscovery, rollDiscoveries, updateEra, useResources, yearlyDiscoveries,
 } from '../src/sim/progress/discoveryRules';
 import { isKnown } from '../src/sim/people/explore';
 import { pressure } from '../src/sim/society/walls';
@@ -47,20 +48,21 @@ describe('discovery table (§12.1)', () => {
 });
 
 describe('discovery chance (§12.3)', () => {
-  it('matches the worked Pottery example: about 0.83% a year', () => {
+  it('follows the worked Pottery example (§12.3) with the tuned era-3 base chance', () => {
     const p = discoveryChance(DISCOVERIES[Discovery.pottery]!, {
       avgInt: 110, population: 40, fed12: 0.8, writing: false, teachBonus: 1,
     });
-    expect(p).toBeCloseTo(0.01 * 1.1 * (Math.sqrt(40) / 5) * 0.6, 10);
-    expect(p).toBeCloseTo(0.0083, 4);
+    // The blueprint's example used 1% (≈ 0.83% a year); TUNING.md pass 7 lowered the base.
+    expect(p).toBeCloseTo(CONFIG.discoveries.baseChanceByEra[2]! * 1.1 * (Math.sqrt(40) / 5) * 0.6, 12);
   });
 
   it('a hungry group (fed12 ≤ 0.5) invents nothing; Writing and teaching raise the chance', () => {
     const def = DISCOVERIES[Discovery.fire]!;
     const base = { avgInt: 100, population: 25, fed12: 1, writing: false, teachBonus: 1 };
     expect(discoveryChance(def, { ...base, fed12: 0.5 })).toBe(0);
-    expect(discoveryChance(def, base)).toBeCloseTo(0.02);
-    expect(discoveryChance(def, { ...base, writing: true, teachBonus: 1.3 })).toBeCloseTo(0.02 * 1.3 * 1.3);
+    const era1 = CONFIG.discoveries.baseChanceByEra[0]!;
+    expect(discoveryChance(def, base)).toBeCloseTo(era1, 12);
+    expect(discoveryChance(def, { ...base, writing: true, teachBonus: 1.3 })).toBeCloseTo(era1 * 1.3 * 1.3, 12);
   });
 });
 
@@ -107,31 +109,32 @@ describe('discovering (§12.2–12.3)', () => {
   });
 });
 
-describe('forgetting (§12.5)', () => {
-  it('a band below the era limit for 10 years forgets, the era drops, and the log says so', () => {
-    const s = world(4); // era 1 needs 5 people to keep its discoveries
+describe('forgetting (§12.5, DECISIONS 17.1)', () => {
+  it('a tiny band keeps what it knows: knowledge passes on whatever the group size', () => {
+    const s = world(4);
     const g = s.groups[0]!;
     const kept = [Discovery.fire, Discovery.stoneTools, Discovery.diggingStick];
     g.discoveries = bits(...kept);
     updateEra(s, g);
+    for (let y = 0; y < 50; y++) {
+      g.practiceYear.fill(1);            // still using every skill
+      yearlyDiscoveries(s);
+    }
+    for (const d of kept) expect(has(g.discoveries, d)).toBe(true);
     expect(g.era).toBe(1);
-    for (let y = 0; y < 9; y++) { forgetting(s, g); updateEra(s, g); }
-    expect(idsOf(g.discoveries)).toEqual(kept);
-    forgetting(s, g);
-    updateEra(s, g);
-    expect(isEmpty(g.discoveries)).toBe(true);
-    expect(g.era).toBe(0);
-    const texts = s.log.map((e) => e.text);
-    expect(texts).toContain('Test forgot Fire (too few people)');
-    expect(texts).toContain('Test fell back to era 0: Early people');
+    expect(s.log.some((e) => e.type === 'lostDiscovery')).toBe(false);
   });
 
-  it('enough people resets the count', () => {
-    const s = world(6);
+  it('nobody invents or adopts a skill they have had no use for in 50 years', () => {
+    const s = world(40);
     const g = s.groups[0]!;
-    g.discoveries = bits(Discovery.fire);
-    for (let y = 0; y < 30; y++) forgetting(s, g);
-    expect(has(g.discoveries, Discovery.fire)).toBe(true);
+    g.discoveries = bits(Discovery.stoneTools);
+    const spear = DISCOVERIES[Discovery.spear]!;
+    expect(canDiscover(g, spear, Found.Forest, 40)).toBe(true);
+    g.idleYears[spear.practice] = CONFIG.future.diffusion.unusedForgetYears;   // nobody hunted for 50 years
+    expect(canDiscover(g, spear, Found.Forest, 40)).toBe(false);
+    g.idleYears[spear.practice] = 0;                                            // hunting again
+    expect(canDiscover(g, spear, Found.Forest, 40)).toBe(true);
   });
 
   it('losing a discovery takes everything built on it (cascade)', () => {

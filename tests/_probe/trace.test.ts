@@ -7,6 +7,7 @@ import { ACTION_NAMES } from '../../src/shared/ids';
 import { DISCOVERIES, has } from '../../src/shared/discoveries';
 import * as S from '../../src/presets/scenarios';
 import type { RunSetup } from '../../src/shared/types';
+import { miniGarden } from './mini';
 
 const proc = (globalThis as { process?: { env?: Record<string, string | undefined>; getBuiltinModule?: (m: string) => { writeFileSync(p: string, d: string): void } } }).process;
 const env = proc?.env ?? {};
@@ -19,7 +20,7 @@ for (const [path, value] of Object.entries(JSON.parse(env.OVR || '{}') as Record
 }
 
 it.skipIf(!SEED)('trace', () => {
-  const build = (S as unknown as Record<string, (s: number) => RunSetup>)[`scenario${env.SCEN ?? 'A'}`]!;
+  const build = env.SCEN === 'M' ? miniGarden : (S as unknown as Record<string, (s: number) => RunSetup>)[`scenario${env.SCEN ?? 'A'}`]!;
   const s = createState(build(Number(SEED)));
   const out: string[] = [];
   let seen = 0;

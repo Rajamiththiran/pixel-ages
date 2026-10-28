@@ -36,6 +36,24 @@ Code style: TypeScript `strict`, small pure functions, short comments that expla
 - F6 (society, conflict and animals, §12): built on the owner's request.
 - F7 (observer tools, §13; D5 intervention mode added): built on the owner's request; approved.
 - F8 (graphics and sound, §14; D6 keep the style, D8 sound on by default): built on the owner's request; awaiting the owner's approval.
+- Perfection pass (owner, 20 Oct 2026: perfect what exists before adding features; 11 items, owner's choices in DECISIONS.md §17–19):
+  - Item 1 (slow down history): built (DECISIONS 17.1–17.7); final discovery numbers being calibrated (TUNING.md pass 7).
+  - Item 2 (readable people): 2b walking routes and pace built (DECISIONS 18.x); 2a jobs last a season built (19.1). Awaiting the owner's try.
+  - Founders, war churn and log (owner, 28 Oct 2026): built (DECISIONS 20.1–20.11, TUNING pass 8). Next, once the owner approves: C4, conquered villages join the winner's chiefdom or kingdom.
+
+## Test bench (fast checks of simulation changes)
+
+Never wait on long runs to check a change. Unit tests test one rule on a tiny world in seconds; the bench checks a change in the game itself from the moment that matters. The simulation is deterministic, so a saved state replays exactly.
+
+All settings are environment variables (bash: `BENCH=run SNAP=A-19-y500 npm run bench`; PowerShell: `$env:BENCH='run'; $env:SNAP='A-19-y500'; npm run bench`).
+
+- **Snapshot** a world: `BENCH=snap SCEN=A SEED=19 AT=500,1000`. SCEN is A–H (`src/presets/scenarios.ts`) or `M`, the mini world (`tests/_probe/mini.ts`: half size, 4 couples, ~4× cheaper, rarely dies out). Files go to `.snaps/` (or `SNAPDIR`; keep them out of commits). Remake snapshots when the state gains a field.
+- **Run on** from it: `BENCH=run SNAP=A-19-y500 YEARS=100 STEP=25` → one line per group every STEP years, then log counts. `LOG=split|war` also lists those log lines. Without SNAP it starts at year 0 from SCEN and SEED.
+- **Same results?** `HASH=1` prints the state hash: a speed-only change must keep it.
+- **Why slow?** `PROFILE=1` lists the 25 slowest functions.
+- **Try numbers** without editing config: `OVR='{"discoveries.baseChanceByEra":[0.004,0.002,0.0008,0.0005,0.0003,0.0002]}'` (leaf keys only).
+- **Statistics over many worlds**: `tests/_probe/f9.test.ts` (SCEN, SEEDS=1-12, YEARS, OVR, OUT; one JSON line per seed). Run seeds in parallel processes, on the mini world first; confirm on the real scenario once, in the background, at the end of an item.
+- The report goes to `OUT` (default `bench.txt`).
 
 ## Notes
 

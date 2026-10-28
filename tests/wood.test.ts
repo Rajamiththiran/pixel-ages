@@ -8,13 +8,14 @@ import { Discovery, DISCOVERIES, Found, addBit, idsOf, maskOf, orInto } from '..
 import { createState, type SimState } from '../src/sim/state';
 import { runTicks } from '../src/sim/tick';
 import { cloneState, hashState } from '../src/sim/serialize';
-import { hasActive, isKnown } from '../src/sim/people/explore';
+import { addKnownTiles, hasActive, isKnown } from '../src/sim/people/explore';
 import { ensureFarmTiles } from '../src/sim/people/farming';
 import { homeRange } from '../src/sim/people/food';
 import {
-  CUT_DENSITY, Lack, bestForest, burnFuel, cutWood, payBuilding, woodNeedYear, woodOfDensity, yearlyVessels, fuelPerYear,
+  CUT_DENSITY, Lack, bestForest, burnFuel, cutWood, payBuilding, woodNeedYear, otherFuel, woodOfDensity, woodSource, yearlyVessels, fuelPerYear,
 } from '../src/sim/people/wood';
 import { canDiscover, foundMask, gainDiscovery, invalidateFound, useResources } from '../src/sim/progress/discoveryRules';
+import { renewClay } from '../src/sim/progress/deposits';
 import { at, fourPeople, runOf } from './fixtures';
 
 const Wd = CONFIG.future.wood;
@@ -88,6 +89,37 @@ describe('cutting wood (§7.1)', () => {
     expect(s.plantType[i]).toBe(Plant.Farmland);
     expect(g.wood).toBeCloseTo(woodOfDensity(204), 10);  // 80 units
   });
+
+  it('with the range cleared, woodcutters walk up to 10 km for half the wood (DECISIONS 17.3)', () => {
+    const dist2 = (i: number): number => (i % 160 - 50) ** 2 + (Math.floor(i / 160) - 40) ** 2;
+    const s = forestWorld((m) => {
+      // Fields everywhere within 7 km of home; forest only beyond.
+      for (let i = 0; i < m.plantType.length; i++) if (dist2(i) <= 49) { m.plantType[i] = Plant.Grass; m.plantDensity[i] = 255; }
+    });
+    const g = s.groups[0]!;
+    addKnownTiles(s, g, Array.from({ length: s.width * s.height }, (_, i) => i).filter((i) => dist2(i) <= 144));
+    const range = homeRange(s, g);
+    expect(bestForest(s, range)).toBe(-1);
+    const src = woodSource(s, g, range);
+    expect(src.eff).toBe(Wd.farEfficiency);
+    expect(src.tiles.every((i) => dist2(i) <= Wd.farRangeTiles ** 2)).toBe(true);
+    const tile = cutWood(s, g, src.tiles, 1, src.eff);
+    expect(dist2(tile)).toBeGreaterThan(49);
+    expect(s.plantDensity[tile]).toBe(255 - CUT_DENSITY * Wd.farEfficiency);
+    expect(g.wood).toBeCloseTo(woodOfDensity(CUT_DENSITY * Wd.farEfficiency), 10);   // nothing from nowhere
+  });
+
+  it('forest only beyond 10 km is out of reach; forest in range is cut at the full rate', () => {
+    const dist2 = (i: number): number => (i % 160 - 50) ** 2 + (Math.floor(i / 160) - 40) ** 2;
+    const s = forestWorld((m) => {
+      for (let i = 0; i < m.plantType.length; i++) if (dist2(i) <= 121) m.plantType[i] = Plant.Grass;
+    });
+    const g = s.groups[0]!;
+    addKnownTiles(s, g, Array.from({ length: s.width * s.height }, (_, i) => i).filter((i) => dist2(i) <= 400));
+    expect(woodSource(s, g, homeRange(s, g)).tiles).toEqual([]);
+    const near = forestWorld();
+    expect(woodSource(near, near.groups[0]!, homeRange(near, near.groups[0]!)).eff).toBe(1);
+  });
 });
 
 describe('fuel for Fire (§7.2)', () => {
@@ -111,6 +143,36 @@ describe('fuel for Fire (§7.2)', () => {
     burnFuel(s, g, 4);
     expect(hasActive(g, Discovery.fire)).toBe(true);
     expect(g.wood).toBeCloseTo(1 - 4 * Wd.fireOther, 10);
+  });
+
+  it('without wood, dung and straw keep the fire going; the rest fires the kiln (DECISIONS 17.6)', () => {
+    const s = forestWorld((m) => { m.plantType.fill(Plant.Grass); });
+    const g = s.groups[0]!;
+    orInto(g.discoveries, maskOf(Discovery.fire));
+    g.herd = 20;
+    g.wood = 0;
+    const range = homeRange(s, g);
+    const src = woodSource(s, g, range);
+    expect(src.tiles).toEqual([]);
+    const other = otherFuel(s, g, range);
+    expect(other).toBeCloseTo(20 * Wd.dungPerAnimal + range.length * Wd.grassPerTile, 10);
+    s.month = 9;                                         // winter: 4 × 0.08 = 0.32
+    burnFuel(s, g, 4, other);
+    expect(hasActive(g, Discovery.fire)).toBe(true);
+    expect(g.spareFuel).toBeCloseTo(other - 4 * Wd.fireWinter, 10);
+    // With enough wood, the wood burns and the dung is left for the kiln.
+    g.wood = 10;
+    g.spareFuel = 0;
+    burnFuel(s, g, 4, other);
+    expect(g.wood).toBeCloseTo(10 - 4 * Wd.fireWinter, 10);
+    expect(g.spareFuel).toBeCloseTo(other, 10);
+    // Wood short: it all burns and dung makes up the rest.
+    g.wood = 0.1;
+    g.spareFuel = 0;
+    burnFuel(s, g, 4, other);
+    expect(g.wood).toBeCloseTo(0, 10);
+    expect(g.spareFuel).toBeCloseTo(other - (4 * Wd.fireWinter - 0.1), 10);
+    expect(hasActive(g, Discovery.fire)).toBe(true);
   });
 
   it('winter burns 0.08 a person a month; a year of fire for 10 people is 4.2 units', () => {
@@ -178,6 +240,44 @@ describe('smelting and resource use (§7.3)', () => {
     useResources(s, g);
     expect(hasActive(g, Discovery.pottery)).toBe(true);
     expect(g.wood).toBeCloseTo(0, 10);
+  });
+
+  it('a kiln can be fired with this year\'s spare dung and straw; it does not keep to the next year', () => {
+    const clay = at(49, 40);
+    const s = forestWorld((m) => { m.resourceType[clay] = Resource.Clay; m.resourceAmount[clay] = 50; }, 20);
+    const g = s.groups[0]!;
+    orInto(g.discoveries, maskOf(Discovery.fire, Discovery.pottery));
+    g.wood = 0.4;
+    g.spareFuel = 0.6;                                   // kiln needs 1.0
+    useResources(s, g);
+    expect(hasActive(g, Discovery.pottery)).toBe(true);
+    expect(g.wood).toBeCloseTo(0, 10);
+    expect(g.spareFuel).toBe(0);
+  });
+
+  it('Stone Tools use a tenth as much stone: ceil(population / 500) a year (DECISIONS 17.4)', () => {
+    const stone = at(49, 40);
+    const s = forestWorld((m) => { m.resourceType[stone] = Resource.Stone; m.resourceAmount[stone] = 100; }, 40);
+    const g = s.groups[0]!;
+    orInto(g.discoveries, maskOf(Discovery.stoneTools));
+    useResources(s, g);
+    expect(s.resourceAmount[stone]).toBe(100 - Math.ceil(40 / CONFIG.discoveries.stoneUsePer));   // 1
+  });
+
+  it('clay beside water comes back with silt; clay away from water stays dug out (DECISIONS 17.5)', () => {
+    const bank = at(49, 40), dry = at(30, 30);
+    const s = forestWorld((m) => {
+      m.ground[at(48, 40)] = Ground.Water;
+      for (const i of [bank, dry]) { m.resourceType[i] = Resource.Clay; m.resourceAmount[i] = 12; }
+    });
+    for (const i of [bank, dry]) { s.resourceAmount[i] = 0; s.resourceType[i] = Resource.None; s.quarry[i] = 1; }
+    renewClay(s);
+    expect(s.resourceType[bank]).toBe(Resource.Clay);
+    expect(s.resourceAmount[bank]).toBe(CONFIG.discoveries.clayRenewPerYear);
+    expect(s.quarry[bank]).toBe(0);
+    expect(s.resourceAmount[dry]).toBe(0);
+    for (let y = 0; y < 5; y++) renewClay(s);
+    expect(s.resourceAmount[bank]).toBe(12);              // never more than was painted
   });
 
   it('Bronze Working needs Tin found and Copper Working; Tin and Salt are found on known tiles', () => {

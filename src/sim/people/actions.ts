@@ -80,7 +80,7 @@ export function doActions(s: SimState, g: Group, ctx: BandContext): ActionResult
       case Action.Maintain: maintain(g, 1); break;   // F5: upkeep of canals, levees and drains
       case Action.Fish: tile = fishWork(s, g, yieldMult(s, g, slot), ctx.waters); break;
       case Action.CutWood: {
-        const cut = cutWood(s, g, ctx.range);
+        const cut = cutWood(s, g, ctx.wood.tiles, 1, ctx.wood.eff);
         if (cut >= 0) tile = cut;
         break;
       }

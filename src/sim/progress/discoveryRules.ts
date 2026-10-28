@@ -5,7 +5,7 @@
 import { CONFIG } from '../../config';
 import { Ground, Need, Plant, PRACTICE_NAMES, Resource, RESOURCE_NAMES, Species, WallType } from '../../shared/ids';
 import {
-  Discovery, DISCOVERIES, DISCOVERY_COUNT, ERA_NAMES, ERA_NEEDED, FOUND_OF_RESOURCE, Found, LESSONS_FOR, addBit, clearAll,
+  Discovery, DISCOVERIES, ERA_NAMES, ERA_NEEDED, FOUND_OF_RESOURCE, Found, LESSONS_FOR, addBit, clearAll,
   has, newMask, type DiscoveryDef,
 } from '../../shared/discoveries';
 import { chance } from '../../shared/rng';
@@ -13,7 +13,7 @@ import type { Group, SimState } from '../state';
 import { hasActive, rebuildFrontier } from '../people/explore';
 import { logEvent, population, traitAverages } from '../people/groups';
 import { Lack, SMELT_WOOD, buildVessel, setActive, setInactive, vesselWood, yearlyVessels, yearlyWoodOf } from '../people/wood';
-import { availableUnits, knownResourceTiles, resourceTiles, takeUnits } from './deposits';
+import { availableUnits, knownResourceTiles, renewClay, resourceTiles, takeUnits } from './deposits';
 
 const D = CONFIG.discoveries;
 const FU = CONFIG.future;
@@ -92,12 +92,17 @@ export function wantedFound(g: Group, other: ArrayLike<number> | null = null): n
   return want;
 }
 
-/** Not owned yet, needed discoveries owned, requirements found, big enough (City). */
+/**
+ * Not owned yet, needed discoveries owned, requirements found, big enough (City), and of some use:
+ * its activity was practised within the last 50 years. Nobody invents or adopts a skill they
+ * have no use for — they would only forget it again (DECISIONS 17.2: no forget–relearn loop).
+ */
 export function canDiscover(g: Group, def: DiscoveryDef, found: number, population: number): boolean {
   return !has(g.discoveries, def.id)
     && def.needs.every((d) => has(g.discoveries, d))
     && (found & def.needsFound) === def.needsFound
-    && population >= def.minPopulation;
+    && population >= def.minPopulation
+    && (def.practice < 0 || g.idleYears[def.practice]! < FU.diffusion.unusedForgetYears);
 }
 
 export interface ChanceInputs {
@@ -155,12 +160,14 @@ export function fed12(g: Group): number {
   return sum / g.fedHistory.length;
 }
 
-/** Gains discovery d and logs `text`. Raft changes which tiles are passable, so the frontier is rebuilt. */
-export function gainDiscovery(s: SimState, g: Group, d: number, text: string): void {
+/**
+ * Gains discovery d and logs `text`; learning it from neighbours is a small event (`minor`).
+ * Raft changes which tiles are passable, so the frontier is rebuilt.
+ */
+export function gainDiscovery(s: SimState, g: Group, d: number, text: string, minor = false): void {
   if (has(g.discoveries, d)) return;
   addBit(g.discoveries, d);
-  g.belowLimitYears[d] = 0;
-  logEvent(s, 'discovery', text, g);
+  logEvent(s, 'discovery', text, g, null, null, null, minor);
   // A raft, boat or cart has to be built from wood before it works (F1).
   if (vesselWood(d) > 0) buildVessel(s, g, d);
   if (d === Discovery.raft) rebuildFrontier(s, g);
@@ -168,7 +175,7 @@ export function gainDiscovery(s: SimState, g: Group, d: number, text: string): v
 
 /**
  * Loses discovery d and every owned discovery that needs it, directly or through others
- * (§12.5). Each loss is logged.
+ * (§12.5). Each loss is logged. Used by unused skills (F2), conquest and tests.
  */
 export function loseDiscovery(s: SimState, g: Group, d: number, reason: string): void {
   if (!has(g.discoveries, d)) return;
@@ -187,37 +194,18 @@ export function loseDiscovery(s: SimState, g: Group, d: number, reason: string):
   logEvent(s, 'lostDiscovery', `${g.name} forgot ${name} (${reason})`, g);
   for (const def of DISCOVERIES) {
     if (def.id === d || !has(lost, def.id)) continue;
-    g.belowLimitYears[def.id] = 0;
     logEvent(s, 'lostDiscovery', `${g.name} forgot ${def.name} (it needs ${name})`, g);
   }
-  g.belowLimitYears[d] = 0;
   // Without Taming nobody can keep the animals: the herd goes wild.
   if (has(lost, Discovery.taming)) g.herd = 0;
   if (raftBefore && !hasActive(g, Discovery.raft)) rebuildFrontier(s, g);
 }
 
 /**
- * Forgetting (§12.5): a discovery whose era needs more people than the group has, for 10
- * years in a row, is lost — together with everything built on it.
- */
-export function forgetting(s: SimState, g: Group): void {
-  const pop = population(g);
-  const writing = has(g.discoveries, Discovery.writing);
-  const lost: number[] = [];
-  for (let d = 0; d < DISCOVERY_COUNT; d++) {
-    if (!has(g.discoveries, d)) { g.belowLimitYears[d] = 0; continue; }
-    let limit: number = D.forgetLimitByEra[DISCOVERIES[d]!.era - 1]!;
-    if (writing && d !== Discovery.writing) limit = Math.ceil(limit / 2);
-    g.belowLimitYears[d] = pop < limit ? Math.min(255, g.belowLimitYears[d]! + 1) : 0;
-    if (g.belowLimitYears[d]! >= D.forgetYears) lost.push(d);
-  }
-  for (const d of lost) loseDiscovery(s, g, d, 'too few people');
-}
-
-/**
  * Unused skills fade (F2 §8.4): a discovery whose activity nobody practised for 50 years in a
- * row is forgotten with 5% a year, on top of the population rule. Discoveries without a
- * practice link never fade this way.
+ * row is forgotten with 5% a year. This is the only way a living group forgets: knowledge passes
+ * from parents to children whatever the group's size, and is lost only once it is of no use
+ * (DECISIONS 17.1). Discoveries without a practice link never fade.
  */
 export function forgetUnused(s: SimState, g: Group): void {
   const Df = FU.diffusion;
@@ -278,15 +266,20 @@ export function useResources(s: SimState, g: Group, deposits = resourceTiles(s))
   const units = Math.ceil(pop / D.resourceUsePer);
   for (const def of DISCOVERIES) {
     if (!has(g.discoveries, def.id)) continue;
-    const wood = yearlyWoodOf(def.id, pop, units);
+    // Kilns burn wood first; this year's spare dung and straw make up the rest (DECISIONS 17.6).
+    const kiln = def.id === Discovery.pottery ? yearlyWoodOf(def.id, pop, units) : 0;
+    const kilnDung = Math.min(g.spareFuel, Math.max(0, kiln - g.wood));
+    const wood = yearlyWoodOf(def.id, pop, units) - kilnDung;
+    const use = def.uses === Resource.Stone ? Math.ceil(pop / D.stoneUsePer) : units;
     if (def.uses === Resource.None && wood === 0) continue;
     const tiles = def.uses === Resource.None ? [] : knownResourceTiles(s, g, def.uses, deposits);
-    const oreOk = def.uses === Resource.None || availableUnits(s, tiles) >= units;
+    const oreOk = def.uses === Resource.None || availableUnits(s, tiles) >= use;
     const woodOk = g.wood >= wood;
     const metal = SMELT_WOOD[def.id] !== undefined;
     if (oreOk && woodOk) {
-      takeUnits(s, tiles, def.uses === Resource.None ? 0 : units);
+      takeUnits(s, tiles, def.uses === Resource.None ? 0 : use);
       g.wood -= wood;
+      g.spareFuel -= kilnDung;
       if (metal) g.metal += units;
       setActive(g, def.id);
     } else if (metal && g.metal >= units) {
@@ -299,6 +292,7 @@ export function useResources(s: SimState, g: Group, deposits = resourceTiles(s))
     }
   }
   g.metal *= 1 - CONFIG.future.smelt.metalWearPerYear;
+  g.spareFuel = 0;                   // dung and straw don't keep from year to year
 }
 
 /** Rolls every discovery the group could make this year, in id order (§12.3). */
@@ -342,6 +336,7 @@ export function updateTeachBonus(g: Group): void {
 
 /** Yearly step 3 (§5.1): resources, every group in id order. */
 export function yearlyResources(s: SimState): void {
+  renewClay(s);
   const deposits = resourceTiles(s);
   for (const g of s.groups) {
     useResources(s, g, deposits);
@@ -350,14 +345,13 @@ export function yearlyResources(s: SimState): void {
 }
 
 /**
- * Yearly step 4 (§5.1): practice and needs roll over, forgetting (too few people, then unused
- * skills, F2), new discoveries, then the era.
+ * Yearly step 4 (§5.1): practice and needs roll over, unused skills fade (F2), new discoveries,
+ * then the era.
  */
 export function yearlyDiscoveries(s: SimState): void {
   for (const g of s.groups) {
     updateTeachBonus(g);
     yearlyPractice(g);
-    forgetting(s, g);
     forgetUnused(s, g);
     rollDiscoveries(s, g);
     updateEra(s, g);

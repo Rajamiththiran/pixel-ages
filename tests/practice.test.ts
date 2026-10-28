@@ -84,7 +84,7 @@ describe('discovery chance with practice, need and lessons (§8.2)', () => {
 
   it('multiplies the v1 chance by (1 + practice share) × (1 + need) × lesson 3', () => {
     const v1 = discoveryChance(bow, base);
-    expect(v1).toBeCloseTo(0.015, 12);
+    expect(v1).toBeCloseTo(CONFIG.discoveries.baseChanceByEra[1]!, 12);   // Bow is era 2
     expect(discoveryChance(bow, { ...base, practiceShare: 0.5 })).toBeCloseTo(v1 * 1.5, 12);
     expect(discoveryChance(bow, { ...base, need: 0.4 })).toBeCloseTo(v1 * 1.4, 12);
     expect(discoveryChance(bow, { ...base, lesson: true })).toBeCloseTo(v1 * 3, 12);

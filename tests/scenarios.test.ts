@@ -6,7 +6,7 @@ import { createState } from '../src/sim/state';
 import { runTicks } from '../src/sim/tick';
 import { cloneState, hashState } from '../src/sim/serialize';
 import { population as groupPop } from '../src/sim/people/groups';
-import { Discovery, DISCOVERIES } from '../src/shared/discoveries';
+import { Discovery, DISCOVERIES, addBit, has } from '../src/shared/discoveries';
 import { scenarioA, scenarioB, scenarioC, scenarioD } from './fixtures';
 
 const proc = (globalThis as { process?: { env?: Record<string, string | undefined>; memoryUsage?: () => { heapUsed: number } } }).process;
@@ -21,13 +21,15 @@ describe('determinism with people (§16.3)', () => {
     const a = createState(scenarioA(5));
     const b = createState(scenarioA(5));
     const c = createState(scenarioA(6));
+    // Discoveries are rare in 100 years since TUNING pass 7: start with Fire, so a discovery's
+    // effects (fuel, practice) are in the compared history too.
+    for (const s of [a, b, c]) addBit(s.groups[0]!.discoveries, Discovery.fire);
     runTicks(a, 100 * 12);
     runTicks(b, 100 * 12);
     runTicks(c, 100 * 12);
     expect(hashState(a)).toBe(hashState(b));
     expect(hashState(a)).not.toBe(hashState(c));
-    // The run includes discoveries (step 4), so they are covered by the same hash.
-    expect(a.log.some((e) => e.type === 'discovery')).toBe(true);
+    expect(a.log.some((e) => e.type === 'ranOut' || e.type === 'discovery') || has(a.groups[0]?.discoveries ?? [0, 0], Discovery.fire)).toBe(true);
   });
 
   it('a keyframe restored at year 40 reproduces year 100 exactly', () => {

@@ -83,19 +83,27 @@ describe('battles (§14.4)', () => {
     }
   });
 
-  it('conquest: half the survivors are captured, the rest flee as a new group of their lineage', () => {
+  it('conquest: half the survivors are captured, the rest are driven 12+ tiles away and stay themselves', () => {
     const s = neighbours(adults(40, 60), adults(20, 40));
     const [a, b] = s.groups as [ReturnType<typeof createState>['groups'][0], ReturnType<typeof createState>['groups'][0]];
     b.discoveries = bits(Discovery.stoneTools);
-    conquer(s, a, b);
+    expect(conquer(s, a, b)).toBe(true);
     expect(population(a)).toBe(50);
-    expect(s.groups.find((g) => g.id === b.id)).toBeUndefined();
-    const refugees = s.groups.find((g) => g.lineageId === 2)!;
-    expect(population(refugees)).toBe(10);
-    const dx = refugees.homeX - a.homeX;
-    const dy = refugees.homeY - a.homeY;
+    expect(s.groups).toHaveLength(2);                // DECISIONS 20.11: no new group, South moves
+    expect(population(b)).toBe(10);
+    expect(b.name).toBe('South');
+    const dx = b.homeX - a.homeX;
+    const dy = b.homeY - a.homeY;
     expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(144);
-    expect(s.log.some((e) => e.type === 'conquered' && e.text === 'North conquered South (10 captured, 10 fled)')).toBe(true);
+    expect(s.log.some((e) => e.type === 'conquered' && /^North drove South from its land \(10 captured; 10 fled \d+ km\)$/.test(e.text))).toBe(true);
+  });
+
+  it('conquest: survivors too few to carry on scatter, and the group is gone', () => {
+    const s = neighbours(adults(40, 60), adults(2, 40));
+    const [a, b] = s.groups as [ReturnType<typeof createState>['groups'][0], ReturnType<typeof createState>['groups'][0]];
+    expect(conquer(s, a, b)).toBe(false);
+    expect(s.groups.find((g) => g.id === b.id)).toBeUndefined();
+    expect(s.log.some((e) => e.text === 'North conquered South (1 captured, the rest scattered)')).toBe(true);
   });
 });
 

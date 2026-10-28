@@ -176,6 +176,7 @@ export class Renderer {
   /** Breached wall tiles (run mode); null in setup. */
   setCrossing(crossing: Uint8Array | null): void {
     this.terrain.crossing = crossing;
+    this.people.setCrossing(crossing);
   }
 
   /** The month on screen; `jump` after a jump in time (the season snaps instead of easing). */

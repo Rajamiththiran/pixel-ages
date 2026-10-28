@@ -189,8 +189,8 @@ describe('disease (§11.4)', () => {
     ];
     const s = createState(run);
     s.relations = [
-      { a: 1, b: 2, kind: 'trade', sinceYear: 0, reviewYear: 10, pa: 0, pb: 0 },
-      { a: 1, b: 3, kind: 'coexist', sinceYear: 0, reviewYear: 10, pa: 0, pb: 0 },
+      { a: 1, b: 2, kind: 'trade', sinceYear: 0, reviewYear: 10, pa: 0, pb: 0, warPopA: 0, warPopB: 0, warDeadA: 0, warDeadB: 0, truceUntil: 0 },
+      { a: 1, b: 3, kind: 'coexist', sinceYear: 0, reviewYear: 10, pa: 0, pb: 0, warPopA: 0, warPopB: 0, warDeadA: 0, warDeadB: 0, truceUntil: 0 },
     ];
     s.hazardsActive = [{ kind: Hazard.Outbreak, groupId: 1, endYear: 5 }];
     force(FU.disease as unknown as Record<string, number>, 'spreadChance', 1);

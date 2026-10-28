@@ -14,6 +14,7 @@ import * as S from '../../src/presets/scenarios';
 import { fourRealms } from '../../src/presets/builtins';
 import { inbreedMult } from '../../src/sim/society/society';
 import type { LogEntry, RunSetup } from '../../src/shared/types';
+import { miniGarden } from './mini';
 
 const proc = (globalThis as { process?: { env?: Record<string, string | undefined>; getBuiltinModule?: (m: string) => { appendFileSync(p: string, d: string): void } } }).process;
 const env = proc?.env ?? {};
@@ -34,6 +35,7 @@ for (const [path, value] of Object.entries(JSON.parse(env.OVR || '{}') as Record
 
 const build = (seed: number): RunSetup => {
   if (SCEN === 'R') return fourRealms(seed);
+  if (SCEN === 'M') return miniGarden(seed);
   return (S as unknown as Record<string, (s: number) => RunSetup>)[`scenario${SCEN}`]!(seed);
 };
 

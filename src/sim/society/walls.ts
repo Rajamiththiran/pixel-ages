@@ -3,7 +3,7 @@
 
 import { CONFIG } from '../../config';
 import { WallType, WALL_NAMES } from '../../shared/ids';
-import { Discovery, isEmpty, maskKey } from '../../shared/discoveries';
+import { Discovery, MASK_WORDS, isEmpty, maskKey } from '../../shared/discoveries';
 import type { Group, SimState } from '../state';
 import { findRoot, openCrossing } from '../world/regions';
 import { exploreRange, hasActive, isKnown, rebuildFrontier } from '../people/explore';
@@ -13,8 +13,26 @@ const W = CONFIG.walls;
 
 /** Pressure P (0–1): hunger, crowding, or a discovery that ran out of its resource. */
 export function pressure(g: Group): number {
+  return Math.max(foodPressure(g), !isEmpty(g.inactive) ? W.inactivePressure : 0);
+}
+
+/** The hunger and crowding part of pressure (0–1). */
+export function foodPressure(g: Group): number {
   const crowd = Math.min(1, Math.max(0, (g.crowding - W.crowdingPressureStart) * W.crowdingPressureScale));
-  return Math.max(g.hunger / 100, crowd, !isEmpty(g.inactive) ? W.inactivePressure : 0);
+  return Math.max(g.hunger / 100, crowd);
+}
+
+/**
+ * Pressure that can push `g` to war with `other` (DECISIONS 20.10): hunger and crowding, or a
+ * stopped discovery only when `other` has it working (war for its flint, ore or timber). Lacking
+ * something nobody nearby has is a reason to explore or trade, not to fight.
+ */
+export function warPressure(g: Group, other: Group): number {
+  let wants = false;
+  for (let k = 0; k < MASK_WORDS; k++) {
+    if ((g.inactive[k]! & other.discoveries[k]! & ~other.inactive[k]!) !== 0) wants = true;
+  }
+  return Math.max(foodPressure(g), wants ? W.inactivePressure : 0);
 }
 
 /** Can the group work on this kind of wall: Boat for rivers and seas, Mining for mountains. */

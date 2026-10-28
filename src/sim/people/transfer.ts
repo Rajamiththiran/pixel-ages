@@ -123,6 +123,7 @@ export function spawnGroup(s: SimState, source: Group, party: Party, site: numbe
   const lin = s.lineages.find((l) => l.id === source.lineageId)!;
   lin.splitCounter++;
   const g = newGroup(s, s.nextGroupId++, `${lin.name} ${lin.splitCounter}`, lin.id, site % s.width, Math.floor(site / s.width));
+  g.parentId = source.id;
   g.known.set(source.known);
   g.knownCount = source.knownCount;
   g.frontier = source.frontier.slice();
@@ -131,7 +132,6 @@ export function spawnGroup(s: SimState, source: Group, party: Party, site: numbe
   g.inactiveWhy.set(source.inactiveWhy);
   // Rafts, boats and carts stay with the old group (built = 0): the new one builds its own (F1).
   g.era = source.era;
-  g.belowLimitYears.set(source.belowLimitYears);
   g.hasHunted = source.hasHunted;
   g.fedHistory.set(source.fedHistory);
   g.fedIndex = source.fedIndex;

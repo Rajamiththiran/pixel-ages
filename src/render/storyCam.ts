@@ -13,7 +13,7 @@ const BIG = new Set<LogEntry['type']>([
 
 /** Is this log line a big moment? Disasters count when at least `minDead` died. */
 export function isBigMoment(e: LogEntry, minDead = 10): boolean {
-  if (e.x === null || e.y === null) return false;
+  if (e.x === null || e.y === null || e.minor) return false;
   if (BIG.has(e.type)) return true;
   if (e.type === 'hazard') {
     const m = /\((\d+) (?:died|drowned|dead)/.exec(e.text);

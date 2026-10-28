@@ -13,11 +13,11 @@ const A = CONFIG.people.ages;
 export function newGroup(s: SimState, id: number, name: string, lineageId: number, homeX: number, homeY: number): Group {
   const fed = new Float32Array(CONFIG.time.ticksPerYear).fill(1);
   return {
-    id, name, lineageId, mode: Mode.Band, homeX, homeY, foundedYear: s.year,
+    id, name, lineageId, parentId: -1, mode: Mode.Band, homeX, homeY, foundedYear: s.year,
     known: new Uint8Array(Math.ceil((s.width * s.height) / 8)), knownCount: 0, knownVersion: 0,
     frontier: [],
-    discoveries: newMask(), inactive: newMask(), inactiveWhy: new Uint8Array(DISCOVERY_COUNT), era: 0, belowLimitYears: new Uint8Array(DISCOVERY_COUNT),
-    foodStock: 0, fedHistory: fed, fedIndex: 0, wood: 0, metal: 0, built: newMask(), boatYear: 0,
+    discoveries: newMask(), inactive: newMask(), inactiveWhy: new Uint8Array(DISCOVERY_COUNT), era: 0,
+    foodStock: 0, fedHistory: fed, fedIndex: 0, wood: 0, spareFuel: 0, metal: 0, built: newMask(), boatYear: 0,
     herd: 0, herders: 0, farmTiles: [], hasHunted: false,
     practice: new Float32Array(PRACTICE_COUNT), practiceYear: new Float32Array(PRACTICE_COUNT), idleYears: new Uint16Array(PRACTICE_COUNT),
     needAcc: new Float32Array(NEED_COUNT), needs: new Float32Array(NEED_COUNT), lessons: new Uint16Array(HAZARD_COUNT), maintenance: 1,
@@ -48,16 +48,37 @@ export function groupColor(s: SimState, g: Group): number {
 export function logEvent(
   s: SimState, type: LogType, text: string,
   g: Group | null = null, other: Group | null = null, x: number | null = null, y: number | null = null,
+  minor = false,
 ): void {
   s.log.push({
     year: s.year, month: s.month, type, text,
     groupId: g?.id ?? null, otherId: other?.id ?? null, lineageId: g?.lineageId ?? null,
     x: x ?? g?.homeX ?? null, y: y ?? g?.homeY ?? null,
+    ...(minor ? { minor: true } : {}),
   });
   if (s.log.length > CONFIG.log.maxEntries) {
     s.log.shift();
     s.logDropped++;
   }
+}
+
+/**
+ * Logs an event (small unless `minor` is false) unless the same `key` was logged in the last
+ * `years` years: a state that flips back and forth (wood runs out, trade restarts, a sickness
+ * returns) is one story, not a line every year (DECISIONS 20.9).
+ */
+export function logQuiet(
+  s: SimState, key: string, years: number, type: LogType, text: string,
+  g: Group | null = null, other: Group | null = null, x: number | null = null, y: number | null = null,
+  minor = true,
+): void {
+  const until = s.logQuiet.get(key);
+  if (until !== undefined && s.year < until) return;
+  if (s.logQuiet.size >= CONFIG.log.quietKeysMax) {
+    for (const [k, u] of s.logQuiet) if (u <= s.year) s.logQuiet.delete(k);
+  }
+  s.logQuiet.set(key, s.year + years);
+  logEvent(s, type, text, g, other, x, y, minor);
 }
 
 /** Removes dead people (alive = 0) from the member list and frees their slots. */

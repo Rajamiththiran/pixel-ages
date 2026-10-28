@@ -1,5 +1,7 @@
 // The brain (§11.6): every person aged 15+ scores each allowed action from the group's needs
 // and their own traits, adds a small seeded nudge, and takes the highest score.
+// Item 2a: a job is kept for a season — its score counts × 1.5 in its first 3 months — so
+// people switch only when something else is clearly better.
 
 import { CONFIG } from '../../config';
 import { Action, Season } from '../../shared/ids';
@@ -9,7 +11,7 @@ import type { Group, SimState } from '../state';
 import { hasActive } from './explore';
 import { strengthNow } from './inheritance';
 import { yieldMult } from './food';
-import { buildingWood, cutWoodScore, fuelUrgent } from './wood';
+import { buildingWood, cutWoodScore, fuelUrgent, type WoodSource } from './wood';
 import { maintainScore } from '../world/hazards';
 import {
   expectedFarm, expectedFish, expectedGather, expectedHerd, expectedHunt, foodScore, gatherCapOf, huntSuccess, type FoodOutlook,
@@ -38,7 +40,7 @@ export interface BandContext {
   waters: number[];              // F3: water tiles in range to fish (empty without Fishing)
   burnTile: number;              // F4: the forest edge to burn this spring month, −1 if none
   woodShortage: number;          // 0–1 of the next 12 months' wood need not yet in store (F1)
-  hasForest: boolean;            // a forest tile in range to cut (F1)
+  wood: WoodSource;              // where woodcutters can cut (F1; farther once the range is cleared)
 }
 
 /** Diminishing returns for support jobs: the more already do it, the less the next one adds. */
@@ -61,8 +63,11 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
 
   let best: number = Action.Gather;
   let bestScore = -1;
+  // Item 2a: last month's job, kept with a bonus during its first season (stickMonths).
+  const last = p.action[slot]!;
+  const keep = p.jobMonths[slot]! < B.stickMonths ? last : -1;
   const consider = (action: number, score: number): void => {
-    const total = Math.max(0, score) + float(s.rng) * B.nudge;
+    const total = Math.max(0, score) * (action === keep ? 1 + B.stickBonus : 1) + float(s.rng) * B.nudge;
     if (total > bestScore) { bestScore = total; best = action; }
   };
 
@@ -108,7 +113,7 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
     consider(Action.Fish, foodScore(CONFIG.future.fish.fishBase, H, expectedFish(g, mult, o, ctx.chosen[Action.Fish]!)));
   }
   // Cut wood (F1): worth more the less of the year's need is in store; a support job, so it falls off as more cut.
-  if (!elder && ctx.hasForest && (ctx.woodShortage > 0 || fuelUrgent(g, g.members.length))) {
+  if (!elder && ctx.wood.tiles.length > 0 && (ctx.woodShortage > 0 || fuelUrgent(g, g.members.length))) {
     consider(Action.CutWood, cutWoodScore(g, g.members.length, ctx.woodShortage) * crowdFactor(ctx, Action.CutWood));
   }
   // Maintain canals, levees and drains (F5): only with such works; a support job.
@@ -120,5 +125,6 @@ export function chooseAction(s: SimState, g: Group, ctx: BandContext, slot: numb
     consider(Action.Burn, Bn.base + Bn.preyWeight * (1 - g.preyAvail));
   }
   ctx.chosen[best] = ctx.chosen[best]! + 1;
+  p.jobMonths[slot] = best === last ? Math.min(255, p.jobMonths[slot]! + 1) : 1;
   return best;
 }

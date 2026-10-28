@@ -16,7 +16,6 @@ export function cloneGroup(g: Group): Group {
     ...g,
     known: g.known.slice(),
     frontier: g.frontier.slice(),
-    belowLimitYears: g.belowLimitYears.slice(),
     inactiveWhy: g.inactiveWhy.slice(),
     discoveries: g.discoveries.slice(),
     inactive: g.inactive.slice(),
@@ -97,13 +96,14 @@ export function cloneState(s: SimState): SimState {
     activeEvents: s.activeEvents.map((e) => ({ ...e })),
     log: [],
     logDropped: 0,
+    logQuiet: new Map(s.logQuiet),   // a replay must stay quiet about the same repeats
     stats: [],
   };
 }
 
 /** A group's typed arrays, in a fixed order (kept out of the JSON part of the hash). */
 const GROUP_ARRAYS = [
-  'known', 'belowLimitYears', 'fedHistory', 'inactiveWhy', 'discoveries', 'inactive', 'built',
+  'known', 'fedHistory', 'inactiveWhy', 'discoveries', 'inactive', 'built',
   'practice', 'practiceYear', 'idleYears', 'needAcc', 'needs', 'lessons', 'culture',
 ] as const;
 

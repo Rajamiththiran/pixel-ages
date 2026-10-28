@@ -53,6 +53,12 @@ export interface Relation {
   reviewYear: number;
   pa: number;                    // pressures at the last decision (re-decide on a change > 0.3)
   pb: number;
+  // A war runs until one side is worn out or it has lasted too long, then a truce (DECISIONS 20.6).
+  warPopA: number;               // populations when the war began
+  warPopB: number;
+  warDeadA: number;              // killed in this war's battles so far
+  warDeadB: number;
+  truceUntil: number;            // no war between the two before this year
 }
 
 /** A hazard that lasts (F5): an outbreak (deaths × 3) or a blight (harvest × 0.3) in one group. */
@@ -68,6 +74,7 @@ export interface Alliance {
   b: number;
   against: number;               // the threatening group
   sinceYear: number;
+  lastYear: number;              // last year the threat was there; the alliance lasts some years more (DECISIONS 20.8)
 }
 
 /** A language (F6 §12.5): each founder lineage has its own; long-separated groups grow new ones. */
@@ -96,6 +103,7 @@ export interface Group {
   id: number;
   name: string;
   lineageId: number;
+  parentId: number;              // the group it split or fled from (−1 for founders): close kin (DECISIONS 20.4)
   mode: number;                  // Mode id
   homeX: number;
   homeY: number;
@@ -108,11 +116,11 @@ export interface Group {
   inactive: Mask;                // owned but missing a resource or wood
   inactiveWhy: Uint8Array;       // per discovery: what it lacks while inactive (Lack id)
   era: number;                   // 0–6
-  belowLimitYears: Uint8Array;   // per discovery, years under forget limit
   foodStock: number;             // FU
   fedHistory: Float32Array;      // last 12 months of group average fed ratio (ring buffer)
   fedIndex: number;              // next write position in fedHistory
   wood: number;                  // stored wood units (F1)
+  spareFuel: number;             // dung and straw gathered this year but not burned: kiln fuel (DECISIONS 17.6)
   metal: number;                 // stored smelted metal units: tools and weapons (F1)
   built: Mask;                   // raft, boat, cart built, by discovery id (F1)
   boatYear: number;              // year the boat was built; it wears out (F1)
@@ -236,6 +244,7 @@ export interface SimState {
   activeEvents: ActiveEvent[];
   log: LogEntry[];
   logDropped: number;            // entries dropped from the front of `log` (cap §21.3)
+  logQuiet: Map<string, number>; // repeat-prone log lines: key → year last logged (DECISIONS 20.9)
   stats: YearStats[];
 }
 
@@ -325,6 +334,7 @@ export function createState(setup: RunSetup): SimState {
     activeEvents: [],
     log: [],
     logDropped: 0,
+    logQuiet: new Map(),
     stats: [],
   };
   initClimate(s);

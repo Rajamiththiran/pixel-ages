@@ -80,7 +80,9 @@ export const CONFIG = {
     deathMult: { starving: 3, malnourished: 1.5, harshHomeNoClothing: 1.5, winterNoFire: 1.3, mudBrick: 0.8, lowHealth: 2 },
     fed: { starvingBelow: 0.5, malnourishedBelow: 0.8 },
     health: { max: 100, starvingLoss: 20, injuryLoss: 30, regen: 10, restRegen: 20, lowBelow: 30, restBelow: 70 },
-    predators: { attackBase: 0.01, spearMult: 0.5, hunterExposure: 1.5, deathShare: 0.5, strDivisor: 200, coopDivisor: 300 },
+    // attackBase 0.01 → 0.0033 (DECISIONS 20.2): wolves avoid people; at 0.01 a band of 4–10 lost
+    // working adults faster than it could replace them once wolves tripled on plentiful deer.
+    predators: { attackBase: 0.0033, spearMult: 0.5, hunterExposure: 1.5, deathShare: 0.5, strDivisor: 200, coopDivisor: 300 },
     traits: {
       intelligence: { min: 40, max: 180, setupMin: 60, setupMax: 160, mendelSd: 7.5, setupSpreadSd: 7.5 },
       cooperation:  { min: 0, max: 100, setupMin: 0, setupMax: 100, mendelSd: 5, setupSpreadSd: 5 },
@@ -128,6 +130,9 @@ export const CONFIG = {
         preyMonthlyShare: 0.2,   // hunters can take up to ~20% of the range's prey food a month without emptying it
         villageHunterShare: 0.25, // villages estimate a quarter of workers might hunt when sharing prey
       },
+      // Item 2a: for its first stickMonths a job's score counts × (1 + stickBonus), so people keep a
+      // job for a season unless something else is clearly better (switching costs walking, tools, skill).
+      stickMonths: 3, stickBonus: 0.5,
       exploreBase: 10, exploreIntDivisor: 2, exploreCrowdWeight: 40, exploreCrowdStart: 0.9, exploreHungerWeight: 0.5,
       careKidsWeight: 40, careHungerWeight: 0.5,
       buildBase: 25, buildPerFamily: 5,
@@ -168,18 +173,27 @@ export const CONFIG = {
     crowdingMax: 10,             // crowding when the range can sustain nothing at all
     splitNameStart: 2,           // first split of "Desert" is "Desert 2"
     childMonths: 180,            // months of childhood used for cn / ca (§11.4)
-    // Age window for pairing (DECISIONS 3.2): the man may be up to 25 years older or 5 years
-    // younger. Without it, older widows pair for life with young men and young women find nobody.
+    // Age window for pairing (DECISIONS 3.2): the man may be up to 25 years older or 10 years
+    // younger (5 → 10, DECISIONS 20.3: real couples vary this much, and tiny bands need every match).
+    // Without it, older widows pair for life with young men and young women find nobody.
     pairMaxOlderMan: 25,         // tuned in step 7 (TUNING.md pass 3): 20 → 25, so widowers can pair again
-    pairMaxOlderWoman: 5,
+    pairMaxOlderWoman: 10,
   },
 
   discoveries: {
-    baseChanceByEra: [0.02, 0.015, 0.01, 0.007, 0.005, 0.003],
-    forgetLimitByEra: [5, 10, 20, 40, 80, 150],
-    forgetYears: 10,
+    // Perfection pass item 1 (TUNING.md pass 7, provisional until the final Scenario A check):
+    // blueprint [0.02, 0.015, 0.01, 0.007, 0.005, 0.003] gave era 6 at years 180–380.
+    // Era 1 back to the blueprint 0.02 (DECISIONS 20.1): founders are modern humans who already know
+    // fire and stone tools; at 0.0015 a small band waited ~100 years for its first skill and died out.
+    baseChanceByEra: [0.02, 0.0007, 0.00006, 0.0000036, 0.0000027, 0.0000018],
     writingChanceMult: 1.3,
     resourceUsePer: 50,
+    // Stone Tools use a tenth as much: a knapper makes dozens of tools from a kilo of flint, and a
+    // known outcrop served a region for millennia (DECISIONS 17.4).
+    stoneUsePer: 500,
+    // Painted clay beside water (river banks, lake shores) comes back with silt: 5 units a year,
+    // up to what was painted, so a dug-out bank refills in about 50 years (DECISIONS 17.5).
+    clayRenewPerYear: 5,
     cityMinPop: 500,
     // Added in step 4 (numbers inside the §12.3 formula):
     spareFoodFrom: 0.5,          // spareFood = clamp((fed12 − 0.5) × 2, 0, 1)
@@ -202,6 +216,19 @@ export const CONFIG = {
       cutBase: 0,                // CutWood score = cutBase + needWeight × shortage (0–1 of the next 12 months' need)
       needWeight: 40,            // a full shortage beats gathering at low hunger (15), loses to it when hungry
       fuelUrgentMonths: 2,       // with less fuel than 2 winter months, cutting is scored by the fire's cooking bonus
+      // Once the forest within the forage range is gone, woodcutters walk to known forest up to 10 km
+      // away and bring back half as much (the rest of the day is the walk). Real basis: where land is
+      // cleared, people walk 5–10 km for firewood (DECISIONS 17.3).
+      farRangeTiles: 10,
+      farEfficiency: 0.5,
+      // Where wood falls short, a group burns dung, straw and dry grass (DECISIONS 17.6). Fuel a
+      // month: per herd animal, per field tile in the range (straw: a wheat field leaves 3–5 t a
+      // hectare, about a third of it spare after fodder and thatch) and per Grass tile (dry grass
+      // and brush). Real basis: steppe, plains and treeless farming peoples cooked and heated
+      // with dung and straw. 1 wood unit ≈ 2.4 person-years of fuel (see fireWinter / fireOther).
+      dungPerAnimal: 0.05,
+      strawPerField: 3,
+      grassPerTile: 1,
     },
     // Smelting (charcoal): wood per metal unit. Real iron ages stripped whole regions of forest.
     smelt: {
@@ -383,6 +410,9 @@ export const CONFIG = {
       raidLossWin: 0.01, raidLossLose: 0.03, // fighting adults lost by the winning and losing side
       // Alliances (§12.7).
       allianceRatio: 2,          // two groups at peace both facing a third 2× stronger than each ally
+      // An alliance outlives its threat by 10 years (DECISIONS 20.8): real alliances lasted years, and
+      // a yearly recount made them end and re-form whenever strengths hovered near 2×.
+      allianceKeepYears: 10,
       threatNeed: 0.1,           // war need above this (losses to battles or raids) also counts as a threat (walls)
     },
     weapons: {
@@ -441,6 +471,16 @@ export const CONFIG = {
     gridCell: 16,
     // Added in step 5:
     fightingAgeMax: 59,          // "adults" in war power and battle deaths are 15–59 (DECISIONS 5.9)
+    // Perfection pass (DECISIONS 20.4–20.7). Real basis: daughter villages stayed allied with their
+    // mother village for generations; groups joined others when they were failing, not when healthy;
+    // early wars were a few seasons of raids and battles that ended in a peace.
+    kinWarPenalty: 40,           // war score − 40 between a group and its parent or sister group …
+    kinFadeYears: 100,           // … fading to 0 over 100 years (about 4 generations) since the younger was founded
+    absorbFailingHunger: 50,     // absorb only a weaker group that is hungry (H ≥ 50) …
+    absorbFailingPop: 12,        // … or too small to carry on alone (fewer than 12 people)
+    warWearyShare: 0.15,         // a war ends when one side has lost 15% of its people in it …
+    warMaxYears: 8,              // … or after 8 years
+    truceYears: 25,              // then no war between the two for 25 years (a generation)
   },
 
   events: {
@@ -456,7 +496,15 @@ export const CONFIG = {
 
   perf: { maxIndividuals: 30000 },
 
-  log: { maxEntries: 50000 },
+  log: {
+    maxEntries: 50000,
+    // Small events that repeat (DECISIONS 20.9): the same line for the same group is logged at most
+    // once in quietYears; disasters that kill majorDead+ people are always logged as big events.
+    quietYears: 20,
+    hazardQuietYears: 10,
+    majorDead: 5,
+    quietKeysMax: 4096,          // memory of what was logged; expired keys are dropped past this size
+  },
 
   render: {
     grain: 0.10,
@@ -464,6 +512,12 @@ export const CONFIG = {
     maxAnimalSprites: 400, animalBlock: 4, animalsPerBlockMax: 2,
     villageWalkersPer: 10, villageWalkersMax: 40, villageWalkRadius: 3,
     walkSpeedPx: 24, fastWalkMult: 4, walkFrameMs: 250, idleStepMs: 2000, personOffsetPx: 3,
+    // Item 2b: a walker goes at least walkSpeedPx, but fast enough to reach the work spot within
+    // arriveMs of screen time (a season at 1×; ÷ fastWalkMult at 8×), at most maxWalkMult × walkSpeedPx.
+    arriveMs: 250, maxWalkMult: 12,
+    // Item 2b: routes round water and walls (render/paths.ts): A* gives up after maxNodes tiles; at
+    // most cacheSize routes are kept.
+    paths: { maxNodes: 4000, cacheSize: 20000 },
     maxHutsDrawnBand: 12, maxBuildingsDrawn: 30, cityShare: 0.3, maxCityDrawn: 12,
     herdPerSprite: 10, maxHerdDrawn: 12,
     herdRadiusTiles: 2,          // added in step 5: herd goats wander within 2 tiles of home ("near home", §18.5)

@@ -23,6 +23,7 @@ export interface PersonPool {
   childAdversity: Uint16Array;   // months as a child with war, plague or starving
   nursing: Uint8Array;           // months left before she can conceive again
   action: Uint8Array;            // Action id this month
+  jobMonths: Uint8Array;         // months in a row on this action, this month included (item 2a)
   workTile: Int32Array;          // tile where they work this month
   skin: Uint8Array;              // 0–2, visual only
   hair: Uint8Array;              // 0–2, visual only
@@ -38,7 +39,7 @@ export const POOL_ARRAYS: readonly ArrayKey[] = [
   'id', 'alive', 'groupId', 'sex', 'ageMonths', 'motherId', 'fatherId', 'partnerId',
   'potInt', 'potCoop', 'potStr', 'actInt', 'actCoop', 'actStr',
   'health', 'fed', 'nutrition', 'childFedSum', 'childAdversity', 'nursing', 'action', 'workTile',
-  'skin', 'hair', 'injured',
+  'skin', 'hair', 'injured', 'jobMonths',
 ];
 
 export function createPool(capacity = 64): PersonPool {
@@ -71,6 +72,7 @@ export function createPool(capacity = 64): PersonPool {
     skin: new Uint8Array(capacity),
     hair: new Uint8Array(capacity),
     injured: new Uint8Array(capacity),
+    jobMonths: new Uint8Array(capacity),
   };
 }
 
