@@ -96,6 +96,7 @@ export function cloneState(s: SimState): SimState {
     activeEvents: s.activeEvents.map((e) => ({ ...e })),
     log: [],
     logDropped: 0,
+    logQuiet: new Map(s.logQuiet),   // a replay must stay quiet about the same repeats
     stats: [],
   };
 }

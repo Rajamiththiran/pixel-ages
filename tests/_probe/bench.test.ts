@@ -47,9 +47,16 @@ const snapPath = (name: string): string => `${SNAPDIR}/${name}.bin`;
 
 /** One line per group: what the bench usually needs to see. */
 function groupLines(s: SimState): string[] {
-  return s.groups.map((g) => `  ${g.name.padEnd(10)} pop ${String(population(g)).padStart(5)} era ${g.era} H ${g.hunger.toFixed(0).padStart(3)} crowd ${g.crowding.toFixed(2)}`
+  // World line: mean animal density (0–1) over tiles that have any, and the share of tiles with some.
+  const names = ['deer', 'wolves', 'goats', 'horses'];
+  const world = s.animal.map((a, k) => {
+    let sum = 0, n = 0;
+    for (const d of a) if (d > 0) { sum += d; n++; }
+    return `${names[k]} ${n ? (sum / n).toFixed(2) : '0'} on ${((100 * n) / a.length).toFixed(0)}%`;
+  }).join(', ');
+  return [`  world: ${world}`, ...s.groups.map((g) => `  ${g.name.padEnd(10)} pop ${String(population(g)).padStart(5)} era ${g.era} H ${g.hunger.toFixed(0).padStart(3)} crowd ${g.crowding.toFixed(2)}`
     + ` farms ${g.farmTiles.length} wood ${g.wood.toFixed(0)} herd ${g.herd.toFixed(0)} disc ${DISCOVERIES.filter((d) => has(g.discoveries, d.id)).length}`
-    + ` off: ${DISCOVERIES.filter((d) => has(g.inactive, d.id)).map((d) => d.name).join(',') || '-'}`);
+    + ` off: ${DISCOVERIES.filter((d) => has(g.inactive, d.id)).map((d) => d.name).join(',') || '-'}`)];
 }
 
 function topFunctions(p: Profile, n: number): string[] {
@@ -100,6 +107,7 @@ it.skipIf(!env.BENCH)('bench', async () => {
       await new Promise<void>((r) => session!.post('Profiler.enable', () => session!.post('Profiler.start', () => r())));
     }
     const counts: Record<string, number> = {};
+    let small = 0;
     let seen = s.logDropped + s.log.length;
     out.push(`from year ${s.year}${env.SNAP ? ` (snapshot ${env.SNAP})` : ''}`, ...groupLines(s));
     while (s.year < end && s.groups.length > 0) {
@@ -109,12 +117,15 @@ it.skipIf(!env.BENCH)('bench', async () => {
       for (let k = Math.max(seen, s.logDropped); k < total; k++) {
         const e = s.log[k - s.logDropped]!;
         counts[e.type] = (counts[e.type] ?? 0) + 1;
-        if (env.LOG && new RegExp(env.LOG).test(e.type)) out.push(`    y${e.year} ${e.text}`);
+        if (e.minor) small++;
+        // Small events are marked "(small)" at the end, so scripts can tell them apart.
+        if (env.LOG && new RegExp(env.LOG).test(e.type)) out.push(`    y${e.year} ${e.text}${e.minor ? ' (small)' : ''}`);
       }
       seen = total;
       out.push(`year ${s.year} (${((Date.now() - t) / 1000).toFixed(1)} s for ${step} years)`, ...groupLines(s));
     }
     if (env.HASH) out.push(`hash ${hashState(s)}`);
+    out.push(`log lines: ${Object.values(counts).reduce((a, b) => a + b, 0)} (${small} small)`);
     out.push(`log: ${Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
     if (session) {
       const prof = await new Promise<Profile>((r) => session!.post('Profiler.stop', (_e, res) => r(res.profile!)));

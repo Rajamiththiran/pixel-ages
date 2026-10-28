@@ -103,3 +103,23 @@ Each pass: what changed, why, and the results before and after.
 **Result:** median wars ~38 (fewer than with F6 off: walls and alliances deter), alliances in 9/10 seeds, raids in 5/10.
 
 **Open for F9:** Scenario D population at year 600 is still below the F6-off runs. The largest part was wider contact spreading F5 outbreaks along trade links (now only horses widen contact, DECISIONS 13.16). F5 disease itself is strong: in one seed, turning outbreaks off tripled the population.
+
+## Pass 8 — founders survive; wars end (perfection pass, DECISIONS 20.x), 28 Oct 2026
+
+Measured with the test bench (`tests/_probe/f9.test.ts`, `bench`), not long runs.
+
+| Number | Was | Now | Why / measured |
+|---|---|---|---|
+| `discoveries.baseChanceByEra[0]` | 0.0015 | 0.02 | Founders know fire and stone tools. Scenario A, 24 seeds × 150 years: first skill at year ~40 (median) |
+| `people.predators.attackBase` | 0.01 | 0.0033 | Wolves avoid people. Alone: 18 of 24 alive at year 100 (15 before) |
+| `people.pairMaxOlderWoman` | 5 | 10 | Together with the two above: **21 of 24 alive at year 100, median band 70 people** (was 15 of 24, median 1) |
+| `contact.kinWarPenalty` / `kinFadeYears` | — | 40 / 100 | New (20.4) |
+| `contact.absorbFailingHunger` / `absorbFailingPop` | — | 50 / 12 | New (20.5) |
+| `contact.warWearyShare` / `warMaxYears` / `truceYears` | — | 0.15 / 8 / 25 | New (20.6) |
+| `future.society.allianceKeepYears` | — | 10 | New (20.8) |
+| `log.quietYears` / `hazardQuietYears` / `majorDead` | — | 20 / 10 / 5 | New (20.9) |
+
+Contact, mini world (seeds 2 and 5, 800 years): groups removed by absorb or conquest 259 / 172 → 44 / 87; of them founded under 50 years earlier 201 / 131 → 22 / 43; big log lines 666 / 546 → 189 / 214 a century.
+Scenario A seed 19, years 0–800: groups removed 605 → 97 (against an in-between version without 20.8 and 20.11), war starts 1,120 → 502, big log lines 16,522 → 4,834 (357 groups alive at year 800).
+Still noisy, for later items: "A sickness broke out" (1,533 big lines in 800 years: item 11, disease too strong) and villages crossing the 150 / 100 threshold back and forth ("grew into a village" 853).
+The later-era pace of item 1 (pass 7) is still to be re-checked now that era 1 is 0.02.

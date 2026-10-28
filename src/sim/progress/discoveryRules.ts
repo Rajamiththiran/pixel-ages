@@ -160,11 +160,14 @@ export function fed12(g: Group): number {
   return sum / g.fedHistory.length;
 }
 
-/** Gains discovery d and logs `text`. Raft changes which tiles are passable, so the frontier is rebuilt. */
-export function gainDiscovery(s: SimState, g: Group, d: number, text: string): void {
+/**
+ * Gains discovery d and logs `text`; learning it from neighbours is a small event (`minor`).
+ * Raft changes which tiles are passable, so the frontier is rebuilt.
+ */
+export function gainDiscovery(s: SimState, g: Group, d: number, text: string, minor = false): void {
   if (has(g.discoveries, d)) return;
   addBit(g.discoveries, d);
-  logEvent(s, 'discovery', text, g);
+  logEvent(s, 'discovery', text, g, null, null, null, minor);
   // A raft, boat or cart has to be built from wood before it works (F1).
   if (vesselWood(d) > 0) buildVessel(s, g, d);
   if (d === Discovery.raft) rebuildFrontier(s, g);

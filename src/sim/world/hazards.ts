@@ -11,7 +11,7 @@ import { Discovery } from '../../shared/discoveries';
 import { chance, gaussian, int, stochasticRound } from '../../shared/rng';
 import type { Group, SimState } from '../state';
 import { hasActive } from '../people/explore';
-import { buryDead, logEvent, population } from '../people/groups';
+import { buryDead, logEvent, logQuiet, population } from '../people/groups';
 import { learnLesson } from '../progress/discoveryRules';
 import { knownResourceTiles, resourceTiles } from '../progress/deposits';
 import { cellOf, slopes } from './landscape';
@@ -29,9 +29,15 @@ const HAZARD_NEED: Readonly<Record<number, number>> = {
   [Hazard.RiverFlood]: Need.floods, [Hazard.FlashFlood]: Need.floods,
 };
 
-/** A hazard hit group g: log it, raise the matching need, start the lesson. */
-export function strike(s: SimState, g: Group, hazard: number, text: string): void {
-  logEvent(s, 'hazard', text, g);
+/**
+ * A hazard hit group g: log it, raise the matching need, start the lesson. A disaster that killed
+ * log.majorDead+ people (or a `major` one) is a big event; a smaller one is a small event, logged
+ * once per group and hazard in hazardQuietYears (DECISIONS 20.9).
+ */
+export function strike(s: SimState, g: Group, hazard: number, text: string, dead = 0, major = false): void {
+  const LG = CONFIG.log;
+  if (major || dead >= LG.majorDead) logEvent(s, 'hazard', text, g);
+  else logQuiet(s, `hz:${g.id}:${hazard}`, LG.hazardQuietYears, 'hazard', text, g);
   learnLesson(s, g, hazard);
   const need = HAZARD_NEED[hazard];
   if (need !== undefined) g.needAcc[need] = g.needAcc[need]! + 1;
@@ -269,18 +275,18 @@ export function updateFires(s: SimState): void {
     const starter = s.groups.find((o) => o.id === ig.groupId) ?? null;
     if (ig.kind === 'town' && starter) {
       const dead = hit.includes(starter.id) ? burnSettlement(s, starter) : 0;
-      strike(s, starter, Hazard.TownFire, `A fire swept through ${starter.name} (${dead} died, ${tiles} km² burned)`);
+      strike(s, starter, Hazard.TownFire, `A fire swept through ${starter.name} (${dead} died, ${tiles} km² burned)`, dead);
     } else if (starter && (tiles >= FI.logMinTiles || hit.length > 0)) {
       const how = ig.kind === 'burn' ? `${starter.name}'s spring burn escaped` : `A wildfire from ${starter.name}'s campfire`;
       strike(s, starter, Hazard.Wildfire, `${how}: ${tiles} km² burned`);
     } else if (!starter && (tiles >= FI.logMinTiles || hit.length > 0)) {
-      logEvent(s, 'hazard', `Lightning started a wildfire: ${tiles} km² burned`, null, null, ig.tile % s.width, Math.floor(ig.tile / s.width));
+      logEvent(s, 'hazard', `Lightning started a wildfire: ${tiles} km² burned`, null, null, ig.tile % s.width, Math.floor(ig.tile / s.width), true);
     }
     for (const id of hit) {
       const g = s.groups.find((o) => o.id === id);
       if (!g || (ig.kind === 'town' && id === ig.groupId)) continue;
       const dead = burnSettlement(s, g);
-      strike(s, g, Hazard.Wildfire, `A wildfire reached ${g.name} (${dead} died)`);
+      strike(s, g, Hazard.Wildfire, `A wildfire reached ${g.name} (${dead} died)`, dead);
     }
   }
 }
@@ -374,12 +380,12 @@ export function riverFloods(s: SimState): void {
     }
     if (living.length === 0) {
       const at = plain[0]!;
-      logEvent(s, 'hazard', `A river flooded ${plain.length} km² of empty land`, null, null, at % s.width, Math.floor(at / s.width));
+      logQuiet(s, `flood:${k}`, CONFIG.log.hazardQuietYears, 'hazard', `A river flooded ${plain.length} km² of empty land`, null, null, at % s.width, Math.floor(at / s.width));
       continue;
     }
     for (const g of living) {
       const dead = floodDamage(s, g);
-      strike(s, g, Hazard.RiverFlood, `The river flooded ${g.name}'s fields and homes (${dead} drowned)`);
+      strike(s, g, Hazard.RiverFlood, `The river flooded ${g.name}'s fields and homes (${dead} drowned)`, dead);
     }
   }
 }
@@ -406,7 +412,7 @@ export function flashFloods(s: SimState): void {
     // Flood water in the streets brings sickness: twice the outbreak risk this year.
     s.hazardsActive.push({ kind: Hazard.FlashFlood, groupId: g.id, endYear: s.year + 1 });
     sortHazards(s);
-    strike(s, g, Hazard.FlashFlood, `Heavy rain flooded the streets of ${g.name} (${dead} died)`);
+    strike(s, g, Hazard.FlashFlood, `Heavy rain flooded the streets of ${g.name} (${dead} died)`, dead);
   }
 }
 
@@ -434,12 +440,12 @@ export function hazardDeathMult(s: SimState, g: Group): number {
   return mult;
 }
 
-function startOutbreak(s: SimState, g: Group, text: string): void {
+function startOutbreak(s: SimState, g: Group, text: string, major: boolean): void {
   if (sick(s, g)) return;
   const years = DI.minYears + int(s.rng, DI.maxYears - DI.minYears + 1);
   s.hazardsActive.push({ kind: Hazard.Outbreak, groupId: g.id, endYear: s.year + 1 + years });
   sortHazards(s);
-  strike(s, g, Hazard.Outbreak, text);
+  strike(s, g, Hazard.Outbreak, text, 0, major);
 }
 
 /**
@@ -456,11 +462,11 @@ export function yearlyDisease(s: SimState): void {
     if (!g.village || sick(s, g)) continue;
     const p = DI.outbreakBase * crowd(g) * (g.herd >= 1 ? DI.herdOutbreakMult : 1) * (1 + partners(g).length)
       * (hazardOn(s, g, Hazard.FlashFlood) ? 2 : 1);
-    if (chance(s.rng, p)) startOutbreak(s, g, `A sickness broke out in ${g.name}`);
+    if (chance(s.rng, p)) startOutbreak(s, g, `A sickness broke out in ${g.name}`, true);
   }
   for (const g of sickNow) {
     for (const o of partners(g)) {
-      if (!sick(s, o) && chance(s.rng, DI.spreadChance)) startOutbreak(s, o, `${o.name} caught a sickness from its trade with ${g.name}`);
+      if (!sick(s, o) && chance(s.rng, DI.spreadChance)) startOutbreak(s, o, `${o.name} caught a sickness from its trade with ${g.name}`, false);
     }
   }
 }
@@ -505,7 +511,7 @@ export function yearlyLandslides(s: SimState): void {
       const home = g.homeY * s.width + g.homeX === i;
       if (home) {
         const dead = killShare(s, g, L.deathChance);
-        strike(s, g, Hazard.Landslide, `A landslide buried part of ${g.name} (${dead} died)`);
+        strike(s, g, Hazard.Landslide, `A landslide buried part of ${g.name} (${dead} died)`, dead);
       } else if (field && g.farmTiles.includes(i)) {
         strike(s, g, Hazard.Landslide, `A landslide buried a field of ${g.name}`);
       }
@@ -566,7 +572,7 @@ export function yearlyMines(s: SimState): void {
     s.resourceType[mine] = Resource.None;
     s.quarry[mine] = 1;
     const dead = killShare(s, g, Math.max(M.deathShare, 1 / Math.max(1, pop)));
-    strike(s, g, Hazard.MineCollapse, `A mine of ${g.name} collapsed (${dead} died)`);
+    strike(s, g, Hazard.MineCollapse, `A mine of ${g.name} collapsed (${dead} died)`, dead);
   }
 }
 

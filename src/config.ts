@@ -80,7 +80,9 @@ export const CONFIG = {
     deathMult: { starving: 3, malnourished: 1.5, harshHomeNoClothing: 1.5, winterNoFire: 1.3, mudBrick: 0.8, lowHealth: 2 },
     fed: { starvingBelow: 0.5, malnourishedBelow: 0.8 },
     health: { max: 100, starvingLoss: 20, injuryLoss: 30, regen: 10, restRegen: 20, lowBelow: 30, restBelow: 70 },
-    predators: { attackBase: 0.01, spearMult: 0.5, hunterExposure: 1.5, deathShare: 0.5, strDivisor: 200, coopDivisor: 300 },
+    // attackBase 0.01 → 0.0033 (DECISIONS 20.2): wolves avoid people; at 0.01 a band of 4–10 lost
+    // working adults faster than it could replace them once wolves tripled on plentiful deer.
+    predators: { attackBase: 0.0033, spearMult: 0.5, hunterExposure: 1.5, deathShare: 0.5, strDivisor: 200, coopDivisor: 300 },
     traits: {
       intelligence: { min: 40, max: 180, setupMin: 60, setupMax: 160, mendelSd: 7.5, setupSpreadSd: 7.5 },
       cooperation:  { min: 0, max: 100, setupMin: 0, setupMax: 100, mendelSd: 5, setupSpreadSd: 5 },
@@ -171,16 +173,19 @@ export const CONFIG = {
     crowdingMax: 10,             // crowding when the range can sustain nothing at all
     splitNameStart: 2,           // first split of "Desert" is "Desert 2"
     childMonths: 180,            // months of childhood used for cn / ca (§11.4)
-    // Age window for pairing (DECISIONS 3.2): the man may be up to 25 years older or 5 years
-    // younger. Without it, older widows pair for life with young men and young women find nobody.
+    // Age window for pairing (DECISIONS 3.2): the man may be up to 25 years older or 10 years
+    // younger (5 → 10, DECISIONS 20.3: real couples vary this much, and tiny bands need every match).
+    // Without it, older widows pair for life with young men and young women find nobody.
     pairMaxOlderMan: 25,         // tuned in step 7 (TUNING.md pass 3): 20 → 25, so widowers can pair again
-    pairMaxOlderWoman: 5,
+    pairMaxOlderWoman: 10,
   },
 
   discoveries: {
     // Perfection pass item 1 (TUNING.md pass 7, provisional until the final Scenario A check):
     // blueprint [0.02, 0.015, 0.01, 0.007, 0.005, 0.003] gave era 6 at years 180–380.
-    baseChanceByEra: [0.0015, 0.0007, 0.00006, 0.0000036, 0.0000027, 0.0000018],
+    // Era 1 back to the blueprint 0.02 (DECISIONS 20.1): founders are modern humans who already know
+    // fire and stone tools; at 0.0015 a small band waited ~100 years for its first skill and died out.
+    baseChanceByEra: [0.02, 0.0007, 0.00006, 0.0000036, 0.0000027, 0.0000018],
     writingChanceMult: 1.3,
     resourceUsePer: 50,
     // Stone Tools use a tenth as much: a knapper makes dozens of tools from a kilo of flint, and a
@@ -405,6 +410,9 @@ export const CONFIG = {
       raidLossWin: 0.01, raidLossLose: 0.03, // fighting adults lost by the winning and losing side
       // Alliances (§12.7).
       allianceRatio: 2,          // two groups at peace both facing a third 2× stronger than each ally
+      // An alliance outlives its threat by 10 years (DECISIONS 20.8): real alliances lasted years, and
+      // a yearly recount made them end and re-form whenever strengths hovered near 2×.
+      allianceKeepYears: 10,
       threatNeed: 0.1,           // war need above this (losses to battles or raids) also counts as a threat (walls)
     },
     weapons: {
@@ -463,6 +471,16 @@ export const CONFIG = {
     gridCell: 16,
     // Added in step 5:
     fightingAgeMax: 59,          // "adults" in war power and battle deaths are 15–59 (DECISIONS 5.9)
+    // Perfection pass (DECISIONS 20.4–20.7). Real basis: daughter villages stayed allied with their
+    // mother village for generations; groups joined others when they were failing, not when healthy;
+    // early wars were a few seasons of raids and battles that ended in a peace.
+    kinWarPenalty: 40,           // war score − 40 between a group and its parent or sister group …
+    kinFadeYears: 100,           // … fading to 0 over 100 years (about 4 generations) since the younger was founded
+    absorbFailingHunger: 50,     // absorb only a weaker group that is hungry (H ≥ 50) …
+    absorbFailingPop: 12,        // … or too small to carry on alone (fewer than 12 people)
+    warWearyShare: 0.15,         // a war ends when one side has lost 15% of its people in it …
+    warMaxYears: 8,              // … or after 8 years
+    truceYears: 25,              // then no war between the two for 25 years (a generation)
   },
 
   events: {
@@ -478,7 +496,15 @@ export const CONFIG = {
 
   perf: { maxIndividuals: 30000 },
 
-  log: { maxEntries: 50000 },
+  log: {
+    maxEntries: 50000,
+    // Small events that repeat (DECISIONS 20.9): the same line for the same group is logged at most
+    // once in quietYears; disasters that kill majorDead+ people are always logged as big events.
+    quietYears: 20,
+    hazardQuietYears: 10,
+    majorDead: 5,
+    quietKeysMax: 4096,          // memory of what was logged; expired keys are dropped past this size
+  },
 
   render: {
     grain: 0.10,

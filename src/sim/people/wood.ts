@@ -6,7 +6,7 @@ import { CONFIG } from '../../config';
 import { Plant, Resource, Season } from '../../shared/ids';
 import { Discovery, DISCOVERIES, addBit, clearBit, has } from '../../shared/discoveries';
 import type { Group, SimState } from '../state';
-import { logEvent } from './groups';
+import { logQuiet } from './groups';
 import { hasActive, rebuildFrontier } from './explore';
 import { maxStock } from '../world/plants';
 import { takeResource } from '../progress/deposits';
@@ -104,12 +104,15 @@ export function woodSource(s: SimState, g: Group, range: readonly number[]): Woo
 
 // ---------- inactive because something is missing ----------
 
-/** Marks d inactive (logged once, when it stops working). */
+/**
+ * Marks d inactive, logged when it stops working: a small event, and only once in quietYears for
+ * the same group and skill, since supplies that run short every winter flip it back and forth.
+ */
 export function setInactive(s: SimState, g: Group, d: number, why: number, text: string): void {
   g.inactiveWhy[d] = why;
   if (has(g.inactive, d)) return;
   addBit(g.inactive, d);
-  logEvent(s, 'ranOut', text, g);
+  logQuiet(s, `ranOut:${g.id}:${d}`, CONFIG.log.quietYears, 'ranOut', text, g);
 }
 
 export function setActive(g: Group, d: number): void {

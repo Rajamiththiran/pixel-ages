@@ -123,6 +123,7 @@ export function spawnGroup(s: SimState, source: Group, party: Party, site: numbe
   const lin = s.lineages.find((l) => l.id === source.lineageId)!;
   lin.splitCounter++;
   const g = newGroup(s, s.nextGroupId++, `${lin.name} ${lin.splitCounter}`, lin.id, site % s.width, Math.floor(site / s.width));
+  g.parentId = source.id;
   g.known.set(source.known);
   g.knownCount = source.knownCount;
   g.frontier = source.frontier.slice();

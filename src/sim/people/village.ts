@@ -10,7 +10,7 @@ import type { Group, SampleMember, SimState, VillageData } from '../state';
 import { frontierInRange, hasActive, revealAround, revealRadius } from './explore';
 import { computeSignals, fishWork, homeRange, spoil, yieldMultInt } from './food';
 import { ensureFarmTiles, farmCandidates, fieldYield, growHerd, herdCapacity, herdFoundInRange, herdWork } from './farming';
-import { BUCKETS, BUCKET_START, logEvent, population } from './groups';
+import { BUCKETS, BUCKET_START, logEvent, logQuiet, population } from './groups';
 import { allocPerson, freePerson } from './persons';
 import { pairing } from './lifecycle';
 import { actualFromChildhood, inheritTrait } from './inheritance';
@@ -167,9 +167,9 @@ export function toVillage(s: SimState, g: Group, reason: 'size' | 'perf' = 'size
   for (const slot of g.members) freePerson(p, slot);
   g.members = [];
   g.mode = Mode.Village;
-  logEvent(s, reason === 'perf' ? 'perf' : 'becameVillage', reason === 'perf'
-    ? `${g.name} is simulated as a village early (${pop} people) to keep the simulation fast`
-    : `${g.name} grew into a village (${pop} people)`, g);
+  // A group hovering around the threshold grows and shrinks again: news only once in quietYears (DECISIONS 20.9).
+  if (reason === 'perf') logEvent(s, 'perf', `${g.name} is simulated as a village early (${pop} people) to keep the simulation fast`, g);
+  else logQuiet(s, `village:${g.id}`, CONFIG.log.quietYears, 'becameVillage', `${g.name} grew into a village (${pop} people)`, g, null, null, null, false);
 }
 
 /**
@@ -236,7 +236,7 @@ export function toBand(s: SimState, g: Group): void {
   g.village = null;
   g.mode = Mode.Band;
   pairing(s, g);
-  logEvent(s, 'becameBand', `${g.name} shrank back into a band (${slots.length} people)`, g);
+  logQuiet(s, `band:${g.id}`, CONFIG.log.quietYears, 'becameBand', `${g.name} shrank back into a band (${slots.length} people)`, g);
 }
 
 /**

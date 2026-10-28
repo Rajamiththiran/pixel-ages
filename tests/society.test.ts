@@ -372,9 +372,9 @@ describe('raids and alliances (§12.7)', () => {
       { x: 40, y: 40, people: adults(10) }, { x: 48, y: 40, people: adults(10) }, { x: 44, y: 46, people: adults(60) },
     ]);
     const [a, b, c] = [G(s, 1), G(s, 2), G(s, 3)];
-    s.relations = [{ a: 1, b: 2, kind: 'coexist', sinceYear: 0, reviewYear: 99, pa: 0, pb: 0 }];
+    s.relations = [{ a: 1, b: 2, kind: 'coexist', sinceYear: 0, reviewYear: 99, pa: 0, pb: 0, warPopA: 0, warPopB: 0, warDeadA: 0, warDeadB: 0, truceUntil: 0 }];
     updateAlliances(s, contactPairs(s));
-    expect(s.alliances).toEqual([{ a: 1, b: 2, against: 3, sinceYear: 0 }]);
+    expect(s.alliances).toEqual([{ a: 1, b: 2, against: 3, sinceYear: 0, lastYear: 0 }]);
     expect(s.log.some((e) => e.type === 'alliance' && e.text === 'G1 and G2 allied against G3')).toBe(true);
     const together = forceOf(s, a).power + forceOf(s, b).power;
     const r = battle(s, a, c, [b], []);
@@ -382,8 +382,11 @@ describe('raids and alliances (§12.7)', () => {
     expect(effSide / together).toBeGreaterThanOrEqual(0.8);
     expect(effSide / together).toBeLessThanOrEqual(1.2);
     expect(s.log.at(-1)!.text).toContain('(with G2)');
-    // Not threatened by an equal: no alliance.
+    // Not threatened by an equal: the alliance lasts allianceKeepYears more (DECISIONS 20.8), then ends.
     c.members = c.members.slice(0, 12);
+    updateAlliances(s, contactPairs(s));
+    expect(s.alliances).toHaveLength(1);
+    s.year += CONFIG.future.society.allianceKeepYears;
     updateAlliances(s, contactPairs(s));
     expect(s.alliances).toEqual([]);
   });

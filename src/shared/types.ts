@@ -66,6 +66,7 @@ export interface LogEntry {
   text: string;                  // ready to display
   x: number | null;
   y: number | null;
+  minor?: boolean;               // a small event: hidden unless "Small events" is ticked (DECISIONS 20.9)
 }
 
 export type LogType =

@@ -46,6 +46,12 @@ export function buildEventLog(
     });
     return h('label', { class: 'legend-item' }, box, h('span', { text: name }));
   }));
+  // Small events (battles, learned skills, harmless disasters…) are hidden until ticked (DECISIONS 20.9).
+  let showMinor = false;
+  const minorBox = h('input', { type: 'checkbox' });
+  minorBox.addEventListener('change', () => { showMinor = minorBox.checked; changed(); });
+  types.append(h('label', { class: 'legend-item', title: 'Battles, skills learned from neighbours, small disasters, trade restarting, supplies running short' },
+    minorBox, h('span', { text: 'Small events' })));
   const lins = h('div', { class: 'log-filters' });
   const spacer = h('div', { class: 'log-spacer' });
   const scroller = h('div', { class: 'log-scroll' }, spacer);
@@ -80,7 +86,7 @@ export function buildEventLog(
     for (let k = 0; k < log.length; k++) {
       const e = log[k]!;
       if (vy !== null && e.year > vy) continue;           // viewing the past: only what had happened
-      if (hiddenTypes.has(e.type)) continue;
+      if (hiddenTypes.has(e.type) || (e.minor && !showMinor)) continue;
       if (e.lineageId !== null && hiddenLineages.has(e.lineageId)) continue;
       out.push(k);
     }

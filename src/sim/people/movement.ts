@@ -64,8 +64,15 @@ export function checkMigration(s: SimState, g: Group): boolean {
   g.hungryMonths = 0;
   if (best < 0) return false;
 
-  const nx = best % s.width;
-  const ny = Math.floor(best / s.width);
+  const dist = moveHome(s, g, best);
+  if (dist >= MG.logMinDistance) logEvent(s, 'migrate', `${g.name} moved ${dist} km in search of food`, g);
+  return true;
+}
+
+/** Moves a group's home to tile `site` and returns the distance in km. */
+export function moveHome(s: SimState, g: Group, site: number): number {
+  const nx = site % s.width;
+  const ny = Math.floor(site / s.width);
   const dist = Math.round(Math.sqrt((nx - g.homeX) ** 2 + (ny - g.homeY) ** 2));
   // Shelters, fields and walls stay behind; the old camp becomes a ruin (F4).
   leaveRuins(s, g);
@@ -76,8 +83,13 @@ export function checkMigration(s: SimState, g: Group): boolean {
   g.fortification = 0;           // F6: walls stay behind too
   g.buildProgress = 0;
   g.farmTiles = [];
-  if (dist >= MG.logMinDistance) logEvent(s, 'migrate', `${g.name} moved ${dist} km in search of food`, g);
-  return true;
+  return dist;
+}
+
+/** Can the group carry on as it is: as many people as a split party needs, a man and a woman of age. */
+export function groupViable(s: SimState, g: Group): boolean {
+  if (!g.village) return viable(s, g.members);
+  return partyViable(s, { slots: [], counts: g.village.counts, sample: [], life: { fed: 1, childFed: 1, childAdversity: 0 } });
 }
 
 /** Monthly split check (§11.8). */
