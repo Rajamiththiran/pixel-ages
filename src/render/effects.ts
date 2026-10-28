@@ -10,20 +10,21 @@ import { Discovery, has } from '../shared/discoveries';
 import { HazardMark, type GroupView } from '../shared/protocol';
 import type { LogEntry, MapData } from '../shared/types';
 import { hash01 } from '../shared/hash';
-import { PALETTE, RGBS } from './palette';
+import { GROUP_COLORS, PALETTE, RGBS } from './palette';
 import { getSprite } from './sprites';
-import { discoveryIcon, discoveryInText, ERA_ICONS, iconSprite } from './icons';
+import { discoveryIcon, discoveryInText, ERA_ICONS, iconSprite, realmIcon } from './icons';
 import { isWaterTile } from './terrainDetail';
 import { glowSprite } from './light';
 
 const E = CONFIG.render.f8.effects;
 const SM = CONFIG.render.f8.smoke;
 const TILE = CONFIG.map.tilePx;
+const RR = CONFIG.render.realms;
 
 export const Particle = { Smoke: 0, Dust: 1, Spark: 2, Rock: 3, Ember: 4 } as const;
 const COLOURS = [RGBS.stoneLight, RGBS.sand, RGBS.fireYellow, RGBS.stone, RGBS.fireOrange];
 
-interface Burst { kind: 'icon' | 'glow'; x: number; y: number; start: number; ms: number; img: HTMLCanvasElement | null }
+interface Burst { kind: 'icon' | 'glow'; x: number; y: number; start: number; ms: number; img: HTMLCanvasElement | null; colour?: string; radius?: number }
 
 export interface View { x: number; y: number; w: number; h: number }
 
@@ -141,9 +142,51 @@ export class Effects {
         const m = /era (\d)/.exec(e.text);
         this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs, ms: E.eraGlowMs, img: null });
         this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: E.eraGlowMs, img: iconSprite(ERA_ICONS[m ? Number(m[1]) : 0] ?? 'star') });
+      } else if (e.type === 'realm' && !e.minor) {
+        this.realmMoment(e, cx, cy, nowMs);
       } else if (e.type === 'breach' || (e.type === 'event' && /earthquake/i.test(e.text)) || (e.type === 'hazard' && /slide|collapse/i.test(e.text))) {
         this.quake(cx, cy);
       }
+    }
+  }
+
+  /**
+   * C4 realm moments (plan §6): a village joins — a flag rises and a ring in the ruler's colour
+   * spreads; a chiefdom — a golden ring, a crown and sparks; a kingdom — two rings and more sparks;
+   * a revolt — a red ring, embers and smoke; a fall — dust over the old capital.
+   */
+  private realmMoment(e: LogEntry, cx: number, cy: number, nowMs: number): void {
+    const icon = realmIcon(e.text);
+    const ruler = this.groups.find((g) => g.id === e.groupId);
+    const colour = GROUP_COLORS[(ruler && ruler.realmHead >= 0 ? ruler.realmColour : ruler?.colourIndex ?? 0) % GROUP_COLORS.length]!;
+    const ring = (c: string, delay = 0): void => {
+      this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs + delay, ms: RR.ringMs, img: null, colour: c, radius: RR.ringRadiusPx });
+    };
+    const sparks = (n: number): void => {
+      for (let k = 0; k < n; k++) {
+        this.spawn(Particle.Spark, cx + (Math.random() - 0.5) * 16, cy - Math.random() * 10, (Math.random() - 0.5) * 10, -5 - Math.random() * 8, RR.ringMs * (0.5 + Math.random() * 0.5));
+      }
+    };
+    this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: E.eraGlowMs, img: iconSprite(icon) });
+    if (/became the Kingdom/.test(e.text)) {
+      ring(PALETTE.fireYellow);
+      ring(PALETTE.fireYellow, RR.kingdomRingDelayMs);
+      sparks(RR.sparks * 2);
+    } else if (/founded a chiefdom/.test(e.text)) {
+      ring(PALETTE.fireYellow);
+      sparks(RR.sparks);
+    } else if (/rebelled|broke free/.test(e.text)) {
+      ring(PALETTE.fruit);
+      for (let k = 0; k < RR.sparks; k++) {
+        this.spawn(Particle.Ember, cx + (Math.random() - 0.5) * 12, cy - Math.random() * 6, (Math.random() - 0.5) * 6, -6 - Math.random() * 6, RR.ringMs * (0.6 + Math.random() * 0.6));
+        this.spawn(Particle.Smoke, cx + (Math.random() - 0.5) * 10, cy - TILE, (Math.random() - 0.5) * 3, -4 - Math.random() * 3, RR.ringMs * 1.5);
+      }
+    } else if (/fell apart|is no more/.test(e.text)) {
+      for (let k = 0; k < RR.fallDust; k++) {
+        this.spawn(Particle.Dust, cx + (Math.random() - 0.5) * TILE * 4, cy + (Math.random() - 0.5) * TILE * 3, (Math.random() - 0.5) * 8, -2 - Math.random() * 3, RR.ringMs * (0.8 + Math.random() * 0.6));
+      }
+    } else if (icon === 'flag') {
+      ring(colour);
     }
   }
 
@@ -321,12 +364,13 @@ export class Effects {
     }
     for (const b of this.bursts) {
       const t = (nowMs - b.start) / b.ms;
+      if (t < 0) continue;                     // a burst that starts a little later (a kingdom's second ring)
       if (b.kind === 'glow') {
         ctx.globalAlpha = 1 - t;
-        ctx.strokeStyle = PALETTE.fireYellow;
+        ctx.strokeStyle = b.colour ?? PALETTE.fireYellow;
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(b.x, b.y, 4 + t * E.eraGlowRadiusPx, 0, Math.PI * 2);
+        ctx.arc(b.x, b.y, 4 + t * (b.radius ?? E.eraGlowRadiusPx), 0, Math.PI * 2);
         ctx.stroke();
       } else if (b.img) {
         ctx.globalAlpha = t < 0.75 ? 1 : (1 - t) * 4;

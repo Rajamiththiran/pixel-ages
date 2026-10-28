@@ -54,7 +54,7 @@ export function collectFounders(
   }
 }
 
-export interface GroupLabel { name: string; x: number; y: number; colorIndex: number; selected?: boolean; sub?: string }
+export interface GroupLabel { name: string; x: number; y: number; colorIndex: number; selected?: boolean; sub?: string; subColour?: string }
 
 /**
  * Group names above their homes, with a small second line (the era) above the name. F8: in the
@@ -68,7 +68,7 @@ export function drawGroupLabels(
     const [x, y] = project((g.x + 0.5) * TILE, g.y * TILE - R.founderSpreadPx - 2);
     const colour = g.selected ? '#ffffff' : GROUP_COLORS[g.colorIndex % GROUP_COLORS.length]!;
     drawPixelText(ctx, g.name, x, y, colour, 'center', 'bottom');
-    if (g.sub) drawPixelText(ctx, g.sub, x, y - 9, '#e8e2d4', 'center', 'bottom');
+    if (g.sub) drawPixelText(ctx, g.sub, x, y - 9, g.subColour ?? '#e8e2d4', 'center', 'bottom');
   }
 }
 

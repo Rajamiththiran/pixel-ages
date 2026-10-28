@@ -384,6 +384,8 @@ function sendHistory(): void {
 /** F7 relation lines: every relation between groups on screen, plus alliances. */
 function relationViews(s: SimState): RelationView[] {
   const out: RelationView[] = s.relations.map((r) => ({ a: r.a, b: r.b, kind: r.kind }));
+  // C4: each subject is joined to its ruler (they need not be in contact).
+  for (const g of s.groups) if (g.overlordId >= 0) out.push({ a: Math.min(g.id, g.overlordId), b: Math.max(g.id, g.overlordId), kind: 'realm' });
   for (const al of s.alliances) {
     if (!out.some((r) => r.kind === 'alliance' && r.a === al.a && r.b === al.b)) out.push({ a: al.a, b: al.b, kind: 'alliance' });
   }

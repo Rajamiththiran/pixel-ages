@@ -14,7 +14,7 @@
 
 import { it } from 'vitest';
 import { CONFIG } from '../../src/config';
-import { createState, type SimState } from '../../src/sim/state';
+import { createState, type Group, type SimState } from '../../src/sim/state';
 import { runTicks } from '../../src/sim/tick';
 import { hashState } from '../../src/sim/serialize';
 import { population } from '../../src/sim/people/groups';
@@ -54,8 +54,18 @@ function groupLines(s: SimState): string[] {
     for (const d of a) if (d > 0) { sum += d; n++; }
     return `${names[k]} ${n ? (sum / n).toFixed(2) : '0'} on ${((100 * n) / a.length).toFixed(0)}%`;
   }).join(', ');
-  return [`  world: ${world}`, ...s.groups.map((g) => `  ${g.name.padEnd(10)} pop ${String(population(g)).padStart(5)} era ${g.era} H ${g.hunger.toFixed(0).padStart(3)} crowd ${g.crowding.toFixed(2)}`
+  // C4 realms: how many, how big, and each group's place in one.
+  const subs = (id: number): number => s.groups.filter((o) => o.overlordId === id).length;
+  const rulers = s.groups.filter((g) => g.overlordId < 0 && subs(g.id) > 0);
+  const villagesN = s.groups.filter((g) => g.mode === 1).length;
+  const realms = `  realms: ${rulers.filter((g) => g.realmRank === 1).length} chiefdoms, ${rulers.filter((g) => g.realmRank === 2).length} kingdoms, `
+    + `${s.groups.filter((g) => g.overlordId >= 0).length} subjects of ${villagesN} villages, largest ${Math.max(0, ...rulers.map((g) => subs(g.id) + 1))}`;
+  const realmOf = (g: Group): string => g.overlordId >= 0
+    ? ` pays ${s.groups.find((o) => o.id === g.overlordId)?.name ?? '?'} (unrest ${(100 * g.unrest).toFixed(0)}%)`
+    : subs(g.id) > 0 ? ` RULES ${subs(g.id)} (${g.realmRank === 2 ? 'kingdom' : 'chiefdom'} since ${g.realmSince})` : '';
+  return [`  world: ${world}`, realms, ...s.groups.map((g) => `  ${g.name.padEnd(10)} pop ${String(population(g)).padStart(5)} era ${g.era} H ${g.hunger.toFixed(0).padStart(3)} crowd ${g.crowding.toFixed(2)}`
     + ` farms ${g.farmTiles.length} wood ${g.wood.toFixed(0)} herd ${g.herd.toFixed(0)} disc ${DISCOVERIES.filter((d) => has(g.discoveries, d.id)).length}`
+    + `${g.chief ? ' chief' : ''}${realmOf(g)}`
     + ` off: ${DISCOVERIES.filter((d) => has(g.inactive, d.id)).map((d) => d.name).join(',') || '-'}`)];
 }
 

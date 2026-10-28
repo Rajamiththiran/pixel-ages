@@ -8,7 +8,8 @@ import { getSprite } from './sprites';
 export type IconName =
   | 'fire' | 'tool' | 'weapon' | 'boat' | 'cloth' | 'animal' | 'wheat' | 'pot' | 'house' | 'wheel' | 'metal'
   | 'scroll' | 'drop' | 'fish' | 'wave' | 'rock' | 'dust' | 'skull' | 'bug' | 'leaf' | 'sun' | 'cloud' | 'snow'
-  | 'hand' | 'berry' | 'trade' | 'shield' | 'arrow' | 'eye' | 'star' | 'people';
+  | 'hand' | 'berry' | 'trade' | 'shield' | 'arrow' | 'eye' | 'star' | 'people'
+  | 'crown' | 'flag' | 'chain';
 
 const D = Discovery;
 /** One icon per discovery, by family (fire, tools, weapons, boats, farming, building, metal…). */
@@ -72,6 +73,7 @@ export function logIcon(e: LogEntry): IconName {
     case 'absorbed': return 'people';
     case 'alliance': return 'shield';
     case 'society': return 'people';
+    case 'realm': return realmIcon(e.text);
     case 'breach': return 'rock';
     case 'event': {
       for (const [kind, icon] of Object.entries(EVENT_ICONS)) {
@@ -89,6 +91,13 @@ export function logIcon(e: LogEntry): IconName {
     case 'groupExtinct': case 'lineageExtinct': case 'cannotReproduce': return 'skull';
     case 'perf': return 'star';
   }
+}
+
+/** C4: crown for a realm founded or crowned, broken chain for a revolt or fall, flag for a village that joins. */
+export function realmIcon(text: string): IconName {
+  if (/rebelled|broke free|fell apart|is no more|beyond the reach|shrank/.test(text)) return 'chain';
+  if (/founded a chiefdom|became the Kingdom/.test(text)) return 'crown';
+  return 'flag';
 }
 
 export const iconSprite = (name: IconName): HTMLCanvasElement => getSprite(`icon_${name}`);

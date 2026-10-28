@@ -25,6 +25,7 @@ export function newGroup(s: SimState, id: number, name: string, lineageId: numbe
     culture: new Float32Array(CULTURE_COUNT).fill(CONFIG.future.society.cultureStart),
     languageId: 0, kinContactYear: s.year, isolationYears: 0, domestication: 0, fortification: 0,
     storeMonthsSum: 0, warWinsYear: 0, underThreat: false, hungerPeak: 0,
+    overlordId: -1, subjectSince: 0, tributePaid: 0, unrest: 0, realmRank: 0, realmSince: 0, realmLastYear: 0,
     huts: 0, houses: 0, buildProgress: 0,
     hungryMonths: 0, crowdedMonths: 0, wantsSplit: false, wallTarget: null, wallScanKey: '',
     teachBonus: 1, teacherMonths: 0, carers: 0, cannotReproduceLogged: false, village: null, trading: false,
@@ -32,6 +33,9 @@ export function newGroup(s: SimState, id: number, name: string, lineageId: numbe
     need: 0, hunger: 0, plantAvail: 0, preyAvail: 0, sustainable: 0, crowding: 0, lowestFed: 1, fedYearSum: 0,
   };
 }
+
+/** "1 village", "3 villages" (realm log lines). */
+export const villages = (n: number): string => `${n} ${n === 1 ? 'village' : 'villages'}`;
 
 /** Inserts a group keeping s.groups sorted by id. */
 export function addGroup(s: SimState, g: Group): void {
@@ -177,6 +181,12 @@ export function removeGroups(s: SimState, gone: Group[]): void {
   s.groups = s.groups.filter((g) => !ids.has(g.id));
   s.relations = s.relations.filter((r) => !ids.has(r.a) && !ids.has(r.b));
   s.alliances = s.alliances.filter((x) => !ids.has(x.a) && !ids.has(x.b) && !ids.has(x.against));
+  // C4: a ruler that is gone lets its villages go.
+  for (const g of gone) {
+    const freed = s.groups.filter((o) => o.overlordId === g.id);
+    for (const o of freed) o.overlordId = -1;
+    if (freed.length > 0) logEvent(s, 'realm', `The ${g.realmRank === 2 ? 'kingdom' : 'chiefdom'} of ${g.name} fell apart (${villages(freed.length)} went free)`, g);
+  }
   for (const g of gone) {
     leaveRuins(s, g);
     const lin = s.lineages.find((l) => l.id === g.lineageId);

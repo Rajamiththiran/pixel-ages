@@ -11,6 +11,7 @@ export const LOG_GROUPS: ReadonlyArray<readonly [string, readonly LogType[]]> = 
   ['Discoveries & eras', ['discovery', 'lostDiscovery', 'eraUp', 'eraDown', 'ranOut']],
   ['Movement', ['split', 'migrate', 'becameVillage', 'becameBand']],
   ['Contact', ['firstContact', 'tradeStart', 'war', 'conquered', 'absorbed', 'raid', 'alliance']],
+  ['Realms', ['realm']],
   ['Society', ['society']],
   ['World', ['breach', 'event', 'intervention', 'animalsGone', 'hazard']],
   ['Life', ['groupExtinct', 'lineageExtinct', 'cannotReproduce']],

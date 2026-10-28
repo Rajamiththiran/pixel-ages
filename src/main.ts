@@ -465,7 +465,9 @@ function setHeat(k: HeatLayer | null): void {
 
 // ---------- F7: relation lines and migration trails ----------
 
-const LINE_COLOURS = { trade: '#6fcf4f', war: '#d94f4f', alliance: '#4f7fd9', coexist: '#a39d92' } as const;
+/** C4: a kingdom's label line and realm lines. */
+const KINGDOM_GOLD = '#e8c547';
+const LINE_COLOURS = { trade: '#6fcf4f', war: '#d94f4f', alliance: '#4f7fd9', coexist: '#a39d92', realm: KINGDOM_GOLD } as const;
 interface Trail { x1: number; y1: number; x2: number; y2: number; colour: string; year: number }
 let trails: Trail[] = [];
 let trailHomes = new Map<number, { x: number; y: number; lineageId: number }>();
@@ -507,13 +509,16 @@ function updateLines(f: Frame): void {
   const out: MapLine[] = [];
   if (linesOn) {
     const home = new Map(f.groups.map((g) => [g.id, g]));
+    // C4: a subject and its ruler get one gold dotted line, not also a trade line.
+    const realmPairs = new Set(f.relations.filter((r) => r.kind === 'realm').map((r) => r.a * 65536 + r.b));
     for (const r of f.relations) {
       const a = home.get(r.a);
       const b = home.get(r.b);
       if (!a || !b) continue;
+      if (r.kind !== 'realm' && realmPairs.has(r.a * 65536 + r.b)) continue;
       out.push({
         x1: a.homeX, y1: a.homeY, x2: b.homeX, y2: b.homeY, colour: LINE_COLOURS[r.kind], alpha: CONFIG.render.relationLineAlpha,
-        dash: r.kind === 'coexist' ? [2, 3] : r.kind === 'alliance' ? [5, 2] : [], arrow: false,
+        dash: r.kind === 'coexist' ? [2, 3] : r.kind === 'alliance' ? [5, 2] : r.kind === 'realm' ? [1, 2] : [], arrow: false,
       });
     }
   }
@@ -724,7 +729,9 @@ function startRun(): void {
       renderer.setGroups(f.groups, f.relations, walkerSprite);
       view.runGroups = f.groups.map((g) => ({
         name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup,
-        sub: ERA_NAMES[g.era],
+        // C4: a capital's second line names its realm (gold for a kingdom) instead of its era.
+        sub: g.subjects > 0 ? `${g.realmRank === 2 ? 'Kingdom' : 'Chiefdom'} · ${g.subjects + 1} villages` : ERA_NAMES[g.era],
+        subColour: g.subjects > 0 && g.realmRank === 2 ? KINGDOM_GOLD : undefined,
       }));
       if (f.selectedKnown) renderer.fog.setKnown(f.selectedKnown);
       updateTerritory();

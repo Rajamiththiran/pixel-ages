@@ -150,6 +150,14 @@ export interface Group {
   warWinsYear: number;           // battles and raids won this year (inequality)
   underThreat: boolean;          // at war or raided at the last contact: builds walls
   hungerPeak: number;            // this year's worst monthly hunger H (raids)
+  // C4: realms. A subject's ruler is always free, so a realm is one ruler and its subjects.
+  overlordId: number;            // the ruler it pays tribute to; −1 = free
+  subjectSince: number;          // year it began to pay (assimilation)
+  tributePaid: number;           // FU sent last year (a ruler: received)
+  unrest: number;                // last year's chance of revolt, 0–1 (subjects)
+  realmRank: number;             // a ruler: 0 none, 1 chiefdom, 2 kingdom
+  realmSince: number;            // year it reached that rank
+  realmLastYear: number;         // last year it ruled a village (a realm ends graceYears later)
   huts: number;
   houses: number;                // mud-brick houses
   buildProgress: number;         // worker-months toward the next building

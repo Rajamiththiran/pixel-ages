@@ -64,7 +64,9 @@ export function mapLayer(s: SimState, kind: MapLayer, log: readonly LogEntry[]):
       const count = new Float32Array(n);
       for (const e of log) {
         if (e.year > s.year || e.year <= s.year - HL.conflictYears || e.x === null || e.y === null) continue;
-        if (e.type !== 'war' && e.type !== 'raid' && e.type !== 'conquered') continue;
+        // C4: conquests that made a tributary, submissions and revolts are fighting too.
+        const realmFight = e.type === 'realm' && /conquered|submitted|rebelled/.test(e.text);
+        if (e.type !== 'war' && e.type !== 'raid' && e.type !== 'conquered' && !realmFight) continue;
         for (let y = Math.max(0, e.y - R); y <= Math.min(s.height - 1, e.y + R); y++) {
           for (let x = Math.max(0, e.x - R); x <= Math.min(s.width - 1, e.x + R); x++) {
             if ((x - e.x) ** 2 + (y - e.y) ** 2 <= R * R) count[y * s.width + x] = count[y * s.width + x]! + 1;

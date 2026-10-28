@@ -11,7 +11,7 @@ import { chance, float, int, stochasticRound } from '../../shared/rng';
 import type { Alliance, Group, Relation, SimState } from '../state';
 import { tilesConnected } from '../world/regions';
 import { addKnownTiles, hasActive } from '../people/explore';
-import { BUCKETS, buryDead, logEvent, logQuiet, population, removeGroups, traitAverages } from '../people/groups';
+import { BUCKETS, buryDead, logEvent, logQuiet, population, removeGroups, traitAverages, villages } from '../people/groups';
 import { strengthNow } from '../people/inheritance';
 import { freePerson } from '../people/persons';
 import { bestSite, groupViable, moveHome } from '../people/movement';
@@ -19,6 +19,7 @@ import { addParty, partySize, takeAll, takeCounts, takeSlots, shareOfCounts } fr
 import { resizeSample, toVillage, villageWorkers } from '../people/village';
 import { canDiscover, foundMask, gainDiscovery, updateEra, wantedFound } from '../progress/discoveryRules';
 import { pressure, warPressure } from './walls';
+import { canHold, headOf, logFounded, makeSubject, realmOf, realmPower, sameRealm, takeRealm } from './realms';
 import {
   blendCulture, craftMult, fortMult, intermarry, learnMult, mixCulture, noteContact, noteWin, outsidersJoined, pairCulture,
   rollRaid, sameLanguage, understand, weaponMult, workingAnimals,
@@ -27,6 +28,7 @@ import {
 const C = CONFIG.contact;
 const P = CONFIG.people;
 const SO = CONFIG.future.society;
+const RC = CONFIG.realms;
 
 // ---------- power ----------
 
@@ -175,10 +177,15 @@ export function kinship(s: SimState, a: Group, b: Group): number {
 /** A group that is starving or too small to carry on alone may join a stronger one (DECISIONS 20.5). */
 export const failing = (g: Group): boolean => g.hunger >= C.absorbFailingHunger || population(g) < C.absorbFailingPop;
 
-export function inputsFor(s: SimState, a: Group, b: Group, rel: Relation | undefined): DecisionInputs {
+/**
+ * The decision inputs for a pair. `helpA` and `helpB` are realm-mates who would fight beside
+ * each side (C4): their power counts too. A subject is protected by its ruler: it cannot be absorbed.
+ */
+export function inputsFor(s: SimState, a: Group, b: Group, rel: Relation | undefined, helpA: Group[] = [], helpB: Group[] = []): DecisionInputs {
   const lang = sameLanguage(a, b);
-  const powerA = forceOf(s, a).power;
-  const powerB = forceOf(s, b).power;
+  const powerA = forceOf(s, a).power + helpA.reduce((t, g) => t + forceOf(s, g).power, 0);
+  const powerB = forceOf(s, b).power + helpB.reduce((t, g) => t + forceOf(s, g).power, 0);
+  const weak = powerA < powerB ? a : b;
   return {
     // Kin who no longer share a language are strangers (F6 §12.5).
     coopA: traitAverages(s, a).coop, coopB: traitAverages(s, b).coop, sameLineage: a.lineageId === b.lineageId && lang,
@@ -186,7 +193,7 @@ export function inputsFor(s: SimState, a: Group, b: Group, rel: Relation | undef
     powerA, powerB, discoveriesDiffer: !sameMask(a.discoveries, b.discoveries),
     sameLanguage: understand(a, b), inequality: (a.inequality + b.inequality) / 2,
     warlike: pairCulture(a, b, Culture.warlike), openness: pairCulture(a, b, Culture.openness),
-    kin: kinship(s, a, b), weakFailing: failing(powerA < powerB ? a : b),
+    kin: kinship(s, a, b), weakFailing: failing(weak) && weak.overlordId < 0,
     truce: rel !== undefined && s.year < rel.truceUntil,
   };
 }
@@ -382,10 +389,50 @@ export function raid(s: SimState, raider: Group, target: Group): boolean {
  */
 export function conquer(s: SimState, winner: Group, loser: Group): boolean {
   const p = s.persons;
-  let captives = 0;
+  // C4: a farming chiefdom keeps a settled village it beats; it stays and pays tribute.
+  const ruler = s.groups.find((g) => g.id === headOf(winner));
+  if (ruler && canHold(s, ruler, loser)) {
+    subjugate(s, winner, ruler, loser);
+    return true;
+  }
   // 1. Captives: a random half of the survivors.
+  const captives = takeCaptives(s, winner, loser, C.captureShare);
+  // 2. Discoveries (50% each, requirements apply) and land.
+  spoils(s, winner, loser);
+  // A beaten ruler's villages go to the winner's realm if it can hold them, or go free (C4).
+  const realm = takeRealm(s, ruler, loser);
+  const lost = realmText(realm, ruler);
+  // 3. The rest are driven off, or scatter.
+  const site = groupViable(s, loser) ? bestSite(s, loser, [[winner.homeX, winner.homeY]], C.refugeeMinDistance) : -1;
+  if (site >= 0) {
+    const fled = population(loser);
+    const km = moveHome(s, loser, site);
+    logEvent(s, 'conquered', `${winner.name} drove ${loser.name} from its land (${captives} captured; ${fled} fled ${km} km${lost})`, winner, loser);
+    if (realm.founded) logFounded(s, ruler!);
+    return true;
+  }
+  for (const slot of takeAll(loser).slots) freePerson(p, slot);
+  logEvent(s, 'conquered', `${winner.name} conquered ${loser.name} (${captives} captured, the rest scattered${lost})`, winner, loser);
+  if (realm.founded) logFounded(s, ruler!);
+  removeGroups(s, [loser]);
+  return false;
+}
+
+/** "; its 3 villages went to Garden" / "; its 2 villages went free" after a ruler is beaten (C4). */
+function realmText(r: { taken: number; freed: number }, ruler: Group | undefined): string {
+  if (r.taken + r.freed === 0) return '';
+  const parts: string[] = [];
+  if (r.taken > 0) parts.push(`${r.taken} went to ${ruler!.name}`);
+  if (r.freed > 0) parts.push(`${r.freed} went free`);
+  return `; of its ${villages(r.taken + r.freed)}, ${parts.join(' and ')}`;
+}
+
+/** Takes `share` of the loser's survivors as captives into the winner; they bring their ways and blood (F6). */
+function takeCaptives(s: SimState, winner: Group, loser: Group, share: number): number {
+  const p = s.persons;
+  let captives = 0;
   if (loser.village) {
-    const party = takeCounts(loser, shareOfCounts(s, loser.village, C.captureShare));
+    const party = takeCounts(loser, shareOfCounts(s, loser.village, share));
     captives = partySize(party);
     addParty(s, winner, party);
   } else {
@@ -394,31 +441,38 @@ export function conquer(s: SimState, winner: Group, loser: Group): boolean {
       const j = int(s.rng, k + 1);
       [order[k], order[j]] = [order[j]!, order[k]!];
     }
-    const taken = order.slice(0, Math.round(order.length * C.captureShare)).sort((x, y) => p.id[x]! - p.id[y]!);
+    const taken = order.slice(0, Math.round(order.length * share)).sort((x, y) => p.id[x]! - p.id[y]!);
     captives = taken.length;
     addParty(s, winner, takeSlots(loser, taken));
   }
-  // Captives bring their ways and their blood (F6).
   if (captives > 0) {
     mixCulture(winner, loser, captives / Math.max(1, population(winner)));
     outsidersJoined(winner);
   }
-  // 2. Discoveries (50% each, requirements apply) and land.
+  return captives;
+}
+
+/** The winner may learn the loser's discoveries (50% each, requirements apply) and learns its land. */
+function spoils(s: SimState, winner: Group, loser: Group): void {
   learnFrom(s, winner, loser, C.gainDiscoveryChance);
   addKnownTiles(s, winner, knownTiles(s, loser));
   if (winner.mode === Mode.Band && winner.members.length >= P.groupSize.toVillageAt) toVillage(s, winner);
-  // 3. The rest are driven off, or scatter.
-  const site = groupViable(s, loser) ? bestSite(s, loser, [[winner.homeX, winner.homeY]], C.refugeeMinDistance) : -1;
-  if (site >= 0) {
-    const fled = population(loser);
-    const km = moveHome(s, loser, site);
-    logEvent(s, 'conquered', `${winner.name} drove ${loser.name} from its land (${captives} captured; ${fled} fled ${km} km)`, winner, loser);
-    return true;
-  }
-  for (const slot of takeAll(loser).slots) freePerson(p, slot);
-  logEvent(s, 'conquered', `${winner.name} conquered ${loser.name} (${captives} captured, the rest scattered)`, winner, loser);
-  removeGroups(s, [loser]);
-  return false;
+}
+
+/**
+ * C4 (plan §4.2): the beaten village stays where it is and pays tribute to the winner's ruler. A
+ * tenth are taken as hostages and slaves; if it ruled villages itself, those in range come too.
+ * Real basis: chiefdoms grew by making beaten neighbours tributaries, not by emptying their land.
+ */
+function subjugate(s: SimState, winner: Group, ruler: Group, loser: Group): void {
+  const captives = takeCaptives(s, winner, loser, RC.captureShare);
+  spoils(s, winner, loser);
+  const r = makeSubject(s, ruler, loser);
+  const who = r.taken > 0 ? `it and ${r.taken} of its villages now pay` : 'it now pays';
+  const to = winner === ruler ? '' : ` to ${ruler.name}`;
+  const freed = r.freed > 0 ? `; ${villages(r.freed)} went free` : '';
+  logEvent(s, 'realm', `${winner.name} conquered ${loser.name}: ${who} tribute${to} (${captives} captured${freed})`, winner, loser, loser.homeX, loser.homeY);
+  if (r.founded) logFounded(s, ruler);
 }
 
 // ---------- trade and absorb ----------
@@ -501,6 +555,18 @@ export function updateAlliances(s: SimState, pairs: ReadonlyArray<readonly [Grou
     }
     return v;
   };
+  // C4: a ruler's threat is its whole realm's strength (balance of power).
+  const threat = new Map<number, number>();
+  const threatOf = (id: number): number => {
+    let v = threat.get(id);
+    if (v === undefined) {
+      const g = s.groups.find((o) => o.id === id);
+      v = g ? realmPower(s, g) : 0;
+      threat.set(id, v);
+    }
+    return v;
+  };
+  const byId = new Map(s.groups.map((g) => [g.id, g] as const));
   const next: Alliance[] = [];
   const atPeace = new Set<number>();
   for (const r of s.relations) {
@@ -512,7 +578,9 @@ export function updateAlliances(s: SimState, pairs: ReadonlyArray<readonly [Grou
     const strongest = Math.max(powerOf(r.a), powerOf(r.b));
     for (const c of [...na].sort((x, y) => x - y)) {
       if (c === r.b || !nb.has(c)) continue;
-      if (strongest <= 0 || powerOf(c) < SO.allianceRatio * strongest) continue;
+      const gc = byId.get(c);
+      if (!gc || sameRealm(gc, byId.get(r.a)!) || sameRealm(gc, byId.get(r.b)!)) continue;   // nobody allies against its own realm
+      if (strongest <= 0 || threatOf(c) < SO.allianceRatio * strongest) continue;
       const old = s.alliances.find((x) => x.a === r.a && x.b === r.b && x.against === c);
       next.push({ a: r.a, b: r.b, against: c, sinceYear: old?.sinceYear ?? s.year, lastYear: s.year });
     }
@@ -559,6 +627,24 @@ function alliesOf(s: SimState, g: Group, enemy: Group, gone: ReadonlySet<number>
   return out;
 }
 
+/**
+ * Realm-mates who fight beside `g` against `enemy` (C4): its ruler, and the realm's villages in
+ * contact with the enemy. Nobody fights its own realm.
+ */
+function realmHelpers(s: SimState, g: Group, enemy: Group, near: ReadonlyMap<number, ReadonlySet<number>>, gone: ReadonlySet<number>): Group[] {
+  if (g.overlordId < 0 && g.realmRank === 0) return [];      // free, and rules nobody
+  const head = headOf(g);
+  const out: Group[] = [];
+  for (const m of realmOf(s, g)) {
+    if (m === g || m === enemy || gone.has(m.id) || sameRealm(m, enemy) || population(m) === 0) continue;
+    if (m.id === head || near.get(m.id)?.has(enemy.id)) out.push(m);
+  }
+  return out;
+}
+
+/** Allies of an alliance and realm-mates, each once. */
+const joinSides = (x: Group[], y: Group[]): Group[] => [...x, ...y.filter((g) => !x.includes(g))];
+
 /** A war begins (C3): its size is measured against the populations now. */
 function startWar(s: SimState, rel: Relation, a: Group, b: Group): void {
   rel.warPopA = population(a);
@@ -577,8 +663,24 @@ function endWarIfWeary(s: SimState, rel: Relation, a: Group, b: Group): void {
   const years = s.year - rel.sinceYear + 1;
   const weary = rel.warDeadA >= C.warWearyShare * Math.max(1, rel.warPopA) || rel.warDeadB >= C.warWearyShare * Math.max(1, rel.warPopB);
   if (!weary && years < C.warMaxYears) return;
-  setTruce(s, rel, a, b);
   const span = years === 1 ? '1 year' : `${years} years`;
+  // C4: the side that lost more of its people may submit and pay tribute rather than make peace,
+  // if the other side's ruler can hold it and its realm is submitRatio× stronger (plan §4.2).
+  const shareA = rel.warDeadA / Math.max(1, rel.warPopA);
+  const shareB = rel.warDeadB / Math.max(1, rel.warPopB);
+  const [loser, other] = shareA > shareB ? [a, b] : shareB > shareA ? [b, a] : [null, null];
+  if (loser && other) {
+    const ruler = s.groups.find((g) => g.id === headOf(other));
+    if (ruler && canHold(s, ruler, loser) && realmPower(s, ruler) >= RC.submitRatio * realmPower(s, loser)) {
+      const losses = `${a.name} lost ${rel.warDeadA}, ${b.name} lost ${rel.warDeadB}`;   // before the peace clears them
+      const r = makeSubject(s, ruler, loser);
+      const withIt = r.taken > 0 ? ` with ${villages(r.taken)}` : '';
+      logEvent(s, 'realm', `${loser.name}${withIt} submitted to ${ruler.name} after ${span} of war (${losses})`, loser, ruler);
+      if (r.founded) logFounded(s, ruler);
+      return;
+    }
+  }
+  setTruce(s, rel, a, b);
   logEvent(s, 'war', `${a.name} and ${b.name} made peace after ${span} of war (${a.name} lost ${rel.warDeadA}, ${b.name} lost ${rel.warDeadB})`, a, b);
 }
 
@@ -592,6 +694,17 @@ function setTruce(s: SimState, rel: Relation, a: Group, b: Group): void {
   rel.pb = warPressure(b, a);
 }
 
+/** A new relation between a and b (a.id < b.id), kept in (a, b) order. */
+function newRelation(s: SimState, a: Group, b: Group, kind: Relation['kind']): Relation {
+  const rel: Relation = {
+    a: a.id, b: b.id, kind, sinceYear: s.year, reviewYear: 0, pa: warPressure(a, b), pb: warPressure(b, a),
+    warPopA: 0, warPopB: 0, warDeadA: 0, warDeadB: 0, truceUntil: 0,
+  };
+  s.relations.push(rel);
+  s.relations.sort((x, y) => x.a - y.a || x.b - y.b);
+  return rel;
+}
+
 /** Yearly step 5 (§5.1): detect contacts, decide or continue relations, resolve them. */
 export function yearlyContact(s: SimState): void {
   for (const g of s.groups) {
@@ -603,6 +716,13 @@ export function yearlyContact(s: SimState): void {
   const inContact = new Set(pairs.map(([a, b]) => a.id * 65536 + b.id));
   s.relations = s.relations.filter((r) => inContact.has(r.a * 65536 + r.b));
   updateAlliances(s, pairs);
+  const near = new Map<number, Set<number>>();
+  for (const [a, b] of pairs) {
+    for (const [x, y] of [[a, b], [b, a]] as const) {
+      const set = near.get(x.id);
+      if (set) set.add(y.id); else near.set(x.id, new Set([y.id]));
+    }
+  }
   const gone = new Set<number>();
   // Each pair's relation, looked up by key instead of searching the list (speed only).
   const relOf = new Map(s.relations.map((r) => [pairKey(r.a, r.b), r] as const));
@@ -619,13 +739,28 @@ export function yearlyContact(s: SimState): void {
       }
     }
     let rel = relOf.get(pairKey(a.id, b.id));
+    if (sameRealm(a, b)) {
+      // C4: one realm lives in peace: goods, ideas and marriages flow, nobody fights or raids.
+      if (!rel) {
+        rel = newRelation(s, a, b, 'trade');
+        relOf.set(pairKey(a.id, b.id), rel);
+      } else if (rel.kind !== 'trade') {
+        rel.kind = 'trade';
+        rel.sinceYear = s.year;
+      }
+      trade(s, a, b);
+      diffuse(s, a, b);
+      blendCulture(a, b);
+      intermarry(s, a, b);
+      continue;
+    }
     const pa = warPressure(a, b);
     const pb = warPressure(b, a);
     // A war runs its course (C3): it is not re-decided until it ends in peace or conquest.
     const review = !rel || (rel.kind !== 'war' && (s.year >= rel.reviewYear
       || Math.abs(pa - rel.pa) > C.pressureChangeReview || Math.abs(pb - rel.pb) > C.pressureChangeReview));
     if (review) {
-      const x = inputsFor(s, a, b, rel);
+      const x = inputsFor(s, a, b, rel, realmHelpers(s, a, b, near, gone), realmHelpers(s, b, a, near, gone));
       const choice = decide(s, x);
       if (choice === 'absorb') {
         const [strong, weak] = x.powerA >= x.powerB ? [a, b] : [b, a];
@@ -635,10 +770,8 @@ export function yearlyContact(s: SimState): void {
       }
       const changed = !rel || rel.kind !== choice;
       if (!rel) {
-        rel = { a: a.id, b: b.id, kind: choice, sinceYear: s.year, reviewYear: 0, pa, pb, warPopA: 0, warPopB: 0, warDeadA: 0, warDeadB: 0, truceUntil: 0 };
-        s.relations.push(rel);
+        rel = newRelation(s, a, b, choice);
         relOf.set(pairKey(a.id, b.id), rel);
-        s.relations.sort((x1, y1) => x1.a - y1.a || x1.b - y1.b);
       } else if (changed) {
         rel.kind = choice;
         rel.sinceYear = s.year;
@@ -659,10 +792,12 @@ export function yearlyContact(s: SimState): void {
       if (attacker.hungerPeak > SO.raidHunger && rollRaid(s, attacker)) {
         raid(s, attacker, attacker === a ? b : a);
       } else {
-        const r = battle(s, a, b, alliesOf(s, a, b, gone), alliesOf(s, b, a, gone));
+        const r = battle(s, a, b, joinSides(alliesOf(s, a, b, gone), realmHelpers(s, a, b, near, gone)),
+          joinSides(alliesOf(s, b, a, gone), realmHelpers(s, b, a, near, gone)));
         if (r.conquered) {
           // Driven off, the loser lives on elsewhere: the war is over, and a truce follows.
-          if (conquer(s, r.winner, r.loser)) setTruce(s, rel!, a, b);
+          // Kept as a subject (C4), the two are one realm now: no truce needed.
+          if (conquer(s, r.winner, r.loser) && !sameRealm(r.winner, r.loser)) setTruce(s, rel!, a, b);
           gone.add(r.loser.id);
           continue;
         }

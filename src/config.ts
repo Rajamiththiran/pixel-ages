@@ -483,6 +483,37 @@ export const CONFIG = {
     truceYears: 25,              // then no war between the two for 25 years (a generation)
   },
 
+  // C4 (pixel-ages-c4-plan.md, DECISIONS 21.x): a farming village with a chief keeps the settled
+  // villages it beats as tribute-paying subjects. Realms rise, rebel and fall.
+  realms: {
+    controlRange: 16,            // tiles (km) a chief can hold a village from: about half a day's walk
+    ridingMult: 1.5,             // × with Riding (messengers and warriors on horses)
+    roadMult: 1.5,               // × when a road joins the capital and the village
+    writingMult: 2,              // × with Writing (scribes and records: a state reaches farther)
+    captureShare: 0.1,           // hostages and slaves taken from a village made to pay tribute (not 0.5)
+    submitRatio: 2,              // a war-weary side submits instead of making peace if the other realm is 2× stronger
+    tributeShare: 0.1,           // of a subject's food store sent to its ruler each year (a tithe) …
+    kingdomTributeShare: 0.15,   // … and in a kingdom, which taxes better
+    reliefHunger: 60,            // a ruler not itself hungry feeds a subject whose hunger H is at least this …
+    reliefShare: 0.1,            // … with this share of its store
+    cowedYears: 10,              // after joining, a village only revolts if its ruler is too weak (hostages, reprisals)
+    rebelBase: 0.005,            // yearly chance a subject revolts, before the reasons below (TUNING pass 9)
+    rebelWeakRatio: 1.5,         // the realm without the village is under 1.5× its strength …
+    rebelWeak: 0.15,             // … adds this
+    rebelHunger: 0.1,            // + this × H / 100
+    rebelFar: 0.05,              // + this × how far past half the control range it lives (0–1)
+    rebelForeign: 0.03,          // + this if it speaks another language than its ruler
+    assimilateYears: 100,        // unrest falls over this many years in the realm …
+    assimilateCut: 0.7,          // … by up to 70%
+    kinLoyalty: 0.5,             // × (1 − this × kinship with the ruler): daughters stay loyal
+    kingdomRebelMult: 0.5,       // × in a kingdom (standing army, law)
+    kingdomMinSubjects: 3,       // a kingdom: Writing and City in the capital, this many subjects …
+    kingdomMinPop: 1000,         // … and this many people in the realm
+    inequalityPerSubject: 0.005, // a ruler's inequality grows this much a year per subject (a ranked society)
+    graceYears: 10,              // a ruler that lost its last village stays a chiefdom this long (it may win it back)
+    unrestShown: [0.03, 0.08],   // inspector: calm below the first, restless above the second
+  },
+
   events: {
     rampYears: 1,
     plagueMinYears: 2, plagueExtraYears: 3,      // years = 2 + round(3 × s / 100)
@@ -528,6 +559,23 @@ export const CONFIG = {
     // F7 heatmaps (§13): the value that shows at full strength.
     heat: { populationFull: 10, foodFull: 6, conflictYears: 50, conflictFull: 5 },
     territoryAlpha: 0.3,         // F7 territory fills
+    // C4 realms on the map (render only): borders, banners, tribute bearers, moments.
+    realms: {
+      fillAlpha: 0.12,           // soft wash of the ruler's colour over the realm's land …
+      kingdomFillAlpha: 0.18,    // … a little stronger for a kingdom
+      borderAlpha: 0.85,         // the 1-px border (dotted for a chiefdom, solid for a kingdom)
+      reachTiles: 6,             // land around each member's home that counts as the realm's (the forage range)
+      fadeMs: 1500,              // old and new borders cross-fade, so nothing pops
+      bannerFrameMs: 450,        // banners and pennants wave
+      bearerSpeedPx: 9,          // tribute bearers walk (map px a second) …
+      bearerRestMs: 2500,        // … rest at each end …
+      maxBearers: 40,            // … at most this many on the map
+      ringMs: 1400,              // a coloured ring spreading out when a village joins, revolts or a realm is founded
+      ringRadiusPx: 26,
+      sparks: 14,                // sparks for a new chiefdom (a kingdom gets twice as many)
+      kingdomRingDelayMs: 450,   // a kingdom's second golden ring follows the first
+      fallDust: 10,              // dust puffs when a realm falls apart
+    },
     relationLineAlpha: 0.8,      // F7 trade / war / alliance lines between homes
     trailYears: 150,             // F7 migration trails fade over this many years
     trailAlpha: 0.7,

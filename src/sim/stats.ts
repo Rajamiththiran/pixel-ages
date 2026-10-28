@@ -8,6 +8,17 @@ import { population, traitAverages } from './people/groups';
 
 export function recordYearStats(s: SimState): void {
   const row: YearStats = { year: s.year, perLineage: [] };
+  // C4: villages per ruling lineage — each ruler and its subjects count for the ruler's lineage.
+  const ruled = new Map<number, number>();
+  const capitals = new Set<number>();
+  for (const g of s.groups) {
+    if (g.overlordId < 0) continue;
+    const ruler = s.groups.find((o) => o.id === g.overlordId);
+    if (!ruler) continue;
+    const capital = capitals.has(ruler.id) ? 0 : 1;   // the capital counts once, with its first subject
+    capitals.add(ruler.id);
+    ruled.set(ruler.lineageId, (ruled.get(ruler.lineageId) ?? 0) + 1 + capital);
+  }
   for (const lin of s.lineages) {
     const groups = s.groups.filter((g) => g.lineageId === lin.id);
     let pop = 0, adults = 0, bestEra = 0, eraSum = 0, fed = 0;
@@ -33,7 +44,7 @@ export function recordYearStats(s: SimState): void {
       intActual: int / a, intPotential: pInt / a,
       coopActual: coop / a, coopPotential: pCoop / a,
       strActual: str / a, strPotential: pStr / a,
-      fed: fed / q, discoveries: Array.from(disc),
+      fed: fed / q, discoveries: Array.from(disc), ruled: ruled.get(lin.id) ?? 0,
     });
   }
   s.stats.push(row);

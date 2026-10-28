@@ -72,7 +72,7 @@ export interface LogEntry {
 export type LogType =
   | 'discovery' | 'lostDiscovery' | 'eraUp' | 'eraDown' | 'ranOut'
   | 'split' | 'migrate' | 'becameVillage' | 'becameBand'
-  | 'firstContact' | 'tradeStart' | 'war' | 'conquered' | 'absorbed' | 'raid' | 'alliance' | 'society'
+  | 'firstContact' | 'tradeStart' | 'war' | 'conquered' | 'absorbed' | 'raid' | 'alliance' | 'society' | 'realm'
   | 'breach' | 'event' | 'intervention' | 'animalsGone' | 'hazard' | 'groupExtinct' | 'lineageExtinct' | 'cannotReproduce' | 'perf';
 
 export interface YearStats {
@@ -88,6 +88,7 @@ export interface YearStats {
     strActual: number;  strPotential: number;
     fed: number;                 // average fed ratio this year
     discoveries: number[];       // union of the lineage's discovery sets (2 words, F2)
+    ruled?: number;              // C4: villages in realms this lineage rules, its capitals included (absent in older runs)
   }>;
 }
 

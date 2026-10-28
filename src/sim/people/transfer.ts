@@ -124,6 +124,9 @@ export function spawnGroup(s: SimState, source: Group, party: Party, site: numbe
   lin.splitCounter++;
   const g = newGroup(s, s.nextGroupId++, `${lin.name} ${lin.splitCounter}`, lin.id, site % s.width, Math.floor(site / s.width));
   g.parentId = source.id;
+  // C4: a daughter of a realm member starts in the realm (it goes free at year end if it settled out of reach).
+  g.overlordId = source.overlordId >= 0 ? source.overlordId : source.realmRank > 0 ? source.id : -1;
+  g.subjectSince = s.year;
   g.known.set(source.known);
   g.knownCount = source.knownCount;
   g.frontier = source.frontier.slice();

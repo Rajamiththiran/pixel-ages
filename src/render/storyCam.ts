@@ -9,6 +9,7 @@ const ST = CONFIG.render.f8.story;
 
 const BIG = new Set<LogEntry['type']>([
   'firstContact', 'war', 'conquered', 'breach', 'lineageExtinct', 'alliance', 'event', 'intervention', 'eraUp', 'becameVillage',
+  'realm',                       // C4: conquests that make tributaries, chiefdoms, kingdoms, revolts, falls
 ]);
 
 /** Is this log line a big moment? Disasters count when at least `minDead` died. */

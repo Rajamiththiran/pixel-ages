@@ -64,7 +64,13 @@ export function packPeople(s: SimState): Float32Array {
 }
 
 export function groupViews(s: SimState): GroupView[] {
-  return s.groups.map((g) => ({
+  // C4: how many villages each ruler holds; a group is in a realm if it pays or is paid.
+  const subjects = new Map<number, number>();
+  for (const g of s.groups) if (g.overlordId >= 0) subjects.set(g.overlordId, (subjects.get(g.overlordId) ?? 0) + 1);
+  const byId = new Map(s.groups.map((g) => [g.id, g] as const));
+  return s.groups.map((g) => {
+    const head = g.overlordId >= 0 ? byId.get(g.overlordId) : subjects.has(g.id) ? g : undefined;
+    return {
     id: g.id, name: g.name, lineageId: g.lineageId, colourIndex: groupColor(s, g), mode: g.mode,
     homeX: g.homeX, homeY: g.homeY, population: population(g), era: g.era, discoveries: Array.from(g.discoveries),
     huts: g.huts, houses: g.houses, herd: Math.floor(g.herd), range: CONFIG.people.range.forage,
@@ -72,7 +78,12 @@ export function groupViews(s: SimState): GroupView[] {
     fortification: g.fortification,
     chief: g.chief,
     sick: s.hazardsActive.some((h) => h.groupId === g.id && h.kind === Hazard.Outbreak && s.year < h.endYear),
-  }));
+    realmHead: head?.id ?? -1,
+    realmRank: head?.realmRank ?? 0,
+    realmColour: head ? groupColor(s, head) : 0,
+    subjects: subjects.get(g.id) ?? 0,
+    };
+  });
 }
 
 const LK = CONFIG.render.f8.look;
@@ -185,7 +196,10 @@ function relationsOf(s: SimState, g: Group): string {
   for (const r of s.relations) {
     if (r.a !== g.id && r.b !== g.id) continue;
     const other = s.groups.find((o) => o.id === (r.a === g.id ? r.b : r.a));
-    if (other) out.push(`${other.name}: ${KIND_NAMES[r.kind]} since year ${r.sinceYear}`);
+    if (!other) continue;
+    // C4: members of one realm trade as part of it.
+    const realm = (g.overlordId >= 0 ? g.overlordId : g.id) === (other.overlordId >= 0 ? other.overlordId : other.id);
+    out.push(`${other.name}: ${realm ? 'same realm, trading' : KIND_NAMES[r.kind]} since year ${r.sinceYear}`);
   }
   return out.length ? out.join('; ') : 'none';
 }
@@ -261,6 +275,35 @@ function societyCard(s: SimState, g: Group): Record<string, string> {
   return out;
 }
 
+const RC = CONFIG.realms;
+
+/** "Garden" → "Chiefdom of Garden" / "Kingdom of Garden". */
+const realmTitle = (g: Group): string => `${g.realmRank === 2 ? 'Kingdom' : 'Chiefdom'} of ${g.name}`;
+
+/**
+ * C4: the realm card. A ruler: its rank, villages, people and the tribute it took last year. A
+ * subject: who it pays, since when, what it paid, and how restless it is.
+ */
+function realmCard(s: SimState, g: Group): Record<string, string> {
+  if (g.overlordId >= 0) {
+    const ruler = s.groups.find((o) => o.id === g.overlordId);
+    if (!ruler) return {};
+    const mood = g.unrest < RC.unrestShown[0]! ? 'calm' : g.unrest < RC.unrestShown[1]! ? 'uneasy' : 'restless';
+    return {
+      Realm: `pays tribute to ${ruler.name} (${realmTitle(ruler)}) since year ${g.subjectSince}`,
+      Tribute: `${f1(g.tributePaid)} FU last year · ${mood} (revolt ${pct(g.unrest)} a year)`,
+    };
+  }
+  const subs = s.groups.filter((o) => o.overlordId === g.id);
+  if (subs.length === 0) return {};
+  const pop = population(g) + subs.reduce((t, o) => t + population(o), 0);
+  return {
+    Realm: `${realmTitle(g)} since year ${g.realmSince}: ${subs.length + 1} villages, ${pop.toLocaleString('en-US')} people`,
+    Rules: subs.map((o) => o.name).join(', '),
+    Tribute: `${f1(g.tributePaid)} FU received last year`,
+  };
+}
+
 function groupCard(s: SimState, g: Group): Record<string, unknown> {
   const c = countMembers(s, g);
   const t = traitAverages(s, g);
@@ -290,6 +333,7 @@ function groupCard(s: SimState, g: Group): Record<string, unknown> {
     Discoveries: owned.length ? owned.join(', ') : 'none yet',
     ...practiceCard(s, g),
     ...hazardCard(s, g),
+    ...realmCard(s, g),
     ...societyCard(s, g),
     'Intelligence (potential → actual)': `${t.potInt.toFixed(0)} → ${t.int.toFixed(0)}`,
     'Cooperation (potential → actual)': `${t.potCoop.toFixed(0)} → ${t.coop.toFixed(0)}`,

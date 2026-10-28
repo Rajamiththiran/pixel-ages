@@ -21,6 +21,7 @@ import { modeSwitches, updateVillage, yearlySample } from './people/village';
 import { breachChecks } from './society/walls';
 import { yearlyContact } from './society/contact';
 import { yearlySociety } from './society/society';
+import { yearlyRealms } from './society/realms';
 import { harshWinterNow, updateEvents } from './events';
 import { applyInterventions } from './interventions';
 
@@ -80,6 +81,8 @@ function yearly(s: SimState): void {
   // 5b. Hazards (F5): disease, blight, landslides, dust storms, mines, upkeep; next year's weather.
   yearlyHazards(s);
   removeEmptyGroups(s);
+  // 5b2. Realms (C4): rulers that fell, flight, revolts, tribute and relief, chiefdoms and kingdoms.
+  yearlyRealms(s);
   // 5c. Society (F6): specialists, chiefs, inequality, tamer herds, walls, language drift.
   yearlySociety(s);
   // 6. Village samples: deaths by trait, births, aging.
