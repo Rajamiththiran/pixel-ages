@@ -9,7 +9,7 @@ export type IconName =
   | 'fire' | 'tool' | 'weapon' | 'boat' | 'cloth' | 'animal' | 'wheat' | 'pot' | 'house' | 'wheel' | 'metal'
   | 'scroll' | 'drop' | 'fish' | 'wave' | 'rock' | 'dust' | 'skull' | 'bug' | 'leaf' | 'sun' | 'cloud' | 'snow'
   | 'hand' | 'berry' | 'trade' | 'shield' | 'arrow' | 'eye' | 'star' | 'people'
-  | 'crown' | 'flag' | 'chain';
+  | 'crown' | 'flag' | 'chain' | 'stall' | 'city';
 
 const D = Discovery;
 /** One icon per discovery, by family (fire, tools, weapons, boats, farming, building, metal…). */
@@ -74,6 +74,7 @@ export function logIcon(e: LogEntry): IconName {
     case 'alliance': return 'shield';
     case 'society': return 'people';
     case 'realm': return realmIcon(e.text);
+    case 'town': return /market/.test(e.text) ? 'stall' : /city/.test(e.text) ? 'city' : 'house';
     case 'breach': return 'rock';
     case 'event': {
       for (const [kind, icon] of Object.entries(EVENT_ICONS)) {

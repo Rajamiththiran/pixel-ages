@@ -9,19 +9,11 @@ import { Discovery, has } from '../shared/discoveries';
 import type { GroupView } from '../shared/protocol';
 import type { MapData } from '../shared/types';
 import { GROUP_COLORS, darken, hexToRgb } from './palette';
-import { AgeClass, carrySprite, getSprite, personSprite, type PersonLook } from './sprites';
+import { getSprite } from './sprites';
+import { Carriers } from './carriers';
 
 const RR = CONFIG.render.realms;
 const TILE = CONFIG.map.tilePx;
-
-interface Bearer {
-  fromX: number; fromY: number; toX: number; toY: number;   // map px: the subject's home and the capital
-  t: number;                     // 0–1 along the way
-  out: boolean;                  // walking to the capital (carrying) or home
-  restMs: number;                // waiting at an end
-  cart: boolean;
-  look: PersonLook;
-}
 
 /** Layers of one drawing of the borders: the wash (1 px per tile) and the border (map px). */
 interface Drawing { fill: HTMLCanvasElement; border: HTMLCanvasElement }
@@ -34,7 +26,7 @@ export class RealmLayer {
   private previous: Drawing | null = null;
   private changedMs = -Infinity;
   private flags: Array<{ x: number; y: number; name: string; C: string }> = [];
-  private bearers: Bearer[] = [];
+  private readonly bearers = new Carriers(RR.maxBearers, RR.bearerSpeedPx, RR.bearerRestMs);
 
   /** The frame's groups: rebuilds borders, flags and bearers when realms or homes change. */
   update(map: MapData, groups: readonly GroupView[], nowMs: number): void {
@@ -54,39 +46,16 @@ export class RealmLayer {
         C: colourOf(g.realmColour),
       };
     });
-    this.updateBearers(groups);
-  }
-
-  /** One bearer per subject (capped), kept where they were if the same subject still pays. */
-  private updateBearers(groups: readonly GroupView[]): void {
+    // One tribute bearer per subject, walking to its capital (a cart with the Cart).
     const byId = new Map(groups.map((g) => [g.id, g] as const));
-    const next: Bearer[] = [];
-    for (const g of groups) {
-      if (g.realmHead < 0 || g.realmHead === g.id || next.length >= RR.maxBearers) continue;
-      const ruler = byId.get(g.realmHead);
-      if (!ruler) continue;
-      const fromX = (g.homeX + 0.5) * TILE, fromY = (g.homeY + 1) * TILE;
-      const toX = (ruler.homeX + 0.5) * TILE, toY = (ruler.homeY + 1) * TILE;
-      const old = this.bearers.find((b) => b.fromX === fromX && b.fromY === fromY && b.toX === toX && b.toY === toY);
-      next.push(old ?? {
-        fromX, fromY, toX, toY, t: Math.random(), out: Math.random() < 0.5, restMs: 0,
-        cart: has(g.discoveries, Discovery.cart),
-        look: { female: Math.random() < 0.3, ageClass: AgeClass.Adult, colorIndex: g.colourIndex,
-          skin: Math.floor(Math.random() * 3), hair: Math.floor(Math.random() * 3), clothed: true },
-      });
-    }
-    this.bearers = next;
+    this.bearers.update(inRealm.filter((g) => g.realmHead !== g.id && byId.has(g.realmHead)).map((g) => {
+      const ruler = byId.get(g.realmHead)!;
+      return { fromX: g.homeX, fromY: g.homeY, toX: ruler.homeX, toY: ruler.homeY, cart: has(g.discoveries, Discovery.cart), colorIndex: g.colourIndex };
+    }));
   }
 
-  animate(dtMs: number, playing: boolean): void {
-    const step = dtMs * (playing ? 1 : 0.3);
-    for (const b of this.bearers) {
-      if (b.restMs > 0) { b.restMs -= step; continue; }
-      const len = Math.max(1, Math.hypot(b.toX - b.fromX, b.toY - b.fromY));
-      b.t += (RR.bearerSpeedPx * step) / 1000 / len;
-      if (b.t >= 1) { b.t = 0; b.out = !b.out; b.restMs = RR.bearerRestMs * (0.5 + Math.random()); }
-    }
-  }
+  animate(dtMs: number, playing: boolean): void { this.bearers.animate(dtMs, playing); }
+
 
   /** The wash and border, over the ground and under sprites; cross-fading after a change. */
   drawGround(ctx: CanvasRenderingContext2D, nowMs: number): void {
@@ -102,13 +71,7 @@ export class RealmLayer {
     this.flags.forEach((f, k) => {
       push(getSprite(`${f.name}_${(frame + k) % 2 + 1}`, { C: f.C, D: darken(f.C) }), f.x, f.y);
     });
-    const walk = (Math.floor(nowMs / 220) % 2 + 1) as 1 | 2;
-    for (const b of this.bearers) {
-      const [x0, y0, x1, y1] = b.out ? [b.fromX, b.fromY, b.toX, b.toY] : [b.toX, b.toY, b.fromX, b.fromY];
-      const x = x0 + (x1 - x0) * b.t, y = y0 + (y1 - y0) * b.t;
-      if (b.cart) push(getSprite('cart', {}, x1 < x0), x, y);
-      else push(b.out ? carrySprite(b.look, 'basket', walk) : personSprite(b.look, walk), x, y);
-    }
+    this.bearers.collect(nowMs, push);
   }
 
   clear(): void {
@@ -116,7 +79,7 @@ export class RealmLayer {
     this.current = null;
     this.previous = null;
     this.flags = [];
-    this.bearers = [];
+    this.bearers.clear();
   }
 }
 

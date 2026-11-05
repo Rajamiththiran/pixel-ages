@@ -127,7 +127,7 @@ It stays deterministic: only `s.rng`, groups in id order, and `Math.sqrt` for di
 
 ```
 unrest = 0.5%                                          base
-       + 15%  if the realm without this village < 1.5 × its strength
+       + 15%  if the realm without this village is weaker than it
        + 10% × hunger / 100
        +  5% × how far past half the control range it lives (0–1)
        +  3%  if it speaks another language
@@ -162,7 +162,7 @@ then   × (1 − 0.7 × min(1, years in the realm / 100))   assimilation
 | `reliefHunger` | 60 |
 | `reliefShare` | 0.1 |
 | `rebelBase` | 0.005 (was 0.01: TUNING pass 9) |
-| `rebelWeakRatio` | 1.5 |
+| `rebelWeakRatio` | 1 (was 1.5: TUNING pass 9) |
 | `rebelWeak` | 0.15 |
 | `rebelHunger` | 0.1 |
 | `rebelFar` | 0.05 |

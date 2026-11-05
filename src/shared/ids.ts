@@ -23,6 +23,11 @@ export type Sex = (typeof Sex)[keyof typeof Sex];
 export const Mode = { Band: 0, Village: 1 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
 
+/** G1: settlement size classes (display, logs, buildings). Not the simulation mode. */
+export const SizeClass = { Hamlet: 0, Village: 1, Town: 2, City: 3 } as const;
+export type SizeClass = (typeof SizeClass)[keyof typeof SizeClass];
+export const SIZE_CLASS_NAMES = ['Hamlet', 'Village', 'Town', 'City'] as const;
+
 export const Action = {
   None: 0, Gather: 1, Hunt: 2, Farm: 3, Herd: 4, Explore: 5,
   Care: 6, Build: 7, Wall: 8, Rest: 9, Teach: 10, Child: 11,

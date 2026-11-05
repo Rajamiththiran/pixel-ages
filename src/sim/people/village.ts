@@ -240,14 +240,22 @@ export function toBand(s: SimState, g: Group): void {
 }
 
 /**
- * Monthly step 7 (§5.1): bands of 150+ become villages, villages under 100 become bands.
+ * G1 (DECISIONS 22.1): a village with fields stays a village down to settledToBandBelow (50):
+ * farmers with fields and houses don't go back to wandering because a few left or died. Without
+ * fields the v1 line (100) holds.
+ */
+const bandBelow = (g: Group): number =>
+  (g.farmTiles.length > 0 ? CONFIG.towns.settledToBandBelow : P.groupSize.toBandBelow);
+
+/**
+ * Monthly step 7 (§5.1): bands of 150+ become villages, villages under 100 (50 with fields) become bands.
  * Performance guard: while band people exceed 30,000, the largest band becomes a village.
  */
 export function modeSwitches(s: SimState): void {
   const G = P.groupSize;
   for (const g of s.groups) {
     if (g.mode === Mode.Band && g.members.length >= G.toVillageAt) toVillage(s, g);
-    else if (g.mode === Mode.Village && population(g) < G.toBandBelow) toBand(s, g);
+    else if (g.mode === Mode.Village && population(g) < bandBelow(g)) toBand(s, g);
   }
   for (;;) {
     let total = 0;

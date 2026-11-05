@@ -4,7 +4,7 @@
 import { CONFIG } from '../config';
 import {
   Action, ACTION_NAMES, FORTIFICATION_NAMES, GROUND_NAMES, Hazard, HAZARD_NAMES, Mode, NEED_NAMES, Plant, PLANT_NAMES, PRACTICE_NAMES, Resource, RESOURCE_NAMES, Sex,
-  SPECIES_NAMES, WallType, WALL_NAMES,
+  SIZE_CLASS_NAMES, SPECIES_NAMES, WallType, WALL_NAMES,
 } from '../shared/ids';
 import { Discovery, DISCOVERIES, ERA_NAMES, has } from '../shared/discoveries';
 import { pressure } from './society/walls';
@@ -20,6 +20,7 @@ import { cellOf, slopes } from './world/landscape';
 import { floodplains, hasWorks, hazardName } from './world/hazards';
 import { cultureText, inbreedMult, weaponMult } from './society/society';
 import { forceOf } from './society/contact';
+import { fieldRadius } from './people/farming';
 
 /** Discoveries that smelt metal into the group's stock (F1). */
 const SMELTING = [Discovery.copperWorking, Discovery.bronzeWorking, Discovery.ironWorking];
@@ -82,6 +83,10 @@ export function groupViews(s: SimState): GroupView[] {
     realmRank: head?.realmRank ?? 0,
     realmColour: head ? groupColor(s, head) : 0,
     subjects: subjects.get(g.id) ?? 0,
+    sizeClass: g.sizeClass,
+    market: g.market,
+    marketId: g.marketId,
+    sells: g.exports > 0,
     };
   });
 }
@@ -277,6 +282,23 @@ function societyCard(s: SimState, g: Group): Record<string, string> {
 
 const RC = CONFIG.realms;
 
+/**
+ * G1: the town card. Size class; a market town: since when, how many villages sell to it and the
+ * food bought and received last year; a seller: its market, what it sold and the crafts it got.
+ */
+function townCard(s: SimState, g: Group): Record<string, string> {
+  const out: Record<string, string> = { Size: SIZE_CLASS_NAMES[g.sizeClass] ?? '—' };
+  if (g.market) {
+    const sellers = s.groups.filter((o) => o.marketId === g.id).length;
+    out.Market = `since year ${g.marketSince}: ${sellers} ${sellers === 1 ? 'village sells' : 'villages sell'} here`;
+  }
+  if (g.imports > 0) out['Food brought in'] = `${f1(g.imports)} FU last year (bought and tribute)`;
+  const m = g.marketId >= 0 ? s.groups.find((o) => o.id === g.marketId) : undefined;
+  if (m) out['Sells at'] = `${m.name}: ${f1(g.exports)} FU last year${g.craftBonus > 0 ? ` · crafts: harvest +${pct(g.craftBonus)}` : ''}`;
+  if (g.farmTiles.length > 0) out['Field range'] = `${fieldRadius(g)} km`;
+  return out;
+}
+
 /** "Garden" → "Chiefdom of Garden" / "Kingdom of Garden". */
 const realmTitle = (g: Group): string => `${g.realmRank === 2 ? 'Kingdom' : 'Chiefdom'} of ${g.name}`;
 
@@ -333,6 +355,7 @@ function groupCard(s: SimState, g: Group): Record<string, unknown> {
     Discoveries: owned.length ? owned.join(', ') : 'none yet',
     ...practiceCard(s, g),
     ...hazardCard(s, g),
+    ...townCard(s, g),
     ...realmCard(s, g),
     ...societyCard(s, g),
     'Intelligence (potential → actual)': `${t.potInt.toFixed(0)} → ${t.int.toFixed(0)}`,

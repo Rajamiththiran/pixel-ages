@@ -45,6 +45,7 @@ export function recordYearStats(s: SimState): void {
       coopActual: coop / a, coopPotential: pCoop / a,
       strActual: str / a, strPotential: pStr / a,
       fed: fed / q, discoveries: Array.from(disc), ruled: ruled.get(lin.id) ?? 0,
+      largest: groups.reduce((m, g) => Math.max(m, population(g)), 0),
     });
   }
   s.stats.push(row);

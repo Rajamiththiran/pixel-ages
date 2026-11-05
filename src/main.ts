@@ -730,7 +730,10 @@ function startRun(): void {
       view.runGroups = f.groups.map((g) => ({
         name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup,
         // C4: a capital's second line names its realm (gold for a kingdom) instead of its era.
-        sub: g.subjects > 0 ? `${g.realmRank === 2 ? 'Kingdom' : 'Chiefdom'} · ${g.subjects + 1} villages` : ERA_NAMES[g.era],
+        // G1: a town or city shows its size class and people instead (a market town says so).
+        sub: g.subjects > 0 ? `${g.realmRank === 2 ? 'Kingdom' : 'Chiefdom'} · ${g.subjects + 1} villages`
+          : g.sizeClass >= 2 ? `${g.sizeClass === 3 ? 'City' : g.market ? 'Market town' : 'Town'} · ${g.population.toLocaleString('en-US')}`
+          : ERA_NAMES[g.era],
         subColour: g.subjects > 0 && g.realmRank === 2 ? KINGDOM_GOLD : undefined,
       }));
       if (f.selectedKnown) renderer.fog.setKnown(f.selectedKnown);

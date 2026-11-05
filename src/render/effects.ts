@@ -20,6 +20,7 @@ const E = CONFIG.render.f8.effects;
 const SM = CONFIG.render.f8.smoke;
 const TILE = CONFIG.map.tilePx;
 const RR = CONFIG.render.realms;
+const RT = CONFIG.render.towns;
 
 export const Particle = { Smoke: 0, Dust: 1, Spark: 2, Rock: 3, Ember: 4 } as const;
 const COLOURS = [RGBS.stoneLight, RGBS.sand, RGBS.fireYellow, RGBS.stone, RGBS.fireOrange];
@@ -144,6 +145,8 @@ export class Effects {
         this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: E.eraGlowMs, img: iconSprite(ERA_ICONS[m ? Number(m[1]) : 0] ?? 'star') });
       } else if (e.type === 'realm' && !e.minor) {
         this.realmMoment(e, cx, cy, nowMs);
+      } else if (e.type === 'town' && !e.minor) {
+        this.townMoment(e, cx, cy, nowMs);
       } else if (e.type === 'breach' || (e.type === 'event' && /earthquake/i.test(e.text)) || (e.type === 'hazard' && /slide|collapse/i.test(e.text))) {
         this.quake(cx, cy);
       }
@@ -188,6 +191,30 @@ export class Effects {
     } else if (icon === 'flag') {
       ring(colour);
     }
+  }
+
+  /**
+   * G1 town moments (plan §6): a market opens — a ring in the town's colour, sparks like bunting,
+   * a stall icon; a town — a golden ring and a house icon; a city — two golden rings, a city icon
+   * and sparks.
+   */
+  private townMoment(e: LogEntry, cx: number, cy: number, nowMs: number): void {
+    const g = this.groups.find((o) => o.id === e.groupId);
+    const colour = GROUP_COLORS[(g?.colourIndex ?? 0) % GROUP_COLORS.length]!;
+    const ring = (c: string, delay = 0): void => {
+      this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs + delay, ms: RT.ringMs, img: null, colour: c, radius: RR.ringRadiusPx });
+    };
+    const sparks = (n: number): void => {
+      for (let k = 0; k < n; k++) {
+        this.spawn(Particle.Spark, cx + (Math.random() - 0.5) * 18, cy - Math.random() * 10, (Math.random() - 0.5) * 10, -5 - Math.random() * 8, RT.ringMs * (0.5 + Math.random() * 0.5));
+      }
+    };
+    const market = /market/.test(e.text);
+    const city = /became a city/.test(e.text);
+    this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: E.eraGlowMs, img: iconSprite(market ? 'stall' : city ? 'city' : 'house') });
+    if (market) { ring(colour); sparks(RT.sparks); }
+    else if (city) { ring(PALETTE.fireYellow); ring(PALETTE.fireYellow, RR.kingdomRingDelayMs); sparks(RT.sparks); }
+    else ring(PALETTE.fireYellow);
   }
 
   /** Falling rocks and a dust cloud. */

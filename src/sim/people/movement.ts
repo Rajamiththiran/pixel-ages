@@ -33,7 +33,9 @@ export function checkMigration(s: SimState, g: Group): boolean {
   const farmer = g.farmTiles.length > 0;
   const hungry = farmer ? g.hunger > MG.farmerHungerAbove : g.hunger > MG.hungerAbove && g.plantAvail < MG.plantAvailBelow;
   g.hungryMonths = hungry ? g.hungryMonths + 1 : 0;
-  if (g.hungryMonths < (farmer ? MG.farmerMonths : MG.months)) return false;
+  // G1 (DECISIONS 22.1): fields and houses are years of work; a settled village moves only after a long famine.
+  const settled = farmer && g.houses + g.huts > 0;
+  if (g.hungryMonths < (settled ? CONFIG.towns.settledMigrateMonths : farmer ? MG.farmerMonths : MG.months)) return false;
 
   // Best known site within migrate range: its long-run yield blended with the food there now
   // (a stripped range looks as poor as it is, DECISIONS 7.2), minus 0.5 per tile of distance.
@@ -142,9 +144,20 @@ export function viable(s: SimState, slots: readonly number[]): boolean {
   return man && woman;
 }
 
-/** Best known site by sustainable yield, connected, at least 2R from every group's home. */
+/**
+ * Best known site by sustainable yield, connected, at least 2R from every group's home. G1
+ * (DECISIONS 22.5): a split from a market town or one of its villages first looks inside the
+ * market's reach, so it becomes another supplier village; elsewhere only if nothing is there.
+ */
 function findSplitSite(s: SimState, g: Group): number {
-  return bestSite(s, g, s.groups.map((o) => [o.homeX, o.homeY] as const), SP.minDistanceR * P.range.forage);
+  const homes = s.groups.map((o) => [o.homeX, o.homeY] as const);
+  const minD = SP.minDistanceR * P.range.forage;
+  const centre = g.market ? g : s.groups.find((o) => o.id === g.marketId);
+  if (centre) {
+    const near = bestSite(s, g, homes, minD, [centre.homeX, centre.homeY, CONFIG.towns.marketReach]);
+    if (near >= 0) return near;
+  }
+  return bestSite(s, g, homes, minD);
 }
 
 /**
@@ -209,13 +222,18 @@ function createSplit(s: SimState, parent: Group, party: Party, site: number, sha
 
 /**
  * Best known site for `g` by sustainable yield: walkable, connected to home, and at least
- * `minDist` from every listed home. Every 2nd tile is sampled. −1 if none.
+ * `minDist` from every listed home, and inside `within` (x, y, radius) if given. Every 2nd tile is
+ * sampled. −1 if none.
  */
-export function bestSite(s: SimState, g: Group, homes: ReadonlyArray<readonly [number, number]>, minDist: number): number {
+export function bestSite(
+  s: SimState, g: Group, homes: ReadonlyArray<readonly [number, number]>, minDist: number,
+  within?: readonly [number, number, number],
+): number {
   const sites: Site[] = [];
   for (let y = 0; y < s.height; y += MG.sampleStep) {
     for (let x = 0; x < s.width; x += MG.sampleStep) {
       const i = y * s.width + x;
+      if (within && (x - within[0]) ** 2 + (y - within[1]) ** 2 > within[2] * within[2]) continue;
       if (!siteOk(s, g, i)) continue;
       if (homes.some(([hx, hy]) => (hx - x) ** 2 + (hy - y) ** 2 < minDist * minDist)) continue;
       sites.push({ i, penalty: 0 });

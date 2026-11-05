@@ -408,12 +408,12 @@ export function conquer(s: SimState, winner: Group, loser: Group): boolean {
     const fled = population(loser);
     const km = moveHome(s, loser, site);
     logEvent(s, 'conquered', `${winner.name} drove ${loser.name} from its land (${captives} captured; ${fled} fled ${km} km${lost})`, winner, loser);
-    if (realm.founded) logFounded(s, ruler!);
+    logFounded(s, ruler!, realm);
     return true;
   }
   for (const slot of takeAll(loser).slots) freePerson(p, slot);
   logEvent(s, 'conquered', `${winner.name} conquered ${loser.name} (${captives} captured, the rest scattered${lost})`, winner, loser);
-  if (realm.founded) logFounded(s, ruler!);
+  logFounded(s, ruler!, realm);
   removeGroups(s, [loser]);
   return false;
 }
@@ -472,7 +472,7 @@ function subjugate(s: SimState, winner: Group, ruler: Group, loser: Group): void
   const to = winner === ruler ? '' : ` to ${ruler.name}`;
   const freed = r.freed > 0 ? `; ${villages(r.freed)} went free` : '';
   logEvent(s, 'realm', `${winner.name} conquered ${loser.name}: ${who} tribute${to} (${captives} captured${freed})`, winner, loser, loser.homeX, loser.homeY);
-  if (r.founded) logFounded(s, ruler);
+  logFounded(s, ruler, r);
 }
 
 // ---------- trade and absorb ----------
@@ -676,7 +676,7 @@ function endWarIfWeary(s: SimState, rel: Relation, a: Group, b: Group): void {
       const r = makeSubject(s, ruler, loser);
       const withIt = r.taken > 0 ? ` with ${villages(r.taken)}` : '';
       logEvent(s, 'realm', `${loser.name}${withIt} submitted to ${ruler.name} after ${span} of war (${losses})`, loser, ruler);
-      if (r.founded) logFounded(s, ruler);
+      logFounded(s, ruler, r);
       return;
     }
   }

@@ -483,6 +483,31 @@ export const CONFIG = {
     truceYears: 25,              // then no war between the two for 25 years (a generation)
   },
 
+  // G1 towns that grow (pixel-ages-towns-plan.md, DECISIONS 22.x): villages sell spare food to a
+  // market town for crafts, so towns grow on their hinterland instead of splitting; settled
+  // villages stop flipping back to bands and moving house.
+  towns: {
+    marketMinPop: 300,           // a market needs this many people …
+    marketMinVillages: 2,        // … and this many settled groups at peace in reach (craftspeople come with it)
+    marketReach: 20,             // tiles (km) villagers walk to market (TUNING pass 10: villages stand 12+ apart) …
+    roadMult: 1.5,               // … × along a road
+    cartMult: 1.5,               // … × with the Cart
+    marketHoldYears: 10,         // a market closes after this many years without its conditions (no flapping)
+    keepMonths: 4,               // a seller keeps this many months of its own need … (TUNING pass 10)
+    sellShare: 0.5,              // … and sells this share of the food above it each year (TUNING pass 10)
+    craftMax: 0.15,              // crafts bought raise a seller's harvests by up to this …
+    specialistFull: 0.1,         // … reached when the town's specialist share is this …
+    craftFloor: 0.3,             // … and at least this share of it from everyday goods, craftspeople or not
+    townPop: 500,                // a town from this many people (or any market) …
+    cityPop: 2000,               // … a city from this many, with the City discovery active
+    keepClassShare: 0.8,         // a town or city keeps its class until it falls below this share of the line
+    fieldRangePer: 500,          // a settlement's field range grows 1 tile per this many people …
+    fieldRangeMax: 10,           // … up to this (infield and outfield)
+    settledToBandBelow: 50,      // a village with fields becomes a band only below this (no fields: groupSize.toBandBelow)
+    settledMigrateMonths: 36,    // a village with fields and houses moves house only after this many hungry months
+    logQuietYears: 100,          // "holds a market", "grew into a town", "became a city": at most once a century per place
+  },
+
   // C4 (pixel-ages-c4-plan.md, DECISIONS 21.x): a farming village with a chief keeps the settled
   // villages it beats as tribute-paying subjects. Realms rise, rebel and fall.
   realms: {
@@ -498,7 +523,7 @@ export const CONFIG = {
     reliefShare: 0.1,            // … with this share of its store
     cowedYears: 10,              // after joining, a village only revolts if its ruler is too weak (hostages, reprisals)
     rebelBase: 0.005,            // yearly chance a subject revolts, before the reasons below (TUNING pass 9)
-    rebelWeakRatio: 1.5,         // the realm without the village is under 1.5× its strength …
+    rebelWeakRatio: 1,           // the realm without the village is no stronger than it … (TUNING pass 9; was 1.5)
     rebelWeak: 0.15,             // … adds this
     rebelHunger: 0.1,            // + this × H / 100
     rebelFar: 0.05,              // + this × how far past half the control range it lives (0–1)
@@ -559,6 +584,23 @@ export const CONFIG = {
     // F7 heatmaps (§13): the value that shows at full strength.
     heat: { populationFull: 10, foodFull: 6, conflictYears: 50, conflictFull: 5 },
     territoryAlpha: 0.3,         // F7 territory fills
+    // G1 towns on the map (render only): layout, market, carriers, moments.
+    towns: {
+      maxTownBuildings: 60,      // buildings drawn for a town (villages: maxBuildingsDrawn) …
+      maxCityBuildings: 90,      // … and for a city
+      layoutTiles: 8,            // buildings may stand this far from home (villages stop sooner: they have fewer)
+      laneTiles: 5,              // a town's two cross lanes run this far out from the plaza
+      laneWidthPx: 3,            // lanes are this wide …
+      laneAlpha: 0.5,            // … and this strong over the ground
+      plazaAlpha: 0.6,           // the paved plaza round a town's home tile
+      stallsMax: 6,              // market stalls on the plaza
+      carriersMax: 60,           // villagers walking food to market, at most …
+      carrierSpeedPx: 9,         // … map px a second …
+      carrierRestMs: 2000,       // … resting at each end
+      crowdMax: 10,              // people standing at a market's stalls
+      ringMs: 1400,              // a ring when a market opens or a town grows
+      sparks: 16,                // sparks for a new market or city
+    },
     // C4 realms on the map (render only): borders, banners, tribute bearers, moments.
     realms: {
       fillAlpha: 0.12,           // soft wash of the ruler's colour over the realm's land …

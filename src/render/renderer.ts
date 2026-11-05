@@ -17,6 +17,7 @@ import { BuildingLayer, CampLayer, CampLife, TrampleLayer, WildAnimals, paintedD
 import { getSprite } from './sprites';
 import { PeopleLayer, Battles, collectFounders, drawGroupLabels, type GroupLabel } from './people';
 import { RealmLayer } from './realms';
+import { MarketLayer } from './markets';
 import { Camera } from './camera';
 import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
@@ -78,6 +79,7 @@ export class Renderer {
   private readonly heat: HeatOverlay;
   private readonly territoryFill: TerritoryOverlay;
   private readonly realms = new RealmLayer();      // C4: realm borders, banners, tribute bearers
+  private readonly markets = new MarketLayer();    // G1: carriers to market, the market crowd
   private readonly animals = new WildAnimals();
   readonly people = new PeopleLayer();
   readonly buildings = new BuildingLayer();
@@ -214,6 +216,7 @@ export class Renderer {
     this.traffic.update(m, groups);
     this.battles.update(m, groups, relations);
     this.realms.update(m, groups, performance.now());
+    this.markets.update(groups, this.buildings.stallSpots());
     this.trample.update(m, groups);
     this.effects.setGroups(groups);
     this.effects.chimneys = this.buildings.chimneys;
@@ -232,6 +235,7 @@ export class Renderer {
     this.traffic.clear();
     this.battles.clear();
     this.realms.clear();
+    this.markets.clear();
     this.effects.clear();
     this.trample.clear();
   }
@@ -306,6 +310,7 @@ export class Renderer {
 
     if (v.showAreas) ctx.drawImage(this.areas.canvas, 0, 0);
     if (v.running && v.showTerritoryFill) this.territoryFill.draw(ctx);
+    if (v.running) this.buildings.drawGround(ctx, v.map.width);   // G1 town plazas and lanes
     if (v.running && !v.photo) this.realms.drawGround(ctx, now);
     if (v.hoverArea >= 0) this.areas.drawHover(ctx, v.hoverArea, v.map.width, v.map.height);
     if (v.running) this.effects.drawGround(ctx, now);
@@ -328,6 +333,8 @@ export class Renderer {
       this.battles.collect(now, this.push);
       this.realms.animate(dt, v.playing);
       this.realms.collect(now, this.push);
+      this.markets.animate(dt, v.playing);
+      this.markets.collect(now, this.push);
       this.effects.collect(now, this.push);
     } else {
       collectFounders(v.founders, this.push);

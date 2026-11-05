@@ -93,6 +93,11 @@ export interface GroupView {
   realmRank: number;             // the ruler's rank: 0 none, 1 chiefdom, 2 kingdom
   realmColour: number;           // the ruler's colour index
   subjects: number;              // a ruler: villages it rules (0 otherwise)
+  // G1 towns: layout, market stalls, carriers, labels.
+  sizeClass: number;             // SizeClass: hamlet, village, town, city
+  market: boolean;               // holds a market
+  marketId: number;              // the market town it sells to (−1 none)
+  sells: boolean;                // sold food at market last year (carriers walk)
 }
 
 /** Floats per person in Frame.people. */

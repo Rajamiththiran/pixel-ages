@@ -38,9 +38,21 @@ export function realmOf(s: SimState, g: Group): Group[] {
 /** The war power of the whole realm `g` belongs to. */
 export const realmPower = (s: SimState, g: Group): number => realmOf(s, g).reduce((t, m) => t + forceOf(s, m).power, 0);
 
-/** A free village with a chief and working fields: it can take tribute (Carneiro: chiefdoms are farmers'). */
+/** A free village with a chief and working fields: it can keep ruling (Carneiro: chiefdoms are farmers'). */
 export const canRule = (g: Group): boolean =>
   g.overlordId < 0 && g.mode === Mode.Village && g.chief && hasActive(g, Discovery.farming);
+
+/**
+ * Can take tribute from a village it beats: a ruler, or a free farming village big enough to keep a
+ * chief (F6 chiefLostBelowPop) whose war leader becomes one by holding it (DECISIONS 21.11). Real
+ * basis: war leaders who kept the tribute of beaten neighbours became permanent chiefs (Carneiro 1981).
+ */
+export const canTakeTribute = (g: Group): boolean =>
+  canRule(g) || (g.overlordId < 0 && g.mode === Mode.Village && hasActive(g, Discovery.farming)
+    && population(g) >= CONFIG.future.society.chiefLostBelowPop);
+
+/** Settled: a village, or a hamlet with fields (only foragers without fields slip away, DECISIONS 21.11). */
+export const settled = (g: Group): boolean => g.mode === Mode.Village || g.farmTiles.length > 0;
 
 /** Base control range in tiles: half a day's walk, farther with horses and with writing. */
 export function baseRange(ruler: Group): number {
@@ -64,7 +76,7 @@ export const inRange = (s: SimState, ruler: Group, g: Group): boolean => {
 
 /** Can `ruler` keep `g` as a subject: it can rule, `g` is a settled village of another realm, and it is in range. */
 export const canHold = (s: SimState, ruler: Group, g: Group): boolean =>
-  ruler.id !== g.id && headOf(g) !== ruler.id && canRule(ruler) && g.mode === Mode.Village && inRange(s, ruler, g);
+  ruler.id !== g.id && headOf(g) !== ruler.id && canTakeTribute(ruler) && settled(g) && inRange(s, ruler, g);
 
 // ---------- joining and leaving ----------
 
@@ -82,9 +94,10 @@ function makePeace(s: SimState, a: Group, b: Group): void {
 /**
  * `g` becomes a subject of `ruler`. If `g` ruled villages, each one in the new ruler's range goes
  * with it and the rest go free (taking a capital took its realm). The ruler's first subject makes
- * it a chiefdom (`founded`: the caller logs it after its own line, with logFounded).
+ * it a chiefdom (`founded`: the caller logs it after its own line, with logFounded); a ruler without
+ * a chief gets one: its war leader (`warLeader`).
  */
-export function makeSubject(s: SimState, ruler: Group, g: Group): { taken: number; freed: number; founded: boolean } {
+export function makeSubject(s: SimState, ruler: Group, g: Group): Joined {
   let taken = 0, freed = 0;
   for (const sub of subjectsOf(s, g)) {
     if (canHold(s, ruler, sub)) { setSubject(s, ruler, sub); taken++; }
@@ -97,20 +110,27 @@ export function makeSubject(s: SimState, ruler: Group, g: Group): { taken: numbe
     const [ga, gb, gc] = [x.a, x.b, x.against].map((id) => s.groups.find((o) => o.id === id));
     return !ga || !gb || !gc || (headOf(gc) !== headOf(ga) && headOf(gc) !== headOf(gb));
   });
+  const warLeader = !ruler.chief;
+  ruler.chief = true;
   const founded = ruler.realmRank === 0;
   if (founded) {
     ruler.realmRank = 1;
     ruler.realmSince = s.year;
   }
   ruler.realmLastYear = s.year;
-  return { taken, freed, founded };
+  return { taken, freed, founded, warLeader };
 }
 
+/** What joining a ruler did: villages that came along or went free, a new chiefdom, a new chief. */
+export interface Joined { taken: number; freed: number; founded: boolean; warLeader: boolean }
+
 /** "Garden founded a chiefdom: 2 villages, 640 people" (after the line that tells how). */
-export function logFounded(s: SimState, ruler: Group): void {
+export function logFounded(s: SimState, ruler: Group, r: Joined): void {
+  if (!r.founded) return;
   const members = realmOf(s, ruler);
   const pop = members.reduce((t, m) => t + population(m), 0);
-  logEvent(s, 'realm', `${ruler.name} founded a chiefdom: ${villages(members.length)}, ${pop.toLocaleString('en-US')} people`, ruler);
+  const chief = r.warLeader ? ' (its war leader is now its chief)' : '';
+  logEvent(s, 'realm', `${ruler.name} founded a chiefdom${chief}: ${villages(members.length)}, ${pop.toLocaleString('en-US')} people`, ruler);
 }
 
 function setSubject(s: SimState, ruler: Group, g: Group): void {
@@ -129,14 +149,18 @@ export function freeSubject(g: Group): void {
  * A beaten ruler's villages: each one `ruler` can hold joins it, the rest go free. Used when the
  * old ruler is driven off or scattered (makeSubject does the same when it is kept).
  */
-export function takeRealm(s: SimState, ruler: Group | undefined, old: Group): { taken: number; freed: number; founded: boolean } {
-  let taken = 0, freed = 0, founded = false;
+export function takeRealm(s: SimState, ruler: Group | undefined, old: Group): Joined {
+  const out: Joined = { taken: 0, freed: 0, founded: false, warLeader: false };
   for (const sub of subjectsOf(s, old)) {
-    if (ruler && canHold(s, ruler, sub)) { founded = makeSubject(s, ruler, sub).founded || founded; taken++; }
-    else { freeSubject(sub); freed++; }
+    if (ruler && canHold(s, ruler, sub)) {
+      const r = makeSubject(s, ruler, sub);
+      out.founded ||= r.founded;
+      out.warLeader ||= r.warLeader;
+      out.taken++;
+    } else { freeSubject(sub); out.freed++; }
   }
   old.realmRank = 0;
-  return { taken, freed, founded };
+  return out;
 }
 
 /** A ruler's subjects go free (the ruler is beaten and gone, or driven off). Returns how many. */

@@ -26,6 +26,7 @@ export function newGroup(s: SimState, id: number, name: string, lineageId: numbe
     languageId: 0, kinContactYear: s.year, isolationYears: 0, domestication: 0, fortification: 0,
     storeMonthsSum: 0, warWinsYear: 0, underThreat: false, hungerPeak: 0,
     overlordId: -1, subjectSince: 0, tributePaid: 0, unrest: 0, realmRank: 0, realmSince: 0, realmLastYear: 0,
+    market: false, marketSince: 0, marketOkYear: 0, marketId: -1, imports: 0, exports: 0, craftBonus: 0, sizeClass: 0,
     huts: 0, houses: 0, buildProgress: 0,
     hungryMonths: 0, crowdedMonths: 0, wantsSplit: false, wallTarget: null, wallScanKey: '',
     teachBonus: 1, teacherMonths: 0, carers: 0, cannotReproduceLogged: false, village: null, trading: false,

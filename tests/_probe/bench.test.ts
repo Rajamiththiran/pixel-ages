@@ -63,9 +63,12 @@ function groupLines(s: SimState): string[] {
   const realmOf = (g: Group): string => g.overlordId >= 0
     ? ` pays ${s.groups.find((o) => o.id === g.overlordId)?.name ?? '?'} (unrest ${(100 * g.unrest).toFixed(0)}%)`
     : subs(g.id) > 0 ? ` RULES ${subs(g.id)} (${g.realmRank === 2 ? 'kingdom' : 'chiefdom'} since ${g.realmSince})` : '';
-  return [`  world: ${world}`, realms, ...s.groups.map((g) => `  ${g.name.padEnd(10)} pop ${String(population(g)).padStart(5)} era ${g.era} H ${g.hunger.toFixed(0).padStart(3)} crowd ${g.crowding.toFixed(2)}`
+  // G1 towns: markets, towns, cities, the biggest settlement, the best era.
+  const towns = `  towns: ${s.groups.filter((g) => g.market).length} markets, ${s.groups.filter((g) => g.sizeClass === 2).length} towns, `
+    + `${s.groups.filter((g) => g.sizeClass === 3).length} cities, largest ${Math.max(0, ...s.groups.map((g) => population(g)))}, best era ${Math.max(0, ...s.groups.map((g) => g.era))}`;
+  return [`  world: ${world}`, realms, towns, ...s.groups.map((g) => `  ${g.name.padEnd(10)} pop ${String(population(g)).padStart(5)} era ${g.era} H ${g.hunger.toFixed(0).padStart(3)} crowd ${g.crowding.toFixed(2)}`
     + ` farms ${g.farmTiles.length} wood ${g.wood.toFixed(0)} herd ${g.herd.toFixed(0)} disc ${DISCOVERIES.filter((d) => has(g.discoveries, d.id)).length}`
-    + `${g.chief ? ' chief' : ''}${realmOf(g)}`
+    + `${g.chief ? ' chief' : ''}${g.market ? ' MARKET' : ''}${g.marketId >= 0 ? ` sells(${g.exports.toFixed(0)})` : ''}${g.imports > 0 ? ` imports ${g.imports.toFixed(0)}` : ''}${realmOf(g)}`
     + ` off: ${DISCOVERIES.filter((d) => has(g.inactive, d.id)).map((d) => d.name).join(',') || '-'}`)];
 }
 

@@ -76,6 +76,26 @@ describe('becoming a subject (plan §4.1–4.2)', () => {
     expect(canHold(s, a, band)).toBe(false);
   });
 
+  it('a big farming village without a chief that beats a farming hamlet gets one: its war leader (DECISIONS 21.11)', () => {
+    const s = world([{ x: 40, y: 40, people: adults(200, 60) }, { x: 50, y: 40, people: adults(20, 40) }, { x: 40, y: 50, people: adults(20) }]);
+    const a = village(s, G(s, 1));
+    addBit(a.discoveries, Discovery.farming);
+    const hamlet = G(s, 2);
+    hamlet.farmTiles = [50 + 41 * s.width];                     // a band with a field: settled
+    const foragers = G(s, 3);                                   // a band without fields: slips away
+    expect(a.chief).toBe(false);
+    expect(canHold(s, a, foragers)).toBe(false);
+    expect(conquer(s, a, hamlet)).toBe(true);
+    expect(hamlet.overlordId).toBe(a.id);
+    expect(a.chief).toBe(true);
+    expect(s.log.some((e) => /^G1 founded a chiefdom \(its war leader is now its chief\): 2 villages, \d+ people$/.test(e.text))).toBe(true);
+    // Under 150 people a village can't keep a chief, so it can't take tribute without one.
+    const small = world([{ x: 40, y: 40, people: adults(100) }, { x: 50, y: 40, people: adults(20) }]);
+    const b = village(small, G(small, 1));
+    addBit(b.discoveries, Discovery.farming);
+    expect(canHold(small, b, village(small, G(small, 2)))).toBe(false);
+  });
+
   it('beating a ruler hands over its villages in range; the realm stays two levels deep', () => {
     const s = world([
       { x: 40, y: 40, people: adults(60, 60) }, { x: 50, y: 40, people: adults(30) },
@@ -89,7 +109,7 @@ describe('becoming a subject (plan §4.1–4.2)', () => {
     makeSubject(s, mid, far);
     expect(mid.realmRank).toBe(1);
     const r = makeSubject(s, big, mid);
-    expect(r).toEqual({ taken: 1, freed: 1, founded: true });                // G4 is 30 tiles from G1
+    expect(r).toEqual({ taken: 1, freed: 1, founded: true, warLeader: false });                // G4 is 30 tiles from G1
     expect([mid.overlordId, near.overlordId, far.overlordId]).toEqual([1, 1, -1]);
     expect(mid.realmRank).toBe(0);
   });
@@ -167,11 +187,11 @@ describe('unrest and revolt (plan §4.5)', () => {
     makeSubject(s, a, far);
     // Newly beaten: only a weak ruler can lose it.
     expect(unrestOf(s, near, a, 300, 100)).toBe(0);
-    expect(unrestOf(s, near, a, 200, 100)).toBeCloseTo(RC.rebelWeak);
+    expect(unrestOf(s, near, a, 150, 100)).toBeCloseTo(RC.rebelWeak);
     near.subjectSince = far.subjectSince = -RC.cowedYears;          // past the cowed years …
     const asm = 1 - RC.assimilateCut * (RC.cowedYears / RC.assimilateYears);   // … which count toward assimilation
     expect(unrestOf(s, near, a, 300, 100)).toBeCloseTo(RC.rebelBase * asm);
-    expect(unrestOf(s, near, a, 200, 100)).toBeCloseTo((RC.rebelBase + RC.rebelWeak) * asm);   // the rest is only 1×
+    expect(unrestOf(s, near, a, 150, 100)).toBeCloseTo((RC.rebelBase + RC.rebelWeak) * asm);   // the rest is only 0.5×
     near.hunger = 50;
     expect(unrestOf(s, near, a, 300, 100)).toBeCloseTo((RC.rebelBase + RC.rebelHunger / 2) * asm);
     near.hunger = 0;

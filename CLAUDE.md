@@ -40,7 +40,8 @@ Code style: TypeScript `strict`, small pure functions, short comments that expla
   - Item 1 (slow down history): built (DECISIONS 17.1–17.7); final discovery numbers being calibrated (TUNING.md pass 7).
   - Item 2 (readable people): 2b walking routes and pace built (DECISIONS 18.x); 2a jobs last a season built (19.1). Awaiting the owner's try.
   - Founders, war churn and log (owner, 28 Oct 2026): built (DECISIONS 20.1–20.11, TUNING pass 8); approved.
-  - C4 chiefdoms and kingdoms (owner, 28 Oct 2026; plan in [pixel-ages-c4-plan.md](pixel-ages-c4-plan.md)): built (DECISIONS 21.1–21.10, TUNING pass 9). Awaiting the owner's try.
+  - C4 chiefdoms and kingdoms (owner, 28 Oct 2026; plan in [pixel-ages-c4-plan.md](pixel-ages-c4-plan.md)): built (DECISIONS 21.1–21.11, TUNING pass 9 and 9b). Awaiting the owner's try.
+  - G1 towns that grow (owner, 29 Oct 2026; plan in [pixel-ages-towns-plan.md](pixel-ages-towns-plan.md)): built (DECISIONS 22.1–22.7, TUNING pass 10). Awaiting the owner's try. Next plans, after approval: diplomacy, then the built world (roads, reservoirs, bridges).
 
 ## Test bench (fast checks of simulation changes)
 

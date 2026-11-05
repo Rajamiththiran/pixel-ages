@@ -9,7 +9,8 @@ import { rainFactor } from '../world/climate';
 import { hasActive } from './explore';
 import { woodOfDensity } from './wood';
 import { farmToolMult } from './foodJobs';
-import { yieldMult } from './food';
+import { homeRangeOf, yieldMult } from './food';
+import { population } from './groups';
 import { blightMult } from '../world/hazards';
 import { domesticMult } from '../society/society';
 
@@ -72,12 +73,21 @@ const fieldQuality = (s: SimState, i: number): number => s.rainNow[i]! * soilMul
 const fieldOrder = (s: SimState) => (a: number, b: number): number =>
   fieldQuality(s, b) - fieldQuality(s, a) || plantValue(s, a) - plantValue(s, b) || a - b;
 
-/** Tiles in the forage range that could become new fields, best first. The camp tile stays open. */
+/**
+ * G1 (DECISIONS 22.4): fields a settlement may clear: the forage range, +1 tile per fieldRangePer
+ * people, up to fieldRangeMax. A big town farms an outer ring (infield and outfield).
+ */
+export const fieldRadius = (g: Group): number =>
+  Math.min(CONFIG.towns.fieldRangeMax, CONFIG.people.range.forage + Math.floor(population(g) / CONFIG.towns.fieldRangePer));
+
+/** Tiles in the field range that could become new fields, best first. The camp tile stays open. */
 export function farmCandidates(s: SimState, g: Group, range: number[]): number[] {
   if (!hasActive(g, Discovery.farming)) return [];
   const irrigation = hasActive(g, Discovery.irrigation);
   const home = g.homeY * s.width + g.homeX;
-  return range.filter((i) => i !== home && farmableTile(s, i, irrigation)).sort(fieldOrder(s));
+  const radius = fieldRadius(g);
+  const tiles = radius > CONFIG.people.range.forage ? homeRangeOf(s, g, radius) : range;
+  return tiles.filter((i) => i !== home && farmableTile(s, i, irrigation)).sort(fieldOrder(s));
 }
 
 /**
@@ -143,7 +153,8 @@ export function fieldYield(s: SimState, g: Group, tile: number, mult: number): n
   if (s.farmedThisYear[tile]! & Farmed.Flooded) return 0;
   const watered = irrigated ? rf + (Math.max(rf, 1) - rf) * g.maintenance : rf;
   return F.farmerCap * F.farmSeason[season]! * watered * blightMult(s, g)
-    * mult * farmToolMult(g) * soilMult(s, tile);
+    * mult * farmToolMult(g) * soilMult(s, tile)
+    * (1 + g.craftBonus);          // G1: tools and pots bought at market
 }
 
 /**
