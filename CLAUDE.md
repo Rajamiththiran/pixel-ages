@@ -1,6 +1,6 @@
 # Pixel Ages — rules for Claude Code
 
-The full design is in [pixel-ages-blueprint.md](pixel-ages-blueprint.md). Read it before changing anything.
+The full design is in [pixel-ages-blueprint.md](docs/pixel-ages-blueprint.md). Read it before changing anything.
 
 1. **The blueprint is the single source of truth.** Read it fully before writing any code.
 2. **Build in the 7 steps of §24, in order.** Finish a step, run its tests, show the result, then **stop and let the owner try it** before starting the next step. Do not build features from later steps early (empty interfaces/stubs are fine).
@@ -8,10 +8,12 @@ The full design is in [pixel-ages-blueprint.md](pixel-ages-blueprint.md). Read i
 4. **The simulation must be deterministic (§16).** Inside `src/sim/` never use `Math.random`, `Date`, `performance.now`, `Math.pow`, `Math.exp`, `Math.log`, `Math.sin`, `Math.cos`, or `**` with non-integer exponents. Use the seeded RNG and the helpers in `src/shared/`.
 5. **Simulation code never touches the DOM or Canvas. Rendering code never changes simulation state.** The simulation runs in a Web Worker.
 6. **Dependencies:** only Vite, TypeScript and Vitest. Ask the owner before adding any other package.
-7. **If something in the blueprint is missing, ambiguous or contradicts itself, implement the option that best fits the blueprint's goals and real-world patterns, and record it in [DECISIONS.md](DECISIONS.md)** (what was missing, what you chose, why). Mention new decisions in the step report. Ask the owner only before changing a locked decision (§2) or anything that would bias the owner's experiment. *(Owner instruction, 14 Oct 2026; replaces "ask, don't guess".)*
+7. **If something in the blueprint is missing, ambiguous or contradicts itself, implement the option that best fits the blueprint's goals and real-world patterns, and record it in [DECISIONS.md](docs/DECISIONS.md)** (what was missing, what you chose, why). Mention new decisions in the step report. Ask the owner only before changing a locked decision (§2) or anything that would bias the owner's experiment. *(Owner instruction, 14 Oct 2026; replaces "ask, don't guess".)*
 
 Units: 1 tile = 1 km, 1 tick = 1 month, 1 FU = food one adult eats in one month.
 Code style: TypeScript `strict`, small pure functions, short comments that explain *why*. No classes for hot data (people, tiles) — use typed arrays. No TypeScript `enum`; use `as const` objects.
+
+All project documents live in `docs/`. Read them there, and create every new document there too.
 
 ## Commands
 
@@ -40,8 +42,8 @@ Code style: TypeScript `strict`, small pure functions, short comments that expla
   - Item 1 (slow down history): built (DECISIONS 17.1–17.7); final discovery numbers being calibrated (TUNING.md pass 7).
   - Item 2 (readable people): 2b walking routes and pace built (DECISIONS 18.x); 2a jobs last a season built (19.1). Awaiting the owner's try.
   - Founders, war churn and log (owner, 28 Oct 2026): built (DECISIONS 20.1–20.11, TUNING pass 8); approved.
-  - C4 chiefdoms and kingdoms (owner, 28 Oct 2026; plan in [pixel-ages-c4-plan.md](pixel-ages-c4-plan.md)): built (DECISIONS 21.1–21.11, TUNING pass 9 and 9b). Awaiting the owner's try.
-  - G1 towns that grow (owner, 29 Oct 2026; plan in [pixel-ages-towns-plan.md](pixel-ages-towns-plan.md)): built (DECISIONS 22.1–22.7, TUNING pass 10). Awaiting the owner's try. Next plans, after approval: diplomacy, then the built world (roads, reservoirs, bridges).
+  - C4 chiefdoms and kingdoms (owner, 28 Oct 2026; plan in [pixel-ages-c4-plan.md](docs/pixel-ages-c4-plan.md)): built (DECISIONS 21.1–21.11, TUNING pass 9 and 9b). Awaiting the owner's try.
+  - G1 towns that grow (owner, 29 Oct 2026; plan in [pixel-ages-towns-plan.md](docs/pixel-ages-towns-plan.md)): built (DECISIONS 22.1–22.7, TUNING pass 10). Awaiting the owner's try. Next plans, after approval: diplomacy, then the built world (roads, reservoirs, bridges).
 
 ## Test bench (fast checks of simulation changes)
 
@@ -59,9 +61,9 @@ All settings are environment variables (bash: `BENCH=run SNAP=A-19-y500 npm run 
 
 ## Notes
 
-- Gap decisions are logged in [DECISIONS.md](DECISIONS.md).
+- Gap decisions are logged in [DECISIONS.md](docs/DECISIONS.md).
 - The owner does all git commits and pushes. Never commit or push.
 - This machine's global `~/.npmrc` sets `os=linux`; install with `npm install --os=win32 --cpu=x64`.
 - The full test suite takes a few minutes (multi-century simulation tests). Long scenario runs: `LONG=1 npm test` (bash) or `$env:LONG=1; npm test` (PowerShell).
-- Number tuning goes in [TUNING.md](TUNING.md).
-- Future plan (v1.1 → v2.0, not active until v1 ships and the owner approves): [pixel-ages-future-blueprint.md](pixel-ages-future-blueprint.md).
+- Number tuning goes in [TUNING.md](docs/TUNING.md).
+- Future plan (v1.1 → v2.0, not active until v1 ships and the owner approves): [pixel-ages-future-blueprint.md](docs/pixel-ages-future-blueprint.md).
