@@ -1,8 +1,11 @@
 // Presentation strip in the bottom bar (F8 §14.6–14.7): camera (zoom, follow, story,
 // time-lapse), capture (screenshot, GIF, photo mode) and look (day and night, weather, sound,
 // colour-blind colours). Camera and capture work in setup too, except what needs a run.
+// Diorama phase 5 (owner): in the tray UI they live in a "View" popover on the bar, so the bar
+// keeps only the time controls; every keyboard shortcut still works with it closed.
 
 import { h } from './layout';
+import { trayOn } from './theme';
 
 export interface PresentState {
   zoom: number; follow: boolean; story: boolean; timelapse: boolean; recording: boolean;
@@ -39,7 +42,10 @@ export function buildPresentBar(root: HTMLElement, a: PresentActions): PresentAp
   const weather = b('Weather', 'Clouds, rain and snow, cracks and puddles (visual only)', a.weather);
   const sound = b('Sound', 'Ambient sound on / off', a.sound);
   const cb = b('Colour-blind', 'Lineage colours that colour-blind eyes tell apart (Okabe–Ito)', a.colourBlind);
-  root.append(h('div', { class: 'present' }, zoom, follow, story, lapse, h('div', { class: 'sep' }), shot, gif, photo, h('div', { class: 'sep' }), day, weather, sound, cb));
+  if (trayOn) root.append(viewPopover([
+    ['Camera', [zoom, follow, story, lapse]], ['Capture', [shot, gif, photo]], ['Look', [day, weather, sound, cb]],
+  ]));
+  else root.append(h('div', { class: 'present' }, zoom, follow, story, lapse, h('div', { class: 'sep' }), shot, gif, photo, h('div', { class: 'sep' }), day, weather, sound, cb));
   return {
     refresh(st) {
       zoom.textContent = `Zoom ${st.zoom}×`;
@@ -56,4 +62,25 @@ export function buildPresentBar(root: HTMLElement, a: PresentActions): PresentAp
       for (const btn of [follow, story, lapse, day, weather]) btn.disabled = !st.running;
     },
   };
+}
+
+/** The "View" button and its popover card (opaque, above the bar), closed by Esc or a click outside. */
+function viewPopover(sections: Array<[string, HTMLButtonElement[]]>): HTMLElement {
+  const pop = h('div', { class: 'view-pop', role: 'dialog', 'aria-label': 'View' });
+  for (const [title, buttons] of sections) pop.append(h('p', { class: 'pop-head', text: title }), ...buttons);
+  pop.hidden = true;
+  const btn = h('button', { class: 'view-btn', text: 'View', title: 'Camera, capture and look: zoom, follow, story, time-lapse, shot, GIF, photo, day and night, weather, sound, colour-blind', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' });
+  const wrap = h('div', { class: 'view-wrap' }, pop, btn);
+  const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); btn.focus(); } };
+  const onDown = (e: MouseEvent): void => { if (!wrap.contains(e.target as Node)) setOpen(false); };
+  function setOpen(open: boolean): void {
+    if (pop.hidden === !open) return;
+    pop.hidden = !open;
+    btn.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) { document.addEventListener('keydown', onKey, true); document.addEventListener('mousedown', onDown, true); }
+    else { document.removeEventListener('keydown', onKey, true); document.removeEventListener('mousedown', onDown, true); }
+  }
+  btn.addEventListener('click', () => setOpen(pop.hidden));
+  return wrap;
 }

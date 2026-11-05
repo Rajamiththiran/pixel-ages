@@ -1,0 +1,252 @@
+/* Toy Diorama UI: the wooden tray (docs/diorama-plan/05-ui-tray.md). Ported from the design
+   system's component sheet, docs/mockups/Pixel Ages UI mockups/_ds/…/components/pa-components.css,
+   onto the game's own classes. Everything is scoped under :root[data-ui="tray"], so with the
+   switch off (?off=tray) the old stylesheet (styles.css) is in charge again.
+   Rules: square corners, hard bottom edges, no blur, no gradients, no translucency; Pixelify Sans
+   at the eight design-system type styles only (tokens.css). */
+
+/* ---------- page and layout: toolbar 72 · map 1280 × 720 · panel 320 · bar 80 under the map ---------- */
+:root[data-ui="tray"] { color-scheme: dark; }
+:root[data-ui="tray"] body {
+  background: var(--tray-600); color: var(--cream); font: var(--type-body);
+  -webkit-font-smoothing: none; -moz-osx-font-smoothing: grayscale;
+}
+:root[data-ui="tray"] button, :root[data-ui="tray"] input, :root[data-ui="tray"] select { font: inherit; color: var(--cream); }
+:root[data-ui="tray"] .app { grid-template-rows: 720px var(--bottom); }
+:root[data-ui="tray"] * { scrollbar-color: var(--tray-400) var(--tray-700); }
+
+/* ---------- buttons (pa-btn) ---------- */
+:root[data-ui="tray"] button {
+  font: var(--type-label); min-height: var(--size-control); min-width: var(--size-control); padding: 0 14px;
+  border: 0; border-radius: 0; background: var(--tray-400); color: var(--cream);
+  box-shadow: var(--bevel-raised); cursor: pointer;
+  transition: transform var(--t-press) steps(2), box-shadow var(--t-press) steps(2);
+}
+:root[data-ui="tray"] button:hover:not(:disabled) { background: var(--tray-300); border-color: transparent; }
+:root[data-ui="tray"] button:active:not(:disabled) { transform: translateY(3px); box-shadow: var(--bevel-pressed); }
+:root[data-ui="tray"] button:disabled { background: var(--tray-500); color: var(--cream-muted); box-shadow: none; opacity: 1; cursor: not-allowed; }
+:root[data-ui="tray"] :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+:root[data-ui="tray"] button.primary { background: var(--brass); color: var(--on-brass); box-shadow: var(--bevel-brass); border: 0; }
+:root[data-ui="tray"] button.primary:hover:not(:disabled) { background: var(--brass-light); }
+:root[data-ui="tray"] button.primary:active:not(:disabled) { box-shadow: 0 1px 0 var(--brass-edge); }
+:root[data-ui="tray"] button.danger { background: var(--danger-fill); color: var(--cream); box-shadow: var(--bevel-danger); }
+:root[data-ui="tray"] button.danger:hover:not(:disabled) { background: var(--danger-fill); }
+/* Selected (toggles, chosen options): brass outline, as a selected tool. */
+:root[data-ui="tray"] button.selected, :root[data-ui="tray"] .pb-btn.selected,
+:root[data-ui="tray"] .tb-view button.selected, :root[data-ui="tray"] .tb-sizes button.selected,
+:root[data-ui="tray"] .tb-opt.selected {
+  background: var(--tray-400); color: var(--cream); outline: 2px solid var(--brass); outline-offset: 0;
+}
+
+/* ---------- form controls: sunken wells (no design-system component: DECISIONS 27.3) ---------- */
+:root[data-ui="tray"] input[type='text'], :root[data-ui="tray"] input[type='number'], :root[data-ui="tray"] select {
+  font: var(--type-body); height: var(--size-control); padding: 0 var(--space-s);
+  background: var(--tray-700); color: var(--cream); border: 0; border-radius: 0;
+  box-shadow: 0 2px 0 var(--tray-400);
+}
+:root[data-ui="tray"] select option { background: var(--tray-700); color: var(--cream); }
+:root[data-ui="tray"] input[type='checkbox'] {
+  appearance: none; width: 20px; height: 20px; margin: 0; flex: none;
+  background: var(--tray-700); box-shadow: 0 2px 0 var(--tray-400); cursor: pointer;
+}
+:root[data-ui="tray"] input[type='checkbox']:checked { background: var(--brass); box-shadow: inset 0 0 0 4px var(--tray-700), 0 2px 0 var(--tray-400); }
+/* Ranges (brush strength, the timeline): a sunken track and a brass thumb. */
+:root[data-ui="tray"] input[type='range'] { appearance: none; background: transparent; height: 24px; margin: 0; cursor: pointer; }
+:root[data-ui="tray"] input[type='range']::-webkit-slider-runnable-track { height: 10px; background: var(--tray-700); box-shadow: 0 2px 0 var(--tray-400); }
+:root[data-ui="tray"] input[type='range']::-moz-range-track { height: 10px; background: var(--tray-700); box-shadow: 0 2px 0 var(--tray-400); }
+:root[data-ui="tray"] input[type='range']::-webkit-slider-thumb { appearance: none; width: 14px; height: 24px; margin-top: -7px; border: 0; border-radius: 0; background: var(--brass); box-shadow: var(--bevel-brass); }
+:root[data-ui="tray"] input[type='range']::-moz-range-thumb { width: 14px; height: 24px; border: 0; border-radius: 0; background: var(--brass); box-shadow: var(--bevel-brass); }
+:root[data-ui="tray"] input[type='range']:disabled { cursor: not-allowed; }
+:root[data-ui="tray"] input[type='range']:disabled::-webkit-slider-thumb { background: var(--tray-400); box-shadow: none; }
+:root[data-ui="tray"] input[type='range']:disabled::-moz-range-thumb { background: var(--tray-400); box-shadow: none; }
+
+/* ---------- toolbar (pa-toolbar, pa-tool): 56 × 56 tools in a 72 px column ---------- */
+:root[data-ui="tray"] .toolbar {
+  grid-row: 1 / 3; background: var(--tray-600); border-right: 2px solid var(--tray-800);
+  padding: var(--space-s); display: flex; flex-direction: column; gap: var(--space-s); align-items: center;
+}
+:root[data-ui="tray"] .tb-group-label, :root[data-ui="tray"].pixel-font .tb-group-label {
+  font: var(--type-map-era); color: var(--cream-muted); text-transform: none; letter-spacing: 0;
+  text-align: center; margin: var(--space-xs) 0 0; width: 100%;
+}
+:root[data-ui="tray"] .tb-grid, :root[data-ui="tray"] .tb-view, :root[data-ui="tray"] .tb-opts { display: flex; flex-direction: column; gap: var(--space-s); }
+:root[data-ui="tray"] .tb-tool, :root[data-ui="tray"] .tb-view button, :root[data-ui="tray"] .tb-stop {
+  width: var(--size-tool); height: var(--size-tool); min-width: 0; padding: 0; margin: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-xs);
+  background: var(--tray-500); color: var(--cream-soft); box-shadow: var(--bevel-raised);
+  font: var(--type-map-era); text-align: center; white-space: normal;
+}
+:root[data-ui="tray"] .tb-tool:hover:not(:disabled), :root[data-ui="tray"] .tb-view button:hover:not(:disabled) { background: var(--tray-400); color: var(--cream); }
+:root[data-ui="tray"] .tb-tool.selected { background: var(--tray-400); color: var(--cream); outline: 2px solid var(--brass); outline-offset: 0; }
+:root[data-ui="tray"] .tb-swatch { width: 20px; height: 20px; flex: none; position: relative; box-shadow: 0 2px 0 var(--tray-900); }
+:root[data-ui="tray"] .tb-swatch .dot { position: absolute; left: 12px; top: 4px; width: 4px; height: 4px; background: #b8323a; }
+/* Eraser: a checker swatch with a red slash, as in the mockup (two 10 px squares, the slash a rotated bar). */
+:root[data-ui="tray"] .tb-swatch.eraser { background: var(--cream-muted); overflow: hidden; }
+:root[data-ui="tray"] .tb-swatch.eraser::before, :root[data-ui="tray"] .tb-swatch.eraser .chk {
+  content: ''; position: absolute; left: 0; top: 0; width: 10px; height: 10px; background: var(--tray-300);
+}
+:root[data-ui="tray"] .tb-swatch.eraser .chk { left: 10px; top: 10px; }
+:root[data-ui="tray"] .tb-swatch.eraser::after { content: ''; position: absolute; left: 9px; top: -3px; width: 2px; height: 26px; background: var(--danger-text); transform: rotate(45deg); }
+:root[data-ui="tray"] .tb-people { display: flex; gap: 2px; }
+:root[data-ui="tray"] .tb-people canvas { width: 8px; height: 12px; image-rendering: pixelated; }
+:root[data-ui="tray"] .tb-stop { margin-top: auto; background: var(--danger-fill); color: var(--cream); box-shadow: var(--bevel-danger); font: var(--type-map-era); }
+:root[data-ui="tray"] .tb-stop:hover:not(:disabled) { background: var(--danger-fill); }
+/* Brush options: the 72 px column is too narrow for 44 px controls in a row (DECISIONS 27.4). */
+:root[data-ui="tray"] .tb-sizes { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-xs); width: var(--size-tool); }
+:root[data-ui="tray"] .tb-sizes button, :root[data-ui="tray"] .tb-opt {
+  min-width: 0; min-height: 0; height: 26px; padding: 0; font: var(--type-map-era); box-shadow: 0 2px 0 var(--tray-900);
+}
+:root[data-ui="tray"] .tb-opt { width: var(--size-tool); }
+:root[data-ui="tray"] .tb-strength { width: var(--size-tool); }
+:root[data-ui="tray"] .tb-strength-label { font: var(--type-map-era); color: var(--cream-muted); }
+:root[data-ui="tray"] .tb-select { width: var(--size-tool); height: 32px; padding: 0 2px; font: var(--type-map-era); }
+
+/* ---------- map overlays: tooltip, toast, banner, story caption (opaque) ---------- */
+:root[data-ui="tray"] .tooltip {
+  font: var(--type-caption); padding: 6px var(--space-s); background: var(--tray-900); color: var(--cream);
+  border: 0; border-top: 1px solid var(--tray-400); border-radius: 0; box-shadow: var(--plate);
+}
+:root[data-ui="tray"] .toast {
+  font: var(--type-body); padding: 10px var(--space-m); background: var(--tray-500); color: var(--cream);
+  border: 0; border-top: 2px solid var(--tray-400); border-radius: 0; box-shadow: var(--tray-edge); top: var(--space-m);
+}
+:root[data-ui="tray"] .banner {
+  font: var(--type-body); padding: var(--space-s) 12px; background: var(--tray-900); color: var(--cream);
+  border: 0; border-radius: 0; box-shadow: var(--plate); bottom: var(--space-m);
+}
+:root[data-ui="tray"] .caption, :root[data-ui="tray"].pixel-font .caption {
+  font: var(--type-body); text-transform: none; padding: var(--space-s) 12px; background: var(--tray-900); color: var(--cream);
+  border: 0; border-radius: 0; box-shadow: var(--plate); left: var(--space-m); top: var(--space-m);
+}
+:root[data-ui="tray"] .caption-year { color: var(--brass); font-weight: 700; }
+
+/* ---------- right panel: tabs (pa-tabs) and cards (pa-card) ---------- */
+:root[data-ui="tray"] .panel { grid-row: 1 / 3; background: var(--tray-600); border-left: 2px solid var(--tray-800); padding-top: var(--space-m); }
+:root[data-ui="tray"] .tabs { gap: var(--space-xs); padding: 0 var(--space-s); border-bottom: 2px solid var(--tray-800); }
+:root[data-ui="tray"] .tabs button {
+  flex: 1; min-width: 0; padding: 0 10px; font: var(--type-label); background: var(--tray-500); color: var(--cream-soft);
+  border: 0; box-shadow: none; transform: none;
+}
+:root[data-ui="tray"] .tabs button:hover { background: var(--tray-500); color: var(--cream); }
+:root[data-ui="tray"] .tabs button.active { background: var(--tray-400); color: var(--cream); box-shadow: inset 0 -3px 0 var(--brass); }
+:root[data-ui="tray"] .tab-body { padding: var(--space-m); font: var(--type-body); color: var(--cream-soft); }
+:root[data-ui="tray"] .tab-body h3, :root[data-ui="tray"].pixel-font .tab-body h3 {
+  font: var(--type-heading); text-transform: none; color: var(--cream); margin: 0 0 var(--space-s);
+}
+:root[data-ui="tray"] .hint { font: var(--type-caption); color: var(--cream-muted); margin: var(--space-s) 0; }
+:root[data-ui="tray"] .status { font: var(--type-caption); }
+:root[data-ui="tray"] .status.err, :root[data-ui="tray"] .msg-err { color: var(--danger-text); }
+:root[data-ui="tray"] .status.ok { color: var(--ok); }
+:root[data-ui="tray"] .msg-warn { color: var(--warning); }
+:root[data-ui="tray"] .msg-err, :root[data-ui="tray"] .msg-warn { font: var(--type-caption); margin: var(--space-xs) 0; }
+:root[data-ui="tray"] .row { gap: var(--space-s); margin: var(--space-s) 0; }
+:root[data-ui="tray"] .section { border-top: 2px solid var(--tray-800); margin-top: var(--space-l); padding-top: var(--space-m); }
+:root[data-ui="tray"] .group-card {
+  width: 288px; max-width: 100%; padding: var(--space-m); margin-bottom: var(--space-m);
+  display: flex; flex-direction: column; gap: var(--space-s);
+  background: var(--tray-500); border: 0; border-radius: 0; box-shadow: var(--tray-edge);
+}
+:root[data-ui="tray"] .group-card .title { font: var(--type-heading); color: var(--cream); gap: var(--space-s); }
+:root[data-ui="tray"] .group-card .meta { font: var(--type-caption); color: var(--cream-muted); margin: 0; }
+:root[data-ui="tray"] .group-card .warn { font: var(--type-caption); color: var(--warning); }
+:root[data-ui="tray"] .group-card .row { margin: 0; }
+:root[data-ui="tray"] .group-card .row button, :root[data-ui="tray"] .preset-list button { font: var(--type-label); padding: 0 14px; }
+:root[data-ui="tray"] .swatch-dot { width: 12px; height: 12px; border-radius: 0; box-shadow: 0 2px 0 var(--tray-900); }
+:root[data-ui="tray"] .preset-list li { gap: var(--space-s); padding: var(--space-xs) 0; }
+:root[data-ui="tray"] .run-big { font: var(--type-label); margin-top: var(--space-m); }
+:root[data-ui="tray"] .form-grid { grid-template-columns: 110px 1fr; gap: var(--space-s); }
+:root[data-ui="tray"] .form-grid label { font: var(--type-caption); color: var(--cream-muted); }
+:root[data-ui="tray"] .kv { font: var(--type-caption); gap: 2px var(--space-s); }
+:root[data-ui="tray"] .kv .k { color: var(--cream-muted); }
+:root[data-ui="tray"] .kv .v { color: var(--cream); }
+:root[data-ui="tray"] .story { font: var(--type-caption); }
+:root[data-ui="tray"] .story .ev, :root[data-ui="tray"] .story .fam { border-bottom: 1px solid var(--tray-600); }
+:root[data-ui="tray"] .story .ev .y, :root[data-ui="tray"] .story .gone { color: var(--cream-muted); }
+
+/* ---------- event log (pa-log, pa-log-row) and graphs ---------- */
+:root[data-ui="tray"] .log-filters, :root[data-ui="tray"] .graph-legend { font: var(--type-caption); gap: var(--space-xs) var(--space-m); }
+:root[data-ui="tray"] .legend-item { gap: var(--space-xs); }
+:root[data-ui="tray"] .log-list { font: var(--type-body); }
+:root[data-ui="tray"] .log-scroll { border-top: 2px solid var(--tray-800); margin: var(--space-s) calc(-1 * var(--space-m)) 0; background: var(--tray-600); }
+:root[data-ui="tray"] .log-row {
+  display: flex; align-items: center; gap: var(--space-s); padding: 0 var(--space-m); border-bottom: 0;
+  font: var(--type-body); color: var(--cream-soft);
+}
+:root[data-ui="tray"] .log-spacer .log-row { height: var(--log-row, 34px); }
+:root[data-ui="tray"] .log-row.clickable:hover { background: var(--tray-500); color: var(--cream); }
+:root[data-ui="tray"] .log-row .swatch-dot { width: 8px; height: 8px; box-shadow: none; }
+:root[data-ui="tray"] .log-year { font: var(--type-caption); color: var(--cream-muted); width: 76px; }
+:root[data-ui="tray"] .graph { background: var(--tray-700); border-radius: 0; box-shadow: 0 2px 0 var(--tray-400); }
+:root[data-ui="tray"] .graph-tip { font: var(--type-caption); background: var(--tray-900); border: 0; border-top: 1px solid var(--tray-400); border-radius: 0; box-shadow: var(--plate); }
+:root[data-ui="tray"] .compare-table { font: var(--type-caption); }
+:root[data-ui="tray"] .compare-table th, :root[data-ui="tray"] .compare-table td { border-bottom: 1px solid var(--tray-500); padding: 4px; }
+:root[data-ui="tray"] .compare-table th { color: var(--cream-muted); font-weight: 400; }
+:root[data-ui="tray"] .compare-table .diff { color: var(--brass); }
+
+/* ---------- bottom bar (pa-bar): play, speed, step, year, timeline, back to now ---------- */
+:root[data-ui="tray"] .bottombar {
+  grid-column: 2; grid-row: 2; height: var(--bottom); padding: 0 var(--space-m); gap: var(--space-s);
+  background: var(--tray-500); border-top: 2px solid var(--tray-400); box-shadow: var(--tray-edge);
+}
+:root[data-ui="tray"] .bottombar .sep { display: none; }
+:root[data-ui="tray"] .bb-play { width: var(--size-control); padding: 0; }
+:root[data-ui="tray"] .bb-speed { display: inline-flex; gap: var(--space-xs); padding: var(--space-xs); background: var(--tray-700); }
+:root[data-ui="tray"] .bb-speed button { box-shadow: var(--bevel-pressed); }
+:root[data-ui="tray"] .bb-speed button.selected-speed { background: var(--brass); color: var(--on-brass); outline: 0; }
+:root[data-ui="tray"] .bottombar button.selected-speed { outline: 0; }
+:root[data-ui="tray"] .bottombar .yearbox, :root[data-ui="tray"].pixel-font .bottombar .yearbox {
+  font: var(--type-year); color: var(--cream); min-width: 212px; white-space: nowrap; margin-left: var(--space-s);
+}
+:root[data-ui="tray"] .bottombar .mode, :root[data-ui="tray"] .bottombar .fps { font: var(--type-caption); color: var(--cream-muted); white-space: nowrap; }
+:root[data-ui="tray"] .bottombar .rate { min-width: 92px; }
+:root[data-ui="tray"] .bottombar .grow { min-width: 120px; margin: 0 var(--space-s); }
+:root[data-ui="tray"] .bb-track { position: relative; height: 24px; }
+:root[data-ui="tray"] .bb-fill { position: absolute; left: 0; top: 7px; height: 10px; background: var(--brass-track); pointer-events: none; }
+:root[data-ui="tray"] .bb-track input[type='range'] { position: absolute; inset: 0; width: 100%; }
+/* The fill is drawn under the range; the range's own track is the empty part. */
+:root[data-ui="tray"] .bb-track input[type='range']::-webkit-slider-runnable-track { background: transparent; box-shadow: none; }
+:root[data-ui="tray"] .bb-track input[type='range']::-moz-range-track { background: transparent; box-shadow: none; }
+:root[data-ui="tray"] .bb-track::before { content: ''; position: absolute; left: 0; right: 0; top: 7px; height: 10px; background: var(--tray-700); box-shadow: 0 2px 0 var(--tray-400); }
+:root[data-ui="tray"] .about-btn { min-width: 0; }
+
+/* View popover: the presentation buttons, in an opaque tray card above the bar. */
+:root[data-ui="tray"] .view-wrap { position: relative; }
+:root[data-ui="tray"] .view-pop {
+  position: absolute; right: 0; bottom: calc(100% + var(--space-s)); z-index: 10; width: 304px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-s); padding: var(--space-m);
+  background: var(--tray-500); border-top: 2px solid var(--tray-400); box-shadow: 0 6px 0 var(--tray-900);
+}
+:root[data-ui="tray"] .view-pop[hidden] { display: none; }
+:root[data-ui="tray"] .pb-btn { font: var(--type-label); padding: 0 var(--space-s); }
+:root[data-ui="tray"] .view-pop .pop-head { grid-column: 1 / -1; font: var(--type-caption); color: var(--cream-muted); margin: 0; }
+:root[data-ui="tray"] .view-btn.open { background: var(--tray-300); }
+
+/* ---------- dialogs (pa-dialog): solid scrim, 480 wide, display title ---------- */
+:root[data-ui="tray"] .modal-back { background: var(--tray-900); }
+:root[data-ui="tray"] .modal {
+  background: var(--tray-500); border: 0; border-top: 2px solid var(--tray-400); border-radius: 0;
+  box-shadow: 0 6px 0 var(--tray-900); padding: var(--space-l); gap: var(--space-m); color: var(--cream-soft);
+}
+:root[data-ui="tray"] .modal.small { width: 480px; }
+:root[data-ui="tray"] .modal header, :root[data-ui="tray"].pixel-font .modal header {
+  font: var(--type-display); color: var(--cream); padding: 0; border: 0; text-transform: none;
+}
+:root[data-ui="tray"] .modal .body { padding: 0; font: var(--type-body); }
+:root[data-ui="tray"] .modal .body h3 { font: var(--type-heading); color: var(--cream); margin: var(--space-s) 0; }
+:root[data-ui="tray"] .modal footer { padding: 0; border: 0; gap: var(--space-s); }
+:root[data-ui="tray"] .modal footer .msgs { font: var(--type-caption); }
+:root[data-ui="tray"] .people-table { font: var(--type-caption); }
+:root[data-ui="tray"] .people-table th { color: var(--cream-muted); }
+/* Dense table inputs stay compact: 20 rows of 44 px controls would not fit (DECISIONS 27.4). */
+:root[data-ui="tray"] .people-table input[type='number'], :root[data-ui="tray"] .people-table select { height: 28px; font: var(--type-caption); }
+:root[data-ui="tray"] .colors button { min-width: 0; min-height: 0; width: 28px; height: 28px; padding: 0; border-radius: 0; box-shadow: 0 2px 0 var(--tray-900); }
+:root[data-ui="tray"] .colors button.selected { outline: 2px solid var(--cream); outline-offset: 2px; }
+
+/* ---------- photo mode keeps working ---------- */
+:root[data-ui="tray"] .app.photo .toolbar, :root[data-ui="tray"] .app.photo .panel, :root[data-ui="tray"] .app.photo .bottombar { visibility: hidden; }
+
+/* ---------- fit: long setup hints shrink, form fields fill their column ---------- */
+:root[data-ui="tray"] .bottombar .mode { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:root[data-ui="tray"] .bottombar .fps, :root[data-ui="tray"] .view-wrap, :root[data-ui="tray"] .about-btn, :root[data-ui="tray"] .bottombar > button { flex: none; }
+:root[data-ui="tray"] .form-grid input, :root[data-ui="tray"] .form-grid select { width: 100%; min-width: 0; }
+:root[data-ui="tray"] .form-grid .row { flex-wrap: nowrap; margin: 0; }

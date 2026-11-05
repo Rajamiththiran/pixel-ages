@@ -17,7 +17,8 @@ import {
 import { GROUP_COLORS } from './palette';
 import { animalSprite } from './decor';
 import { Species } from '../shared/ids';
-import { drawPixelText } from './pixelFont';
+import { GLYPH_H, drawPixelText, textCanvas, textWidth } from './pixelFont';
+import { styleOff } from './ramps';
 import { RouteCache, type WalkMap } from './paths';
 import { Discovery, has } from '../shared/discoveries';
 
@@ -56,6 +57,37 @@ export function collectFounders(
 
 export interface GroupLabel { name: string; x: number; y: number; colorIndex: number; selected?: boolean; sub?: string; subColour?: string }
 
+// Diorama phase 5: in the tray UI a label is the design system's MapLabel plate (tokens/colors.css):
+// tray-600 with a 3 px tray-900 edge underneath, a lineage swatch, the name in cream, the era in
+// cream-muted, a 2 px brass outline when selected. Drawn in the game's pixel font on the canvas, so
+// screenshots, GIFs and photo mode keep it.
+const trayLabels = CONFIG.render.diorama.trayUi.on && !styleOff('tray');
+const PLATE = { ground: '#2a1f19', edge: '#120c09', name: '#f3e7cf', era: '#c9b495', selected: '#e0b030' } as const;
+const PL = { padX: 4, padY: 3, swatch: 5, gap: 3, edge: 3, outline: 2 } as const;
+const NO_SHADOW = 'rgba(0,0,0,0)';
+
+function drawPlate(ctx: CanvasRenderingContext2D, g: GroupLabel, x: number, y: number): void {
+  const nameW = textWidth(g.name);
+  const era = g.sub ?? '';
+  const eraW = era ? textWidth(era) : 0;
+  const w = PL.padX * 2 + PL.swatch + PL.gap + nameW + (era ? PL.gap + 1 + eraW : 0);
+  const h = PL.padY * 2 + GLYPH_H;
+  const left = Math.round(x - w / 2), top = Math.round(y - h - PL.edge);
+  if (g.selected) {
+    ctx.fillStyle = PLATE.selected;
+    ctx.fillRect(left - PL.outline, top - PL.outline, w + PL.outline * 2, h + PL.outline * 2);
+  }
+  ctx.fillStyle = PLATE.edge;
+  ctx.fillRect(left, top + PL.edge, w, h);
+  ctx.fillStyle = PLATE.ground;
+  ctx.fillRect(left, top, w, h);
+  ctx.fillStyle = GROUP_COLORS[g.colorIndex % GROUP_COLORS.length]!;
+  ctx.fillRect(left + PL.padX, top + PL.padY + 1, PL.swatch, PL.swatch);
+  const tx = left + PL.padX + PL.swatch + PL.gap;
+  ctx.drawImage(textCanvas(g.name, PLATE.name, NO_SHADOW), tx, top + PL.padY);
+  if (era) ctx.drawImage(textCanvas(era, g.subColour ?? PLATE.era, NO_SHADOW), tx + nameW + PL.gap + 1, top + PL.padY);
+}
+
 /**
  * Group names above their homes, with a small second line (the era) above the name. F8: in the
  * pixel font; `project` turns a map point into the drawing space (labels are drawn in screen space).
@@ -66,6 +98,7 @@ export function drawGroupLabels(
 ): void {
   for (const g of groups) {
     const [x, y] = project((g.x + 0.5) * TILE, g.y * TILE - R.founderSpreadPx - 2);
+    if (trayLabels) { drawPlate(ctx, g, x, y); continue; }
     const colour = g.selected ? '#ffffff' : GROUP_COLORS[g.colorIndex % GROUP_COLORS.length]!;
     drawPixelText(ctx, g.name, x, y, colour, 'center', 'bottom');
     if (g.sub) drawPixelText(ctx, g.sub, x, y - 9, g.subColour ?? '#e8e2d4', 'center', 'bottom');

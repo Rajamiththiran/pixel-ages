@@ -2,6 +2,9 @@
 // Two modes: setup (paint + place people) and run (watch; nothing can be edited).
 
 import './ui/styles.css';
+import './ui/tokens.css';
+import './ui/tray.css';
+import { trayOn } from './ui/theme';
 import { CONFIG } from './config';
 import {
   Ground, WallType, Plant, Resource,
@@ -115,7 +118,9 @@ const caption = h('div', { class: 'caption' });
 ui.stage.append(caption);
 let followOn = false;
 let lastLapse = false;
-void installPixelFont();
+// Diorama phase 5: the tray UI (Pixelify Sans) or the classic UI (its generated pixel font for headings).
+if (trayOn) document.documentElement.dataset.ui = 'tray';
+else void installPixelFont();
 const regions = new RegionsPreview(editor.map, (a) => renderer.setAreas(a));
 renderer.setAreas(regions.current);
 
@@ -897,7 +902,8 @@ renderer.onFrame = (now) => {
   const moment = mode === 'run' ? story.update(now) : null;
   if (moment?.fresh && moment.entry.x !== null && moment.entry.y !== null) {
     renderer.camera.centreOn((moment.entry.x + 0.5) * TILE, (moment.entry.y + 0.5) * TILE, CONFIG.render.f8.story.zoom);
-    caption.textContent = `Year ${moment.entry.year.toLocaleString('en-US')} — ${moment.entry.text}`;
+    // StoryCaption (design system): the year in brass, a dash, then what happened.
+    caption.replaceChildren(h('span', { class: 'caption-year', text: `Year ${moment.entry.year.toLocaleString('en-US')}` }), ` — ${moment.entry.text}`);
     caption.style.display = 'block';
     refreshPresent();
   } else if (!moment) caption.style.display = 'none';

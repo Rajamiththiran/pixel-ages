@@ -1,0 +1,50 @@
+/* Toy Diorama UI tokens (docs/diorama-plan/05-ui-tray.md). Copied from the design system,
+   docs/mockups/Pixel Ages UI mockups/_ds/…/tokens/ (colors.css, spacing.css, effects.css,
+   typography.css, fonts.css). Used by tray.css only. */
+
+/* Pixelify Sans (variable 400–700), SIL Open Font License 1.1: the design system's font, the two
+   woff2 files copied from its assets/fonts/ (owner: an approved exception to "no files"). */
+@font-face {
+  font-family: "Pixelify Sans"; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url("./fonts/PixelifySans-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Pixelify Sans"; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url("./fonts/PixelifySans-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* Tray */
+  --tray-900: #120c09; --tray-800: #1d1410; --tray-700: #241812; --tray-600: #2a1f19;
+  --tray-500: #3a2a20; --tray-400: #5a4231; --tray-300: #6a4e3b;
+  /* Text */
+  --cream: #f3e7cf; --cream-soft: #d8c7a8; --cream-muted: #c9b495;
+  /* Accent */
+  --brass: #e0b030; --brass-light: #ecc04a; --brass-edge: #8a6514; --brass-track: #a87a2a; --on-brass: #2a1f19;
+  /* Status */
+  --danger-fill: #8f2f2a; --danger-edge: #4f1916; --danger-text: #f08a7a; --warning: #e07b2f; --ok: #6fcf4f;
+  --focus: var(--cream);
+
+  /* Spacing (8 px tile grid; 4 px only icon-to-label) */
+  --space-xs: 4px; --space-s: 8px; --space-m: 16px; --space-l: 24px; --space-xl: 32px;
+  --size-control: 44px; --size-tool: 56px;
+
+  /* Depth: hard bottom edges, never blur */
+  --bevel-raised: 0 4px 0 #120c09; --bevel-pressed: 0 1px 0 #120c09;
+  --bevel-brass: 0 4px 0 #8a6514; --bevel-danger: 0 4px 0 #4f1916;
+  --plate: 0 3px 0 #120c09; --tray-edge: 0 4px 0 #1d1410;
+  --t-press: 120ms;
+
+  /* Type: Pixelify Sans only, at these eight styles only */
+  --font-pixel: "Pixelify Sans", ui-monospace, monospace;
+  --type-display: 700 44px/48px var(--font-pixel);  /* dialog titles */
+  --type-year: 700 22px/28px var(--font-pixel);     /* Year · Season readout */
+  --type-heading: 600 18px/24px var(--font-pixel);  /* panel and card headings */
+  --type-body: 400 16px/22px var(--font-pixel);     /* panel text, log lines, dialog copy */
+  --type-label: 600 14px/18px var(--font-pixel);    /* buttons, tabs, tool names */
+  --type-caption: 400 13px/18px var(--font-pixel);  /* tooltips and metadata */
+  --type-map-name: 700 13px/16px var(--font-pixel);
+  --type-map-era: 400 11px/14px var(--font-pixel);  /* also tool and tool-group labels (pa-tool) */
+}

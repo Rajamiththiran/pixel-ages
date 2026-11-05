@@ -724,6 +724,9 @@ export const CONFIG = {
         shadePerStep: 0.5,         // … where one ramp step is a shade of 0.5 (steps sit at ±0.5, ±1), so 1 px from
                                    //     the canopy 60% of pixels drop a step, at 2 px 30%, at 3 px 20%
       },
+      // Phase 5: the UI as the design system's wooden tray (tokens, components, Pixelify Sans). Off:
+      // `?off=tray` (the old dark UI; its stylesheet stays underneath until the owner approves removing it).
+      trayUi: { on: true },
       // Sun shadows are day only (owner): they fade out over this many steps of dusk and back over
       // dawn (the night lighting uses the same steps, phase 4).
       duskSteps: 4,
@@ -861,6 +864,7 @@ export const CONFIG = {
     hoverInfoRefreshMs: 50,
     inspectRefreshMs: 250,       // §21.1: inspector refreshes about 4 times per second
     logRowPx: 20,                // event log: height of one row (the list is virtualised, §21.3)
+    logRowTrayPx: 34,            // … in the tray UI: the design system's log row (16/22 text, 6 px padding)
     graphs: { width: 292, height: 112, maxPoints: 2000, redrawMs: 250 }, // §21.2: draw every n-th year past 2,000 points
     eventDialog: { year: 100, length: 20, strength: 50 }, // a new event's starting values
     toastMs: 2500,

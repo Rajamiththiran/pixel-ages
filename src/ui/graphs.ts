@@ -6,6 +6,13 @@
 import { CONFIG } from '../config';
 import type { YearStats } from '../shared/types';
 import { h } from './layout';
+import { TRAY, UI_FONT, trayOn } from './theme';
+
+// Chart text and lines: the old theme, or the tray's (Pixelify Sans at the caption and small
+// type styles, cream on the sunken well) in the Diorama UI.
+const INK = trayOn
+  ? { title: TRAY.cream, label: TRAY.creamMuted, frame: TRAY.tray400, now: TRAY.cream, titleFont: `400 13px ${UI_FONT}`, labelFont: `400 11px ${UI_FONT}` }
+  : { title: '#e8e2d4', label: '#a39d92', frame: '#454052', now: '#ffffff', titleFont: '11px system-ui, sans-serif', labelFont: '9px system-ui, sans-serif' };
 
 type Row = YearStats['perLineage'][number];
 
@@ -149,13 +156,13 @@ export function buildGraphs(
       };
       const tx = (year: number): number => PAD.left + (year / maxYear) * (c.width - PAD.left - PAD.right);
       // Frame, title, y labels.
-      ctx.fillStyle = '#e8e2d4';
-      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillStyle = INK.title;
+      ctx.font = INK.titleFont;
       ctx.textBaseline = 'top';
       ctx.textAlign = 'left';
       ctx.fillText(chart.title + (chart.dashedName ? ` (dashed: ${chart.dashedName})` : ''), 2, 1);
-      ctx.fillStyle = '#a39d92';
-      ctx.font = '9px system-ui, sans-serif';
+      ctx.fillStyle = INK.label;
+      ctx.font = INK.labelFont;
       ctx.textAlign = 'right';
       ctx.fillText(chart.format(hi), PAD.left - 3, PAD.top - 2);
       ctx.textBaseline = 'bottom';
@@ -164,7 +171,7 @@ export function buildGraphs(
       ctx.fillText('0', PAD.left, c.height);
       ctx.textAlign = 'right';
       ctx.fillText(`year ${maxYear.toLocaleString('en-US')}`, c.width - PAD.right, c.height);
-      ctx.strokeStyle = '#454052';
+      ctx.strokeStyle = INK.frame;
       ctx.lineWidth = 1;
       ctx.strokeRect(PAD.left + 0.5, PAD.top + 0.5, c.width - PAD.left - PAD.right - 1, c.height - PAD.top - PAD.bottom - 1);
       // Planned events shaded, disasters and interventions as thin ticks (F7).
@@ -220,7 +227,7 @@ export function buildGraphs(
       }
       ctx.setLineDash([]);
       if (vy !== null) {
-        ctx.strokeStyle = '#ffffff';
+        ctx.strokeStyle = INK.now;
         ctx.beginPath();
         ctx.moveTo(Math.round(tx(vy)) + 0.5, PAD.top);
         ctx.lineTo(Math.round(tx(vy)) + 0.5, c.height - PAD.bottom);
