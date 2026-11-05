@@ -21,7 +21,12 @@ const EXPECTED: Record<string, [number, number]> = {
     'fire', 'tool', 'weapon', 'boat', 'cloth', 'animal', 'wheat', 'pot', 'house', 'wheel', 'metal', 'scroll',
     'drop', 'fish', 'wave', 'rock', 'dust', 'skull', 'bug', 'leaf', 'sun', 'cloud', 'snow', 'hand', 'berry',
     'trade', 'shield', 'arrow', 'eye', 'star', 'people',
+    'crown', 'flag', 'chain',       // C4 realms
+    'stall', 'city',                // G1 towns
   ].map((k) => [`icon_${k}`, [7, 7] as [number, number]])),
+  // C4 realm banners and pennants.
+  banner_1: [5, 10], banner_2: [5, 10], banner_royal_1: [6, 12], banner_royal_2: [6, 12], pennant_1: [4, 7], pennant_2: [4, 7],
+  stall: [8, 7],                 // G1 market
 };
 
 describe('sprite grids (§19)', () => {

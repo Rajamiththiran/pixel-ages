@@ -31,6 +31,8 @@ const CHARTS: Chart[] = [
   { title: 'Strength', solid: (r) => r.strActual, dashed: (r) => r.strPotential, dashedName: 'potential', format: f0 },
   { title: 'Era', solid: (r) => r.bestEra, dashed: (r) => r.avgEra, dashedName: 'average', fixed: [0, 6], format: f1 },
   { title: 'Food (fed)', solid: (r) => r.fed, fixed: [0, 1], format: (v) => `${Math.round(v * 100)}%` },
+  { title: 'Villages ruled (realms)', solid: (r) => r.ruled ?? 0, format: f0 },   // C4
+  { title: 'Largest settlement', solid: (r) => r.largest ?? 0, population: true, format: (v) => Math.round(v).toLocaleString('en-US') },   // G1
 ];
 
 const G = CONFIG.ui.graphs;

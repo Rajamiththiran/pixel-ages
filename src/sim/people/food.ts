@@ -77,16 +77,18 @@ export function homeRange(s: SimState, g: Group): number[] {
   return tiles;
 }
 
-// The far woodcutting range (F1, DECISIONS 17.3), cached the same way (speed only).
-const farRanges = new WeakMap<Group, { key: string; tiles: number[] }>();
+// Wider ranges (F1 woodcutting, DECISIONS 17.3; G1 town fields), cached the same way, one per radius (speed only).
+const farRanges = new WeakMap<Group, Map<number, { key: string; tiles: number[] }>>();
 
 /** rangeTiles of `radius` around home, cached like homeRange. Don't mutate. */
 export function homeRangeOf(s: SimState, g: Group, radius: number): number[] {
-  const key = `${g.knownVersion}|${g.homeX},${g.homeY}|${hasActive(g, Discovery.raft) ? 1 : 0}|${breachCount(s)}|${radius}`;
-  const c = farRanges.get(g);
+  const key = `${g.knownVersion}|${g.homeX},${g.homeY}|${hasActive(g, Discovery.raft) ? 1 : 0}|${breachCount(s)}`;
+  let byRadius = farRanges.get(g);
+  if (!byRadius) { byRadius = new Map(); farRanges.set(g, byRadius); }
+  const c = byRadius.get(radius);
   if (c && c.key === key) return c.tiles;
   const tiles = rangeTiles(s, g, g.homeX, g.homeY, radius);
-  farRanges.set(g, { key, tiles });
+  byRadius.set(radius, { key, tiles });
   return tiles;
 }
 
@@ -137,7 +139,9 @@ export function computeSignals(s: SimState, g: Group, range: number[], need = ba
   g.sustainable = rangeSustainable(s, range, g)
     + fieldsSustainable(s, g)
     + Math.min(g.herd, g.herders * F.herdPerHerder) * F.herdYieldPerAnimal * domesticMult(g)
-    + waterSustainable(s, g);
+    + waterSustainable(s, g)
+    // G1: food bought at market and tribute received last year feed a town beyond its own land.
+    + g.imports / CONFIG.time.ticksPerYear;
   g.crowding = g.sustainable > 0 ? Math.min(P.crowdingMax, need / g.sustainable) : P.crowdingMax;
   g.hunger = hungerOf(g);
   noteStore(g);                  // F6: the year's store decides specialists and chiefs

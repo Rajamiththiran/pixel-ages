@@ -248,4 +248,20 @@ export const SPRITES: Record<string, SpriteDef> = {
   icon_eye: { w: 7, h: 7, rows: ['.......', '..XXX..', '.XbbbX.', 'XbbKbbX', '.XbbbX.', '..XXX..', '.......'] },
   icon_star: { w: 7, h: 7, rows: ['...f...', '...f...', '.fffff.', '..fff..', '.ff.ff.', '.f...f.', '.......'] },
   icon_people: { w: 7, h: 7, rows: ['.K...K.', '.M...M.', 'MMM.MMM', '.M...M.', '.M...M.', 'M.M.M.M', '.......'] },
+  // C4 realms: crown (a chiefdom or kingdom founded), flag (a village joins), broken chain (revolt, fall).
+  icon_crown: { w: 7, h: 7, rows: ['.......', 'f..f..f', 'ff.f.ff', 'fffffff', 'fRfffRf', 'fffffff', '.......'] },
+  icon_flag: { w: 7, h: 7, rows: ['WRRRR..', 'WRRRRR.', 'WRRRR..', 'W......', 'W......', 'W......', 'w......'] },
+  // G1 towns: a market stall (a market opened), a city (a town became a city).
+  icon_stall: { w: 7, h: 7, rows: ['RXRXRXR', 'RXRXRXR', '.W...W.', '.W...W.', '.WYYYW.', '.WmmmW.', '.W...W.'] },
+  icon_city: { w: 7, h: 7, rows: ['...G...', '..GgG..', 'G.GgG.G', 'GgGgGgG', 'GgGKGgG', 'GgGKGgG', 'GGGGGGG'] },
+  icon_chain: { w: 7, h: 7, rows: ['GG.....', 'G.G....', '.GG....', '...f...', '....GG.', '....G.G', '.....GG'] },
+  // C4 map banners in the ruler's colour (C, D): a capital's banner, a kingdom's with a gold finial, a subject's pennant. Two frames wave.
+  banner_1: { w: 5, h: 10, rows: ['W....', 'WCCC.', 'WCCCC', 'WCCD.', 'W....', 'W....', 'W....', 'W....', 'W....', 'w....'] },
+  banner_2: { w: 5, h: 10, rows: ['W....', 'WCCCC', 'WCCC.', 'WCDC.', 'W....', 'W....', 'W....', 'W....', 'W....', 'w....'] },
+  banner_royal_1: { w: 6, h: 12, rows: ['.f....', 'fff...', '.W....', '.WCCCC', '.WCffC', '.WCCCC', '.WC.C.', '.W....', '.W....', '.W....', '.W....', '.w....'] },
+  banner_royal_2: { w: 6, h: 12, rows: ['.f....', 'fff...', '.W....', '.WCCC.', '.WCffC', '.WCCCC', '.W.C.C', '.W....', '.W....', '.W....', '.W....', '.w....'] },
+  // G1 a market stall: an awning striped in the town's colour, goods on the counter.
+  stall: { w: 8, h: 7, rows: ['CXCXCXCX', 'CXCXCXCX', 'W......W', 'W.YRYm.W', 'WwwwwwwW', 'W......W', 'W......W'] },
+  pennant_1: { w: 4, h: 7, rows: ['WCC.', 'WCCC', 'WD..', 'W...', 'W...', 'W...', 'w...'] },
+  pennant_2: { w: 4, h: 7, rows: ['WCCC', 'WCD.', 'W...', 'W...', 'W...', 'W...', 'w...'] },
 };

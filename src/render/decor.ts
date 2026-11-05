@@ -10,9 +10,10 @@ import { Discovery, has } from '../shared/discoveries';
 import type { MapData } from '../shared/types';
 import { getSprite, type Carry } from './sprites';
 import { hash01 } from '../shared/hash';
-import { RGBS } from './palette';
+import { GROUP_COLORS, PALETTE, RGBS, darken } from './palette';
 
 const R = CONFIG.render;
+const RT = CONFIG.render.towns;
 const F8 = R.f8;
 const TILE = CONFIG.map.tilePx;
 
@@ -223,6 +224,7 @@ export function paintedDensities(map: MapData): Float32Array[] {
 export interface BuildingGroup {
   id: number; homeX: number; homeY: number; mode: number; discoveries: ArrayLike<number>;
   huts: number; houses: number; farms: number; era: number; fortification: number; chief: boolean;
+  sizeClass: number; market: boolean; colourIndex: number;   // G1 town layout and market stalls
 }
 
 export type BuildingKind =
@@ -265,20 +267,27 @@ export class BuildingLayer {
   private key = '';
   private list: Building[] = [];
   private walls: WallPiece[] = [];
+  // G1: a town's paved plaza (tiles), its lanes (tile, horizontal?) and its market stalls (map px, colour).
+  private plaza: number[] = [];
+  private lanes: Array<[number, boolean]> = [];
+  private stalls: Array<{ x: number; y: number; C: string }> = [];
   private readonly imgs = new Map<string, HTMLCanvasElement>();
   /** Chimney smoke sources and night window lights (map px), rebuilt with the buildings. */
   chimneys: number[] = [];
   windows: number[] = [];
 
   update(map: MapData, groups: readonly BuildingGroup[]): void {
-    const key = groups.map((g) => `${g.id}:${g.homeX},${g.homeY},${g.mode},${g.huts},${g.houses},${g.farms},${g.era},${g.fortification},${g.chief ? 1 : 0},${specials(g).join('')},${has(g.discoveries, Discovery.city) ? 1 : 0},${has(g.discoveries, Discovery.stoneBuilding) ? 1 : 0}`).join('|');
+    const key = groups.map((g) => `${g.id}:${g.homeX},${g.homeY},${g.mode},${g.huts},${g.houses},${g.farms},${g.era},${g.fortification},${g.chief ? 1 : 0},${specials(g).join('')},${has(g.discoveries, Discovery.city) ? 1 : 0},${has(g.discoveries, Discovery.stoneBuilding) ? 1 : 0},${g.sizeClass},${g.market ? 1 : 0}`).join('|');
     if (key === this.key) return;
     this.key = key;
     this.list = [];
     this.walls = [];
+    this.plaza = [];
+    this.lanes = [];
+    this.stalls = [];
     const used = new Set<number>();
     for (const g of groups) used.add(g.homeY * map.width + g.homeX); // the home tile stays open
-    const r = CONFIG.people.range.forage;
+    const r = RT.layoutTiles;
     const candidates: Array<[number, number, number]> = [];
     for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) candidates.push([dx * dx + dy * dy, dy, dx]);
     candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
@@ -291,7 +300,9 @@ export class BuildingLayer {
     const B = F8.buildings;
     for (const g of groups) {
       const village = g.mode === Mode.Village;
-      const max = village ? R.maxBuildingsDrawn : R.maxHutsDrawnBand;
+      const town = village && g.sizeClass >= 2;
+      if (town) this.townPlan(map, g, free, used);
+      const max = !village ? R.maxHutsDrawnBand : g.sizeClass >= 3 ? RT.maxCityBuildings : town ? RT.maxTownBuildings : R.maxBuildingsDrawn;
       const houses = Math.min(g.houses, max);
       let huts = Math.min(g.huts, max - houses);
       const city = village && has(g.discoveries, Discovery.city) ? Math.min(R.maxCityDrawn, Math.floor(houses * R.cityShare)) : 0;
@@ -339,6 +350,52 @@ export class BuildingLayer {
     }
   }
 
+  /**
+   * G1: a town keeps open ground for a paved plaza round its home tile and two cross lanes running
+   * laneTiles out (north–south and east–west), so its houses stand in rows along streets. A market
+   * town puts its stalls on the plaza, the awnings in its colour.
+   */
+  private townPlan(map: MapData, g: BuildingGroup, free: (x: number, y: number, onFields: boolean) => boolean, used: Set<number>): void {
+    const C = GROUP_COLORS[g.colourIndex % GROUP_COLORS.length]!;
+    let stalls = g.market ? RT.stallsMax : 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = g.homeX + dx, y = g.homeY + dy;
+        if ((dx || dy) && !free(x, y, true)) continue;
+        const i = y * map.width + x;
+        used.add(i);
+        this.plaza.push(i);
+        if (stalls > 0 && dy !== 0) { this.stalls.push({ x: (x + 0.5) * TILE, y: (y + 1) * TILE - 1, C }); stalls--; }
+      }
+    }
+    for (let k = 2; k <= RT.laneTiles; k++) {
+      for (const [dx, dy, horizontal] of [[k, 0, true], [-k, 0, true], [0, k, false], [0, -k, false]] as const) {
+        const x = g.homeX + dx, y = g.homeY + dy;
+        if (!free(x, y, false)) continue;
+        used.add(y * map.width + x);
+        this.lanes.push([y * map.width + x, horizontal]);
+      }
+    }
+  }
+
+  /** G1: plazas and lanes, over the ground and under the sprites. */
+  drawGround(ctx: CanvasRenderingContext2D, width: number): void {
+    if (this.plaza.length === 0 && this.lanes.length === 0) return;
+    ctx.save();
+    ctx.globalAlpha = RT.plazaAlpha;
+    ctx.fillStyle = PALETTE.stoneLight;
+    for (const i of this.plaza) ctx.fillRect((i % width) * TILE, Math.floor(i / width) * TILE, TILE, TILE);
+    ctx.globalAlpha = RT.laneAlpha;
+    ctx.fillStyle = PALETTE.sand;
+    const off = (TILE - RT.laneWidthPx) >> 1;
+    for (const [i, horizontal] of this.lanes) {
+      const x = (i % width) * TILE, y = Math.floor(i / width) * TILE;
+      if (horizontal) ctx.fillRect(x, y + off, TILE, RT.laneWidthPx);
+      else ctx.fillRect(x + off, y, RT.laneWidthPx, TILE);
+    }
+    ctx.restore();
+  }
+
   /** Wall pieces on a circle of `rTiles` around home, skipping water and walls, with a gate facing south. */
   private ring(map: MapData, g: BuildingGroup, rTiles: number, stone: boolean): void {
     const B = F8.buildings;
@@ -365,6 +422,7 @@ export class BuildingLayer {
       if (!img) { img = getSprite(b.img, {}, false, night); this.imgs.set(name, img); }
       push(img, (b.x + b.w / 2) * TILE, (b.y + b.h) * TILE);
     }
+    for (const st of this.stalls) push(getSprite('stall', { C: st.C, D: darken(st.C) }), st.x, st.y);
     for (const w of this.walls) {
       const name = w.stone ? 'stoneWallPiece' : 'palisadePost';
       let img = this.imgs.get(name);
@@ -384,9 +442,15 @@ export class BuildingLayer {
     this.key = '';
     this.list = [];
     this.walls = [];
+    this.plaza = [];
+    this.lanes = [];
+    this.stalls = [];
     this.chimneys = [];
     this.windows = [];
   }
+
+  /** G1: where market stalls stand (map px), for the market crowd. */
+  stallSpots(): ReadonlyArray<{ x: number; y: number }> { return this.stalls; }
 }
 
 const SPRITE_H: Record<BuildingKind, number> = {

@@ -123,3 +123,83 @@ Contact, mini world (seeds 2 and 5, 800 years): groups removed by absorb or conq
 Scenario A seed 19, years 0–800: groups removed 605 → 97 (against an in-between version without 20.8 and 20.11), war starts 1,120 → 502, big log lines 16,522 → 4,834 (357 groups alive at year 800).
 Still noisy, for later items: "A sickness broke out" (1,533 big lines in 800 years: item 11, disease too strong) and villages crossing the 150 / 100 threshold back and forth ("grew into a village" 853).
 The later-era pace of item 1 (pass 7) is still to be re-checked now that era 1 is 0.02.
+
+## Pass 9 — C4 chiefdoms and kingdoms (28 Oct 2026; DECISIONS 21.x)
+
+First values are in pixel-ages-c4-plan.md §4.7. Changed by the bench:
+
+| Number | Plan | Now | Why |
+|---|---|---|---|
+| `realms.rebelBase` | 0.01 | 0.005 | Subjects revolted within a few years of joining |
+| `realms.cowedYears` | — | 10 | New. Wars come with hunger, so a freshly beaten village was at its hungriest: it revolted the same year in 6 of 26 cases (mini seed 2). Now only a ruler too weak to hold it loses it in the first 10 years |
+| `realms.graceYears` | — | 10 | New. A quick reconquest no longer logs "is no more" then "founded a chiefdom" again |
+
+Measured (1,000 years each):
+
+| World | Chiefdoms at once | Villages in the largest | Chiefdom lifespans | Revolts | Realm log lines |
+|---|---|---|---|---|---|
+| Mini seed 2 | 0–1 (first at year 599) | 2 | 63, 216 years | 9 | 24 |
+| Mini seed 5 | 0–1 (first at year 378) | 2 | 256, 25 years | 3 | 10 |
+| Scenario A seed 19 | up to 4 (first at year 401) | 3 | 31–400+ years, most 35–160 | 26 (44 before `cowedYears`) | 77 |
+| Scenario A seed 3 (before `cowedYears`) | up to 3 | 2 | 30–280 years | — | 80 |
+
+- **No kingdom by year 1,000:** no capital had Writing and a City yet. This is expected: states came thousands of years after the first farming.
+- **Realms are small** because few villages have a chief. In Scenario A, 3 of 180 groups have one at year 600 and 22 at year 900 (F6: 300+ people with a surplus).
+- **Most conquests still drive the loser off:** 350 against about 30 that made tributaries. The winner has no chief, or the loser is a band.
+- **Bigger realms sooner:** the lever is `future.society.chiefMinPop` (300). It was not changed, since it is an F6 decision.
+
+### Pass 9b — after the owner's try: "many villages close together, no chiefdom"
+
+**Cause:** only a group with a chief could rule, and a chief needs 300+ people. Yet at year 800 of Scenario A, 147 of 190 farming groups had under 150 people and only 33 had 300+. Small farming groups also stay bands, and bands could not be held.
+
+**Fix:** DECISIONS 21.11, and one number:
+- **War leaders:** a farming village of 150+ people that beats a settled neighbour gets a chief.
+- **Settled:** a group with fields can be held, band or not.
+- `realms.rebelWeakRatio` 1.5 → **1**: a village revolts readily only when it is as strong as the rest of the realm. At 1.5, the new small chiefdoms lost nearly every subject: 93 revolts against 111 conquests and submissions.
+
+Scenario A seed 19, 1,000 years:
+
+| | Pass 9 | War leaders | War leaders + ratio 1 |
+|---|---|---|---|
+| Chiefdoms founded | 9 | 45 | 72 |
+| Chiefdoms at once (years 500–1000) | 0–4 | 6 → 1 | **5–9** |
+| Subject villages at year 1,000 | 6 | 1 | 14 |
+| Revolts | 26 | 93 | 83 |
+| Realm log lines | 77 | 301 | 377 (~38 a century) |
+
+- **Mini seeds 2 / 5:** chiefdoms founded 2 / 2 → 15 / 9; realm log lines 24 / 10 → 90 / 48.
+- **Size:** realms are still small, 2–3 villages (simple chiefdoms).
+- **Kingdoms:** none by year 1,000; they wait for Writing and a City.
+
+## Pass 10 — G1 towns that grow (29 Oct 2026; DECISIONS 22.x)
+
+Measured with `tests/_probe/towns.test.ts` (one JSON line per seed and checkpoint). Mini world, seeds 1–5, 1,500 years; "towns off" sets the old rules through overrides.
+
+| Setup | Markets | Sellers | Largest | Towns 500+ | Discoveries | Wars started | Flips (village / band) |
+|---|---|---|---|---|---|---|---|
+| Towns off (old rules) | 0 | 0 | 1,010 | 4.0 | 448 | 305 | 307 / 285 |
+| Plan numbers (reach 12, keep 6, sell 25%) | 0.4 | 0.8 | 1,029 | 4.8 | 466 | 328 | 164 / 147 |
+| Reach 20 | 7.4 | 14 | 972 | 7.4 | 438 | 315 | 145 / 122 |
+| **Reach 20 + hierarchy + keep 4 + sell 50%** | **3.0** | **16** | **1,058** | **6.0** | **514** | **270** | **149 / 127** |
+| … plus every village a band only under 50 | 2.6 | 11 | 1,393 | 4.8 | 596 | 432 | 203 / 185 (rejected: more war, no fewer flips) |
+
+Why each change:
+- **Reach 20:** villages stand at least 12 km apart (2 × the 6 km forage range), so a 12 km reach found almost no buyers.
+- **Hierarchy:** without it, every 300-person village held a market with 2 sellers.
+- **Keep 4 months, sell half:** at keep 6 and sell 25%, a 670-person market town received about 280 FU a year, enough to feed about 23 people.
+
+Scenario A, 2,000 years, final numbers:
+
+| Seed 19 | Old rules | Towns |
+|---|---|---|
+| Largest settlement | 3,158 | **5,197** |
+| Settlements of 500+ | 25 | 29 |
+| Markets / sellers | 0 / 0 | 10 / 40 |
+| Discoveries | 3,560 | 3,936 |
+| "Grew into a village" / "became a band" | 3,981 / 3,856 | 1,439 / 1,373 |
+
+- **Seed 3:** the largest settlement was 2,307 at year 1,000 and 2,926 at year 2,000; 10–14 markets; 38,000 people.
+- **Market towns' food:** between 0 and about 60% of a market town's yearly need came in from outside (some small markets get more than their need in a good year).
+- **The old rules already had towns:** 25 settlements of 500+ by year 2,000. They looked like villages because villages drew at most 30 buildings and had no size label; G1 draws them as towns.
+- **No city yet:** City is an era-6 discovery, and both worlds were in era 4 at year 2,000. Towns quicken discovery (+11–15%), but item 1's pace still governs the eras.
+- **Repeated market lines:** "holds a market" repeated as markets near the line opened and closed (198 in 2,000 years). Market, town and city lines are now logged at most once a century per place (`towns.logQuietYears`).

@@ -51,7 +51,7 @@ export interface PersonStory {
 }
 
 /** F7 relation lines between homes. */
-export interface RelationView { a: number; b: number; kind: 'coexist' | 'trade' | 'war' | 'alliance' }
+export interface RelationView { a: number; b: number; kind: 'coexist' | 'trade' | 'war' | 'alliance' | 'realm' }
 
 export interface AreaInfo { regionId: number; name: string; tileCount: number; centerX: number; centerY: number }
 
@@ -88,6 +88,16 @@ export interface GroupView {
   fortification: number;         // F8 drawing: 0 none, 1 palisade, 2 stone wall (F6)
   chief: boolean;                // F8 drawing: a village with a chief gets a temple
   sick: boolean;                 // F8 drawing: an outbreak is running in this group (F5)
+  // C4 realms: borders, banners and labels.
+  realmHead: number;             // id of the realm's ruler (itself for a ruler); −1 = in no realm
+  realmRank: number;             // the ruler's rank: 0 none, 1 chiefdom, 2 kingdom
+  realmColour: number;           // the ruler's colour index
+  subjects: number;              // a ruler: villages it rules (0 otherwise)
+  // G1 towns: layout, market stalls, carriers, labels.
+  sizeClass: number;             // SizeClass: hamlet, village, town, city
+  market: boolean;               // holds a market
+  marketId: number;              // the market town it sells to (−1 none)
+  sells: boolean;                // sold food at market last year (carriers walk)
 }
 
 /** Floats per person in Frame.people. */

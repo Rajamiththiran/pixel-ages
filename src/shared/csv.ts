@@ -8,7 +8,7 @@ type Row = YearStats['perLineage'][number];
 /** One column per YearStats field, in this order; `discoveries` becomes a count and a name list. */
 export const STAT_COLUMNS = [
   'lineageId', 'population', 'groups', 'bestEra', 'avgEra',
-  'intActual', 'intPotential', 'coopActual', 'coopPotential', 'strActual', 'strPotential', 'fed', 'discoveries',
+  'intActual', 'intPotential', 'coopActual', 'coopPotential', 'strActual', 'strPotential', 'fed', 'ruled', 'largest', 'discoveries',
 ] as const satisfies ReadonlyArray<keyof Row>;
 
 /** A CSV field: quoted when it holds a comma, quote or line break. */
@@ -27,7 +27,8 @@ export function statsCsv(rows: readonly YearStats[], lineageName: (id: number) =
   for (const row of rows) {
     for (const r of row.perLineage) {
       const ids = idsOf(r.discoveries);
-      const values = STAT_COLUMNS.map((k) => (k === 'discoveries' ? ids.length : r[k]));
+      // C4 'ruled' is absent in rows of older runs: 0 villages ruled.
+      const values = STAT_COLUMNS.map((k) => (k === 'discoveries' ? ids.length : r[k] ?? 0));
       out.push(line([row.year, lineageName(r.lineageId), ...values, ids.map((d) => DISCOVERIES[d]!.name).join('; ')]));
     }
   }
