@@ -2,31 +2,33 @@
 // canvas and cached by key, so the draw loop only calls drawImage.
 
 import { SPRITES, type SpriteDef } from './spriteData';
-import { PALETTE, GROUP_COLORS, SKIN_COLORS, HAIR_COLORS, ELDER_HAIR, darken } from './palette';
+import { GROUP_COLORS, SKIN_COLORS, HAIR_COLORS, ELDER_HAIR, darken, worldHex } from './palette';
 
 /** Colours for the per-sprite legend characters (§19.1). */
 export interface SpriteVars { H?: string; S?: string; C?: string; D?: string; L?: string }
 
+// Diorama look (phase 1): each letter draws its ramp step (dark wood → wood-0, stone light →
+// stone-4, water light → water-4); the grids themselves are unchanged.
 const FIXED: Record<string, string> = {
-  K: PALETTE.ink,
-  W: PALETTE.wood,
-  w: PALETTE.darkWood,
-  Y: PALETTE.sand,
-  M: PALETTE.mudBrick,
-  m: PALETTE.clay,
-  G: PALETTE.stone,
-  g: PALETTE.stoneLight,
-  F: PALETTE.fireOrange,
-  f: PALETTE.fireYellow,
+  K: worldHex('ink'),
+  W: worldHex('wood'),
+  w: worldHex('darkWood'),
+  Y: worldHex('sand'),
+  M: worldHex('mudBrick'),
+  m: worldHex('clay'),
+  G: worldHex('stone'),
+  g: worldHex('stoneLight'),
+  F: worldHex('fireOrange'),
+  f: worldHex('fireYellow'),
   // F8 icons and effects
-  B: PALETTE.water,
-  b: PALETTE.waterLight,
-  R: PALETTE.fruit,
-  E: PALETTE.grass,
-  e: PALETTE.forest,
-  X: PALETTE.snow,
-  N: PALETTE.copper,
-  I: PALETTE.iron,
+  B: worldHex('water'),
+  b: worldHex('waterLight'),
+  R: worldHex('fruit'),
+  E: worldHex('grass'),
+  e: worldHex('forest'),
+  X: worldHex('snow'),
+  N: worldHex('copper'),
+  I: worldHex('iron'),
 };
 
 /** Colour of one grid character, or null for transparent. */

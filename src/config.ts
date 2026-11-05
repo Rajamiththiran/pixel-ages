@@ -663,6 +663,32 @@ export const CONFIG = {
       pebbleChance: 0.01,
     },
     farmSoilRowEvery: 3,         // every 3rd pixel row of farmland is soil
+    // Toy Diorama look (docs/diorama-plan; design system in docs/mockups). Render only. Each effect
+    // has an off switch here; `?off=ramps` in the URL also turns one off for a quick comparison.
+    diorama: {
+      // Phase 1: colours come from 5-step ramps and shading moves whole steps (− darker and cooler,
+      // + lighter and warmer) instead of multiplying. These replace the classic multipliers.
+      ramps: {
+        on: true,
+        wetEdgeSteps: [-1, 0],     // land 0 and 1 px from water (classic ×0.75, ×0.88)
+        tuftLightSteps: 1, tuftTipSteps: 2, tuftShadowSteps: -1, // grass blades (classic ×1.18, ×1.3, ×0.82)
+        duneDarkSteps: -1, duneLightSteps: 1,                   // dune crest and its lit row
+        treeLightSteps: 1,         // crown's top-left side
+        treeShadowSteps: -2,       // crown's bottom-right side (the mockup's darkVar ≈ step 0)
+        treeToneShare: 0.2,        // this share of crowns one step darker, the same share one lighter
+        seaSteps: -1,              // sea walls a step darker than lakes (classic ×0.9)
+        terraceSteps: -1,          // terrace contour rows
+        burnSteps: -2,             // char on burning ground (classic ×0.45; mockup: two shade steps)
+        heightPerStep: 2,          // hills: one ramp step per this many height levels across a tile …
+        heightMaxSteps: 2,         // … at most this many steps either way
+        wallBodyStep: 1,           // a mountain wall's body is stone-1, so its peaks' dark slope (stone-0) shows
+        wornSteps: 1,              // worn fields one step paler per wear level
+      },
+      // The design system's shade formula, shadowOf(c) = c × shadeMul + shadeAdd (cool and darker),
+      // and lineage shade = mix(c, shadowOf(c), lineageShadeMix): the colour tokens follow it exactly,
+      // so colours without a token (the colour-blind lineages) use it too.
+      shadeMul: [0.62, 0.58, 0.64], shadeAdd: [6, 6, 22], lineageShadeMix: 0.85,
+    },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,
     founderSpreadPx: 10,         // placed founders stand within ±10 px of their home tile

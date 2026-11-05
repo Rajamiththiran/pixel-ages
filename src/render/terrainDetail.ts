@@ -7,8 +7,10 @@ import { Ground, Plant, WallType } from '../shared/ids';
 import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
+import { Mat, rampMix, rampRgb, rampShift, rampsOn } from './ramps';
 
 const D = CONFIG.render.detail;
+const DR = CONFIG.render.diorama.ramps;
 const TILE = CONFIG.map.tilePx;
 const LAST = TILE - 1;
 
@@ -33,6 +35,15 @@ export function scale(out: RGB, m: number): void {
 }
 
 const tmp: RGB = [0, 0, 0];
+
+/** Blend a → b: arithmetic in the classic look, along the colour ramps in the Diorama look (phase 1). */
+export const mix: (a: RGB, b: RGB, t: number, out: RGB) => void = rampsOn ? rampMix : blend;
+
+/** Shading: the classic look multiplies by `mult`; the Diorama look moves `steps` along the ramp. */
+export function shade(out: RGB, mult: number, steps: number): void {
+  if (rampsOn) rampShift(out, steps);
+  else scale(out, mult);
+}
 
 // ---------- tile classification ----------
 
@@ -121,19 +132,19 @@ function sampleDepth(depth: Uint8Array, w: number, h: number, px: number, py: nu
 }
 
 const SHALLOW: RGB = [0, 0, 0];
-blend(RGBS.water, RGBS.waterLight, D.waterShallowBlend, SHALLOW);
+mix(RGBS.water, RGBS.waterLight, D.waterShallowBlend, SHALLOW);
 
 export function waterPixel(
   map: MapData, depth: Uint8Array, px: number, py: number, sea: boolean, waveStep: number, out: RGB,
 ): void {
   let t = Math.min(1, sampleDepth(depth, map.width, map.height, px, py) / D.waterDeepAtTiles);
   if (sea) t = D.seaMinDepth + (1 - D.seaMinDepth) * t;
-  if (t <= D.waterShallowShare) blend(SHALLOW, RGBS.water, t / D.waterShallowShare, out);
-  else blend(RGBS.water, RGBS.deepWater, (t - D.waterShallowShare) / (1 - D.waterShallowShare), out);
-  if (sea) scale(out, D.seaDarken);
+  if (t <= D.waterShallowShare) mix(SHALLOW, RGBS.water, t / D.waterShallowShare, out);
+  else mix(RGBS.water, RGBS.deepWater, (t - D.waterShallowShare) / (1 - D.waterShallowShare), out);
+  if (sea) shade(out, D.seaDarken, DR.seaSteps);
   if (isWave(px, py, waveStep)) {
     copy(out, tmp);
-    blend(tmp, RGBS.waterLight, D.waveBlend, out);
+    mix(tmp, RGBS.waterLight, D.waveBlend, out);
   }
 }
 
@@ -162,6 +173,11 @@ export function applyFoam(d: number, px: number, py: number, waveStep: number, o
 
 /** Wet sand/soil on land pixels next to water. */
 export function applyWetEdge(d: number, out: RGB): void {
+  if (rampsOn) {
+    const s = DR.wetEdgeSteps[d];
+    if (s) rampShift(out, s);
+    return;
+  }
   const m = D.wetEdgeMult[d];
   if (m !== undefined) scale(out, m);
 }
@@ -177,9 +193,9 @@ export function applyGrassDetail(px: number, py: number, chance: number, flowers
     // Blade fits inside its cell: x in 0..c-2 (room for the shadow), y in 1..c-1 (room for the tip).
     const bx = cx * c + Math.floor(hash01(cx, cy, SALT.tuft + 1) * (c - 1));
     const by = cy * c + 1 + Math.floor(hash01(cx, cy, SALT.tuft + 2) * (c - 1));
-    if (px === bx && py === by) { scale(out, D.tuftLight); return; }
-    if (px === bx && py === by - 1) { scale(out, D.tuftTip); return; }
-    if (px === bx + 1 && py === by) { scale(out, D.tuftShadow); return; }
+    if (px === bx && py === by) { shade(out, D.tuftLight, DR.tuftLightSteps); return; }
+    if (px === bx && py === by - 1) { shade(out, D.tuftTip, DR.tuftTipSteps); return; }
+    if (px === bx + 1 && py === by) { shade(out, D.tuftShadow, DR.tuftShadowSteps); return; }
   }
   if (!flowers) return;
   const f = D.flowerCell;
@@ -224,12 +240,21 @@ export function forestCrown(map: MapData, px: number, py: number, out: RGB): boo
       // Front-most crown wins: lower on screen, then further right.
       if (ty > bestY || (ty === bestY && tx > bestX)) {
         bestY = ty; bestX = tx; bestDx = dx; bestDy = dy; bestR = r;
-        bestTone = 1 - D.treeToneVar / 2 + hash01(cx, cy, SALT.tree + 4) * D.treeToneVar;
+        bestTone = hash01(cx, cy, SALT.tree + 4);
       }
     }
   }
   if (bestY < 0) return false;
   const n = (bestDx + bestDy) / bestR;
+  if (rampsOn) {
+    // Diorama: forest-2 crowns, one step up on the lit top-left, two down on the far side; some
+    // crowns a step darker or lighter so a wood isn't one flat green.
+    const tone = bestTone < DR.treeToneShare ? -1 : bestTone >= 1 - DR.treeToneShare ? 1 : 0;
+    const side = n <= D.treeLightBelow ? DR.treeLightSteps : n >= D.treeShadowAbove ? DR.treeShadowSteps : 0;
+    copy(rampRgb(Mat.Forest, 2 + tone + side), out);
+    return true;
+  }
+  bestTone = 1 - D.treeToneVar / 2 + bestTone * D.treeToneVar;
   if (n <= D.treeLightBelow) blend(RGBS.forest, RGBS.grassLight, D.treeLightBlend, out);
   else copy(RGBS.forest, out);
   if (n >= D.treeShadowAbove) scale(out, D.treeShadowMult);
@@ -240,19 +265,22 @@ export function forestCrown(map: MapData, px: number, py: number, out: RGB): boo
 /** Dark ground between trees, stronger with density. */
 export function forestFloor(dens: number, out: RGB): void {
   copy(out, tmp);
-  blend(tmp, FOREST_FLOOR, dens, out);
+  mix(tmp, FOREST_FLOOR, dens, out);
 }
 
-const FOREST_FLOOR: RGB = [
+// Diorama: the forest's deepest step, forest-0, instead of the forest colour × 0.55.
+const FOREST_FLOOR: RGB = rampsOn ? rampRgb(Mat.Forest, 0) : [
   RGBS.forest[0] * D.forestFloorMult, RGBS.forest[1] * D.forestFloorMult, RGBS.forest[2] * D.forestFloorMult,
 ];
 
 // ---------- mountains ----------
 
 const PEAK_GROUND_LIGHT: RGB = [0, 0, 0];
-blend(RGBS.stone, RGBS.stoneLight, D.peakLightBlend, PEAK_GROUND_LIGHT);
+mix(RGBS.stone, RGBS.stoneLight, D.peakLightBlend, PEAK_GROUND_LIGHT);
+// Diorama: a wall's body is stone-1 (terrain.ts), so its peaks' dark slope is stone-0, not ink.
 const PEAK_WALL_DARK: RGB = [0, 0, 0];
-blend(RGBS.mountainDark, RGBS.ink, D.wallPeakDarkBlend, PEAK_WALL_DARK);
+if (rampsOn) copy(rampRgb(Mat.Stone, 0), PEAK_WALL_DARK);
+else blend(RGBS.mountainDark, RGBS.ink, D.wallPeakDarkBlend, PEAK_WALL_DARK);
 
 /**
  * Triangular peaks: light left slope, dark right slope, snow on tall ones. A peak exists only
@@ -308,8 +336,8 @@ export function applyDesertDetail(px: number, py: number, out: RGB): void {
     if (hash01(k, seg, SALT.dune + 2) >= D.duneKeep) continue;
     // Render-only code, so Math.sin is fine here (the determinism rule covers src/sim).
     const crest = Math.round(k * P + phase + D.duneAmp * Math.sin(((px + shift) / D.duneWavelength) * TWO_PI));
-    if (py === crest) { scale(out, D.duneDark); return; }
-    if (py === crest - 1) { scale(out, D.duneLight); return; }
+    if (py === crest) { shade(out, D.duneDark, DR.duneDarkSteps); return; }
+    if (py === crest - 1) { shade(out, D.duneLight, DR.duneLightSteps); return; }
   }
   if (hash01(px, py, SALT.pebble) < D.pebbleChance) {
     copy(hash01(px, py, SALT.pebble + 1) < 0.5 ? RGBS.stone : RGBS.wood, out);

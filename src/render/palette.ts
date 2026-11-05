@@ -1,6 +1,7 @@
 // Colours (§18.1).
 
 import { CONFIG } from '../config';
+import { Mat, accent, alias, lineageShade, rampsOn, RAMP_HEX } from './ramps';
 
 export const PALETTE = {
   ink: '#1c1a24',
@@ -80,8 +81,12 @@ export function rgbToHex([r, g, b]: RGB): string {
   return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
 }
 
-/** The dark variant D of a lineage colour: each channel × 0.7. */
+/**
+ * The dark variant D of a lineage colour: the design system's lineage shade (Diorama look), or
+ * each channel × 0.7 (classic look, or any other multiplier).
+ */
 export function darken(hex: string, mult: number = CONFIG.render.darkColorMult): string {
+  if (rampsOn && mult === CONFIG.render.darkColorMult) return lineageShade(hex);
   const [r, g, b] = hexToRgb(hex);
   return rgbToHex([Math.round(r * mult), Math.round(g * mult), Math.round(b * mult)]);
 }
@@ -90,3 +95,33 @@ export function darken(hex: string, mult: number = CONFIG.render.darkColorMult):
 export const RGBS: Record<PaletteKey, RGB> = Object.fromEntries(
   Object.entries(PALETTE).map(([k, v]) => [k, hexToRgb(v)]),
 ) as Record<PaletteKey, RGB>;
+
+/**
+ * Diorama look (phase 1): the ramp step each classic palette colour stands for. Colours the
+ * design system gives no ramp (ink, ores, flowers, flames, fruit, foam…) are accents: they never
+ * shade. Nearest token, except grass-light (grass-3: the mockup blends lush grass at most 60%
+ * toward it, and step 4 stays the highlight), deep water (water-0, the mockup's deep colour) and
+ * the mud of banks and silt (wood-1). DECISIONS 23.1.
+ */
+const RAMP_OF: Partial<Record<PaletteKey, readonly [Mat, number]>> = {
+  grass: [Mat.Grass, 2], grassLight: [Mat.Grass, 3], fruitBush: [Mat.Grass, 1],
+  forest: [Mat.Forest, 2],
+  water: [Mat.Water, 2], waterLight: [Mat.Water, 4], deepWater: [Mat.Water, 0],
+  sand: [Mat.Sand, 2],
+  stone: [Mat.Stone, 2], stoneLight: [Mat.Stone, 4], mountainDark: [Mat.Stone, 0],
+  clay: [Mat.Clay, 2], mudBrick: [Mat.Mudbrick, 2],
+  wood: [Mat.Wood, 2], darkWood: [Mat.Wood, 0], mud: [Mat.Wood, 1],
+  snow: [Mat.Snow, 2],
+};
+
+for (const key of Object.keys(PALETTE) as PaletteKey[]) {
+  const r = RAMP_OF[key];
+  if (r) alias(RGBS[key], r[0], r[1]);
+  else accent(RGBS[key]);
+}
+
+/** A palette colour as drawn: its ramp step in the Diorama look, else the classic colour (sprites). */
+export function worldHex(key: PaletteKey): string {
+  const r = RAMP_OF[key];
+  return rampsOn && r ? RAMP_HEX[r[0]]![r[1]]! : PALETTE[key];
+}
