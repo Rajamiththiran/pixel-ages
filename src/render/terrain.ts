@@ -11,10 +11,11 @@ import { N8 } from '../shared/grid';
 import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampFinal, rampRgb, rampShift, rampsOn } from './ramps';
+import { applyTexture, ditherOn, ditherPixel } from './dither';
 import { HazardMark, Look, Mark, lookLevel } from '../shared/protocol';
 import {
   PeakKind, SALT as DETAIL_SALT, applyDesertDetail, applyFoam, applyGrassDetail, applyWetEdge, blend, computeDepth, copy,
-  edgeDistance, forestCrown, forestFloor, isWaterTile, mix, mountainPeak, peakKind, scale, shade, waterPixel,
+  edgeDistance, forestCrown, forestFloor, grad, isWaterTile, mix, mountainPeak, peakKind, scale, shade, waterPixel,
 } from './terrainDetail';
 
 const R = CONFIG.render;
@@ -130,6 +131,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
       const px = tx * TILE + ox;
       const edge = hasEdge ? edgeDistance(ox, oy, nb) : 99;
       const corner = corners !== 0 ? cornerCut(ox, oy, corners) : false;
+      if (ditherOn) ditherPixel(px, py);
 
       if (water && !corner) {
         if (river) riverPixel(map, tx, ty, px, py, time.riverStep, out);
@@ -139,6 +141,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         // A rounded-off corner of a water tile: the bank.
         copy(cornerLand, out);
         applyWetEdge(0, out);
+        if (ditherOn) applyTexture(px, py, out);
       } else if (corner) {
         // A land corner inside a bend: the water rounds it off.
         if (corners & RIVER_BEND) riverPixel(map, tx, ty, px, py, time.riverStep, out);
@@ -148,6 +151,8 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         if (kind === PeakKind.Wall) mountainPeak(map, kind, px, py, out);
         if (shaded) shadeHeight(map, px, py, out);
         if (hasEdge) applyWetEdge(edge, out);
+        // Diorama phase 2: clustered ordered dither on land (the mockup leaves water untextured).
+        if (ditherOn) applyTexture(px, py, out);
       } else {
         landPixel(map, ground, plant, dens, kind, nearForest, stumps ? painted : -1, px, py, out);
         if (resShare > 0 && hash01(px, py, SALT.resource + res) < resShare) copy(RESOURCE_COLOR[res]!, out);
@@ -161,10 +166,12 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         if (beachGround && hasLake && edgeDistance(ox, oy, nbLake) < F8.beachPx) copy(RGBS.sand, out);
         if (shaded) shadeHeight(map, px, py, out);
         if (hasEdge) applyWetEdge(edge, out);
+        // Diorama phase 2: clustered ordered dither on land (the mockup leaves water untextured).
+        if (ditherOn) applyTexture(px, py, out);
       }
 
-      // Diorama: no random grain (readme: texture is ordered dither, phase 2), and every pixel
-      // ends on a ramp or accent colour.
+      // Diorama: no random grain (readme: texture is ordered dither, applyTexture above), and
+      // every pixel ends on a ramp or accent colour.
       let g = 1;
       if (rampsOn) rampFinal(out);
       else g = 1 + R.grain * (2 * hash01(px, py, SALT.grain) - 1);
@@ -412,7 +419,7 @@ function landPixel(
     case Plant.Grass: {
       const desert = ground === Ground.Desert;
       copy(out, tmp);
-      mix(tmp, RGBS.grassLight, desert ? dens * R.desertGrassMaxBlend : dens, out);
+      grad(tmp, RGBS.grassLight, desert ? dens * R.desertGrassMaxBlend : dens, out);
       const chance = (ground === Ground.Grassland ? D.tuftBase : 0) + D.tuftGrassBonus * dens;
       applyGrassDetail(px, py, chance, ground === Ground.Grassland, out);
       break;
@@ -422,7 +429,7 @@ function landPixel(
       break;
     case Plant.FruitBushes:
       copy(out, tmp);
-      mix(tmp, RGBS.fruitBush, dens, out);
+      grad(tmp, RGBS.fruitBush, dens, out);
       if (speck(px, py, SALT.fruit, R.fruitSpeck * dens)) copy(RGBS.fruit, out);
       break;
     case Plant.Farmland:

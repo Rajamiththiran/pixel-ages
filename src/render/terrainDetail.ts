@@ -8,6 +8,7 @@ import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampMix, rampRgb, rampShift, rampsOn } from './ramps';
+import { ditherOn, mixGrad } from './dither';
 
 const D = CONFIG.render.detail;
 const DR = CONFIG.render.diorama.ramps;
@@ -38,6 +39,9 @@ const tmp: RGB = [0, 0, 0];
 
 /** Blend a → b: arithmetic in the classic look, along the colour ramps in the Diorama look (phase 1). */
 export const mix: (a: RGB, b: RGB, t: number, out: RGB) => void = rampsOn ? rampMix : blend;
+
+/** A gradient blend (plant density): `mix`, dithered between tones in phase 2. */
+export const grad: (a: RGB, b: RGB, t: number, out: RGB) => void = ditherOn ? mixGrad : mix;
 
 /** Shading: the classic look multiplies by `mult`; the Diorama look moves `steps` along the ramp. */
 export function shade(out: RGB, mult: number, steps: number): void {
@@ -139,6 +143,8 @@ export function waterPixel(
 ): void {
   let t = Math.min(1, sampleDepth(depth, map.width, map.height, px, py) / D.waterDeepAtTiles);
   if (sea) t = D.seaMinDepth + (1 - D.seaMinDepth) * t;
+  // Depth is banded, not dithered: a narrow stream has one depth all along and would turn into an
+  // even checker; the mockup leaves water untextured too (readme: "banded or dithered").
   if (t <= D.waterShallowShare) mix(SHALLOW, RGBS.water, t / D.waterShallowShare, out);
   else mix(RGBS.water, RGBS.deepWater, (t - D.waterShallowShare) / (1 - D.waterShallowShare), out);
   if (sea) shade(out, D.seaDarken, DR.seaSteps);
@@ -265,7 +271,7 @@ export function forestCrown(map: MapData, px: number, py: number, out: RGB): boo
 /** Dark ground between trees, stronger with density. */
 export function forestFloor(dens: number, out: RGB): void {
   copy(out, tmp);
-  mix(tmp, FOREST_FLOOR, dens, out);
+  grad(tmp, FOREST_FLOOR, dens, out);
 }
 
 // Diorama: the forest's deepest step, forest-0, instead of the forest colour × 0.55.

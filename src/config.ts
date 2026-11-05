@@ -684,6 +684,22 @@ export const CONFIG = {
         wallBodyStep: 1,           // a mountain wall's body is stone-1, so its peaks' dark slope (stone-0) shows
         wornSteps: 1,              // worn fields one step paler per wear level
       },
+      // Phase 2: ground texture is clustered ordered dither, a 4×4 Bayer over value noise (readme
+      // "Texture"; numbers from the mockup renderer pixel-scenes.js). Needs the ramps; off → phase 1's flat ramps.
+      dither: {
+        on: true,
+        noiseScalePx: 4.5,         // value-noise cell size: clusters about this many px across
+        lightAbove: 0.6,           // noise above this lifts a pixel one ramp step …
+        darkBelow: 0.38,           // … below this drops it one step …
+        gain: 5,                   // … where (distance past the line × gain) beats the Bayer threshold …
+        stepShare: 0.44,           // … scaled by this: the mockup shades 0.22 of the way to the ramp's end, about
+                                   //     0.44 of one step, so on whole-step ramps at most 44% of a cluster's pixels move
+        noiseSalt: 19,
+        gradientLevels: 4,         // a blend between two materials (grass into forest floor) dithers across this many tones
+      },
+      // Phase 2: the season tint as a crisp 4×4 Bayer stipple of the season's colour, instead of a
+      // blurred translucent wash (readme: "banded or dithered, never blurred").
+      ditherSeason: { on: true },
       // The design system's shade formula, shadowOf(c) = c × shadeMul + shadeAdd (cool and darker),
       // and lineage shade = mix(c, shadowOf(c), lineageShadeMix): the colour tokens follow it exactly,
       // so colours without a token (the colour-blind lineages) use it too.

@@ -1,4 +1,4 @@
-// Toy Diorama look, phase 1 (docs/diorama-plan/01-ramps.md): colour ramps and shading.
+// Toy Diorama look (docs/diorama-plan): phase 1 colour ramps and shading, phase 2 dither.
 // The design system is in docs/mockups/Pixel Ages UI mockups/_ds/ (readme.md, tokens/*.css).
 
 import { describe, expect, it } from 'vitest';
@@ -10,6 +10,8 @@ import { Mat, NIGHT_HEX, RAMP_HEX, hexRgb, lineageShade, rampColours, rampsOn, s
 import { darken, GROUP_COLORS, usePalette } from '../src/render/palette';
 import { drawTilePixels } from '../src/render/terrain';
 import { computeDepth } from '../src/render/terrainDetail';
+import { bayer, ditherPixel, mixGrad, valueNoise } from '../src/render/dither';
+import { stippleCells, stippleCounts, TintClass } from '../src/render/season';
 import { scenarioA } from './fixtures';
 
 // Node's fs, loaded at run time: the project has no Node typings, and Vitest blanks CSS imports.
@@ -143,5 +145,100 @@ describe('palette audit: every terrain pixel is a ramp or accent colour', () => 
     // Rising to the east, the slope faces the top-left sun: lighter. Falling to the east: darker.
     expect(grass.indexOf(at(20, 12))).toBeGreaterThan(2);
     expect(grass.indexOf(at(76, 12))).toBeLessThan(2);
+  });
+});
+
+// ---------- phase 2: dither (docs/diorama-plan/02-dither.md) ----------
+
+describe('Diorama dither (phase 2)', () => {
+  it('the Bayer thresholds are the 16 levels of a 4×4 ordered matrix, repeating every 4 px', () => {
+    const seen = new Set<number>();
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      seen.add(bayer(x, y));
+      expect(bayer(x + 4, y + 8)).toBe(bayer(x, y));
+    }
+    expect([...seen].sort((a, b) => a - b)).toEqual(Array.from({ length: 16 }, (_, k) => (k + 0.5) / 16));
+  });
+
+  it('value noise is 0–1, smooth, and fixed per world pixel', () => {
+    let maxJump = 0;
+    for (let x = 0; x < 400; x++) {
+      const n = valueNoise(x, 37);
+      expect(n).toBeGreaterThanOrEqual(0);
+      expect(n).toBeLessThanOrEqual(1);
+      maxJump = Math.max(maxJump, Math.abs(valueNoise(x + 1, 37) - n));
+      expect(valueNoise(x, 37)).toBe(n);
+    }
+    expect(maxJump).toBeLessThan(0.35);   // clusters, not grain
+  });
+
+  it('tiles redraw identically in any order (no state leaks from one pixel to the next)', () => {
+    const { m, marks, hazards, look, base } = testMap();
+    const depth = new Uint8Array(m.width * m.height);
+    computeDepth(m, depth);
+    const ex = { depth, crossing: null, marks, hazards, look, base };
+    const imgW = m.width * 8, n = m.width * m.height;
+    const a = new Uint8ClampedArray(imgW * m.height * 8 * 4), b = new Uint8ClampedArray(a.length);
+    for (let i = 0; i < n; i++) drawTilePixels(m, i, a, imgW, { waterStep: 1, riverStep: 1 }, ex);
+    for (let i = n - 1; i >= 0; i--) drawTilePixels(m, i, b, imgW, { waterStep: 1, riverStep: 1 }, ex);
+    let diff = 0;
+    for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) diff++;
+    expect(diff).toBe(0);
+  });
+
+  it('flat grass shows clustered texture of neighbouring ramp steps, never other colours', () => {
+    const W = 20, H = 12, m = createMap(W, H);
+    const data = render(m, { depth: new Uint8Array(W * H), crossing: null, marks: null, hazards: null, look: null, base: null });
+    const count = new Map<string, number>();
+    for (let o = 0; o < data.length; o += 4) {
+      const k = '#' + [data[o]!, data[o + 1]!, data[o + 2]!].map((v) => v.toString(16).padStart(2, '0')).join('');
+      count.set(k, (count.get(k) ?? 0) + 1);
+    }
+    const g = RAMP_HEX[Mat.Grass]!;
+    expect(count.get(g[2]!)! / (data.length / 4)).toBeGreaterThan(0.5);   // mostly the base step
+    expect(count.get(g[1]!) ?? 0).toBeGreaterThan(0);                      // darker clusters
+    expect(count.get(g[3]!) ?? 0).toBeGreaterThan(0);                      // lighter clusters (and blades)
+    const flowers = ['#f4d35e', '#f4f1e8', '#b8323a'];
+    for (const k of count.keys()) expect([...g, ...flowers]).toContain(k);
+  });
+
+  it('a gradient blend dithers between the two nearest steps in the right share', () => {
+    const g0 = hexRgb(RAMP_HEX[Mat.Grass]![0]!), g2 = hexRgb(RAMP_HEX[Mat.Grass]![2]!);
+    const out: [number, number, number] = [0, 0, 0];
+    let sum = 0;
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      ditherPixel(x, y);
+      mixGrad(g2, g0, 0.3, out);                     // 30% of the way from step 2 to step 0 = step 1.4
+      const step = RAMP_HEX[Mat.Grass]!.indexOf('#' + out.map((v) => v.toString(16).padStart(2, '0')).join(''));
+      expect([1, 2]).toContain(step);
+      sum += step;
+    }
+    expect(sum / 16).toBeCloseTo(1.4, 1);
+  });
+
+  it('season stipple: each season covers its share of the 16 cells, spread out, growing only by adding cells', () => {
+    let prev = stippleCells([0, 0, 0, 0]);
+    for (let n = 1; n <= 16; n++) {
+      const c = stippleCells([n, 0, 0, 0]);
+      expect(c.filter((s) => s === 0).length).toBe(n);
+      for (let k = 0; k < 16; k++) if (prev[k] === 0) expect(c[k]).toBe(0);
+      prev = c;
+    }
+    // Half coverage is a checkerboard-like spread: every 2×2 block has two covered cells.
+    const half = stippleCells([8, 0, 0, 0]);
+    for (const [x, y] of [[0, 0], [2, 0], [0, 2], [2, 2]] as const) {
+      expect([half[y * 4 + x], half[y * 4 + x + 1], half[(y + 1) * 4 + x], half[(y + 1) * 4 + x + 1]].filter((s) => s === 0).length).toBe(2);
+    }
+    // Two seasons share without overlapping.
+    const mixed = stippleCells([5, 4, 0, 0]);
+    expect(mixed.filter((s) => s === 0).length).toBe(5);
+    expect(mixed.filter((s) => s === 1).length).toBe(4);
+    // Up to half coverage the stipple only uses cells the ground texture never moves (Bayer
+    // threshold above its strongest share), so tint dots and texture don't cover each other.
+    const share = CONFIG.render.diorama.dither.stepShare;
+    stippleCells([8, 0, 0, 0]).forEach((s, k) => { if (s === 0) expect(bayer(k & 3, k >> 2)).toBeGreaterThan(share); });
+    // Counts follow weight × the class's tint strength (farmland in summer: 0.55 → 9 of 16 cells).
+    expect(stippleCounts(TintClass.Farm, [0, 1, 0, 0])).toEqual([0, 9, 0, 0]);
+    expect(stippleCounts(TintClass.None, [1, 0, 0, 0])).toEqual([0, 0, 0, 0]);
   });
 });

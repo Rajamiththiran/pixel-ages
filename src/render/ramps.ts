@@ -186,6 +186,12 @@ export function rampMix(a: RGB, b: RGB, t: number, out: RGB): void {
   put(colourOf(m), out);
 }
 
+/** Steps between two colours of the same ramp (0 when they are on different ramps or the same step). */
+export function rampSpan(a: RGB, b: RGB): number {
+  const ta = tagOf(a), tb = tagOf(b);
+  return ta >> 3 === tb >> 3 ? Math.abs((tb & 7) - (ta & 7)) : 0;
+}
+
 /** The final colour of a pixel: its ramp colour (a classic palette colour turns into its step). */
 export function rampFinal(out: RGB): void {
   put(colourOf(tagOf(out)), out);
