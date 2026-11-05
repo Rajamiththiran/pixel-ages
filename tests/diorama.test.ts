@@ -1,4 +1,4 @@
-// Toy Diorama look (docs/diorama-plan): phase 1 colour ramps and shading, phase 2 dither, phase 3 shadows.
+// Toy Diorama look (docs/diorama-plan): phase 1 colour ramps and shading, phase 2 dither, phase 3 shadows, phase 4 night.
 // The design system is in docs/mockups/Pixel Ages UI mockups/_ds/ (readme.md, tokens/*.css).
 
 import { describe, expect, it } from 'vitest';
@@ -12,6 +12,7 @@ import { drawTilePixels } from '../src/render/terrain';
 import { computeDepth, forestCrown } from '../src/render/terrainDetail';
 import { castMultiplyAdd, castOf, shadowStrength, spriteShadow } from '../src/render/shadows';
 import { buildCrowns, canopyDistance, crownColourAt } from '../src/render/crowns';
+import { lightBand, nightLevel, nightMultiplyAdd, nightOf } from '../src/render/light';
 import { bayer, ditherPixel, mixGrad, valueNoise } from '../src/render/dither';
 import { stippleCells, stippleCounts, TintClass } from '../src/render/season';
 import { scenarioA } from './fixtures';
@@ -343,5 +344,54 @@ describe('Diorama shadows (phase 3)', () => {
     }
     expect(found).toBe(true);
     expect(canopyDistance(3 * 8 + 7, 1 * 8 + 7) === 0 || canopyDistance(3 * 8 + 7, 1 * 8 + 7) <= 3).toBe(true);
+  });
+});
+
+// ---------- phase 4: night (docs/diorama-plan/04-night.md) ----------
+
+describe('Diorama night (phase 4)', () => {
+  it('night(c) is the Night tokens for every ramp colour, on the CPU and as the GPU multiply + add', () => {
+    const { mul, add } = nightMultiplyAdd(1);
+    RAMP_HEX.forEach((ramp, m) => ramp.forEach((hex, s) => {
+      const c = hexRgb(hex), want = hexRgb(NIGHT_HEX[m]![s]!);
+      nightOf(c).forEach((v, i) => expect(Math.abs(v - want[i]!), `${hex}`).toBeLessThanOrEqual(0.5));
+      c.forEach((v, i) => expect(Math.abs(Math.round(v * Math.round(mul[i]!) / 255) + Math.round(add[i]!) - want[i]!), `${hex} GPU`).toBeLessThanOrEqual(1));
+    }));
+  });
+
+  it('by day the pass changes nothing; dusk and dawn move in whole steps', () => {
+    const day = nightMultiplyAdd(0);
+    expect(day.mul).toEqual([255, 255, 255]);
+    expect(day.add).toEqual([0, 0, 0]);
+    expect(nightLevel(0)).toBe(0);
+    expect(nightLevel(1)).toBe(1);
+    const seen = new Set<number>();
+    for (let d = 0; d <= 1; d += 0.01) seen.add(nightLevel(d));
+    expect(seen.size).toBe(CONFIG.render.diorama.duskSteps + 1);
+    // Shadows fade on exactly the same steps (phase 3).
+    for (let d = 0; d <= 1; d += 0.05) expect(shadowStrength(d)).toBeCloseTo(CONFIG.render.diorama.shadows.strength * (1 - nightLevel(d)));
+  });
+
+  it('firelight comes in 3 bands, dithered at their edges, in proportion to the light', () => {
+    const bands = CONFIG.render.diorama.night.bands;
+    expect(bands).toBe(3);
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      expect(lightBand(0, x, y)).toBe(0);
+      expect(lightBand(1, x, y)).toBe(bands);
+      expect(lightBand(5, x, y)).toBe(bands);
+    }
+    let prev = 0;
+    for (const light of [0.1, 0.25, 0.5, 0.75, 0.9]) {
+      let sum = 0;
+      for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) sum += lightBand(light, x, y);
+      const mean = sum / 16;
+      expect(mean).toBeCloseTo(light * bands, 0);              // the dither keeps the average
+      expect(mean).toBeGreaterThanOrEqual(prev);
+      prev = mean;
+    }
+  });
+
+  it('the lit colour is the owner rule: day × (1.10, 0.90, 0.66)', () => {
+    expect(CONFIG.render.diorama.night.litMul).toEqual([1.10, 0.90, 0.66]);
   });
 });

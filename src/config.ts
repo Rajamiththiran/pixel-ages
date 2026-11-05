@@ -699,7 +699,10 @@ export const CONFIG = {
       },
       // Phase 2: the season tint as a crisp 4×4 Bayer stipple of the season's colour, instead of a
       // blurred translucent wash (readme: "banded or dithered, never blurred").
-      ditherSeason: { on: true },
+      // Off (owner, 5 Nov 2026): at 1× the shares change ~12 times a second and the same 4×4 pattern
+      // repeats on every tile, so it flickered and showed a screen-door grid. Seasons are being
+      // redesigned (diorama-plan/07-seasons-weather-brief.md); `on: true` brings the stipple back.
+      ditherSeason: { on: false },
       // Phase 3: sun from the top-left, everything casts a shadow down-right (readme "Light";
       // geometry from the mockup renderer pixel-scenes.js). Off: `?off=shadows`.
       shadows: {
@@ -724,6 +727,21 @@ export const CONFIG = {
       // Sun shadows are day only (owner): they fade out over this many steps of dusk and back over
       // dawn (the night lighting uses the same steps, phase 4).
       duskSteps: 4,
+      // Phase 4: night maps every colour through night(c) = c × mul + add (the Night tokens in
+      // tokens/world.css, exactly), with firelight in dithered bands round each light (readme "Light";
+      // falloff from the mockup renderer pixel-scenes.js). Off: `?off=night` (back to the F8 tint and glows).
+      night: {
+        on: true,
+        mul: [0.2, 0.25, 0.42], add: [10, 14, 40],
+        bands: 3,                  // readme: 3 dithered bands of firelight
+        reachMult: 1.15,           // a light reaches its radius × this; strength (1 − d / reach)² × k, summed
+        litMul: [1.10, 0.90, 0.66], // lit colour = the day colour × this (owner: the original design system's rule)
+        // Light sources: radius (map px) and strength k (mockup values). Every lit building uses `window`
+        // (the game's building lights carry no type; the mockup's kiln and temple are r 8 and 11).
+        campfire: { r: 16, k: 1 },
+        window: { r: 7, k: 0.5 },
+        flame: { r: 12, k: 0.6 }, // a burning tile
+      },
       // The design system's shade formula, shadowOf(c) = c × shadeMul + shadeAdd (cool and darker),
       // and lineage shade = mix(c, shadowOf(c), lineageShadeMix): the colour tokens follow it exactly,
       // so colours without a token (the colour-blind lineages) use it too.

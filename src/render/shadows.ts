@@ -9,6 +9,7 @@
 
 import { CONFIG } from '../config';
 import { rampsOn, shadowOf, styleOff } from './ramps';
+import { nightLevel } from './light';
 import type { RGB } from './palette';
 import type { SpritePixels } from './sprites';
 
@@ -47,9 +48,7 @@ export function castMultiplyAdd(s: number): { mul: RGB; add: RGB } {
  * over the dawn steps (owner: sun shadows are day only). Stepped, never a smooth fade.
  */
 export function shadowStrength(darkness: number): number {
-  const n = DD.duskSteps;
-  const q = Math.min(n, Math.ceil(Math.max(0, darkness) * n - 1e-9)) / n;
-  return DS.strength * (1 - q);
+  return DS.strength * (1 - nightLevel(darkness));    // the same steps as the night (phase 4)
 }
 
 // ---------- sprite shadows ----------

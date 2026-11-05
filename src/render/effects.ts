@@ -324,6 +324,17 @@ export class Effects {
     return n;
   }
 
+  /** Diorama phase 4: burning tiles as night lights, [x, y, radius, strength] quadruples from `n`; returns the new count. */
+  addFlameLights(out: number[], n: number, radius: number, strength: number): number {
+    const w = this.map.width;
+    for (const i of this.burning) {
+      out[n * 4] = (i % w + 0.5) * TILE; out[n * 4 + 1] = (Math.floor(i / w) + 0.5) * TILE;
+      out[n * 4 + 2] = radius; out[n * 4 + 3] = strength;
+      n++;
+    }
+    return n;
+  }
+
   /** Flood water (spreading in, draining out) with ripples, city haze and sick villages: over the ground, under sprites. */
   drawGround(ctx: CanvasRenderingContext2D, nowMs: number): void {
     if (this.floodTiles.length > 0) {
@@ -372,11 +383,17 @@ export class Effects {
     }
   }
 
-  /** Particles, sparkles, era rings and floating icons: over the sprites. */
-  drawSky(ctx: CanvasRenderingContext2D, nowMs: number): void {
+  /**
+   * Particles, sparkles, era rings and floating icons: over the sprites. With the Diorama night
+   * (phase 4) it is drawn in two parts: `plain` (smoke, dust, rocks) before the night pass, and
+   * `glow` (sparks, embers, rings and icons: light, and moments that must stay readable) after it.
+   */
+  drawSky(ctx: CanvasRenderingContext2D, nowMs: number, part: 'all' | 'plain' | 'glow' = 'all'): void {
     ctx.save();
     for (let k = 0; k < this.count; k++) {
       const kd = this.kind[k]!;
+      const glows = kd === Particle.Spark || kd === Particle.Ember;
+      if ((part === 'plain' && glows) || (part === 'glow' && !glows)) continue;
       const t = this.age[k]! / this.life[k]!;
       const c = COLOURS[kd]!;
       let size = 1;
@@ -390,6 +407,7 @@ export class Effects {
       ctx.fillRect(Math.round(this.x[k]! - size / 2), Math.round(this.y[k]! - size / 2), size, size);
     }
     for (const b of this.bursts) {
+      if (part === 'plain') break;
       const t = (nowMs - b.start) / b.ms;
       if (t < 0) continue;                     // a burst that starts a little later (a kingdom's second ring)
       if (b.kind === 'glow') {

@@ -21,7 +21,7 @@ import { MarketLayer } from './markets';
 import { Camera } from './camera';
 import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
-import { DayNight } from './light';
+import { DayNight, NightPass, nightLevel, nightOn } from './light';
 import { Weather } from './weather';
 import { Effects, Particle, type View } from './effects';
 import { Traffic } from './traffic';
@@ -68,6 +68,7 @@ interface DrawItem { img: HTMLCanvasElement; x: number; y: number }
 const SORT_STRIDE = 16384;
 const TILE = CONFIG.map.tilePx;
 const L8 = CONFIG.render.f8.light;
+const DN = CONFIG.render.diorama.night;
 const WORK_SOUNDS = new Set<number>([Action.CutWood, Action.Build, Action.Farm, Action.Wall, Action.Craft]);
 
 export class Renderer {
@@ -100,6 +101,8 @@ export class Renderer {
   private sortKeys = new Float64Array(1024);
   private readonly sprites: SpriteLayer;
   private readonly shadows = new ShadowPass();      // Diorama phase 3: cast shadows and contact lines
+  private readonly nightPass = new NightPass();     // Diorama phase 4: night(c) and banded firelight
+  private nightLights: number[] = [];
   private lights: number[] = [];
   private lastMs = 0;
   private frames = 0;
@@ -353,6 +356,9 @@ export class Renderer {
     for (let k = 0; k < n; k++) keys[k] = Math.max(0, Math.round(list[k]!.y)) * SORT_STRIDE + k;
     keys.sort();
     const layer = this.sprites;
+    // Phase 4: collect emissive pixels (flames, lit windows) only while the night shows.
+    const nightQ = v.running && nightOn ? nightLevel(this.light.darkness) : 0;
+    layer.night = nightQ > 0;
     layer.begin();
     for (let k = 0; k < n; k++) {
       const it = list[keys[k]! % SORT_STRIDE]!;
@@ -366,8 +372,15 @@ export class Renderer {
     ctx.drawImage(spriteCanvas, 0, 0);
     if (v.running) {
       this.weather.drawSky(ctx);
-      this.effects.drawSky(ctx, now);
-      this.drawNight(ctx, vr);
+      if (nightQ > 0) {
+        // Diorama night: smoke and dust go dark with the land; sparks, embers and moments stay lit.
+        this.effects.drawSky(ctx, now, 'plain');
+        this.drawDioramaNight(ctx, nightQ, layer.glowCanvas);
+        this.effects.drawSky(ctx, now, 'glow');
+      } else {
+        this.effects.drawSky(ctx, now);
+        if (!nightOn) this.drawNight(ctx, vr);
+      }
     }
     if (v.showFog) this.fog.draw(ctx);
     if (v.running && !v.photo) drawTerritory(ctx, v.territory);
@@ -392,6 +405,26 @@ export class Renderer {
       drawGroupLabels(ctx, v.founders.map((f) => ({ name: f.name, x: f.x, y: f.y, colorIndex: f.colorIndex })), project);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /**
+   * Diorama night (phase 4): the whole frame through night(c), firelight in dithered bands round
+   * campfires, lit windows and burning tiles (mockup radii and strengths), then the emissive pixels
+   * (flames, lit windows) back as they are by day.
+   */
+  private drawDioramaNight(ctx: CanvasRenderingContext2D, level: number, glow: HTMLCanvasElement | null): void {
+    const out = this.nightLights;
+    let n = 0;
+    const add = (x: number, y: number, r: number, k: number): void => {
+      out[n * 4] = x; out[n * 4 + 1] = y; out[n * 4 + 2] = r; out[n * 4 + 3] = k; n++;
+    };
+    const f = this.camps.fires;
+    for (let k = 0; k < f.length; k += 2) add(f[k]!, f[k + 1]! - 2, DN.campfire.r, DN.campfire.k);
+    const w = this.buildings.windows;
+    for (let k = 0; k < w.length; k += 2) add(w[k]!, w[k + 1]!, DN.window.r, DN.window.k);
+    n = this.effects.addFlameLights(out, n, DN.flame.r, DN.flame.k);
+    this.nightPass.draw(ctx, level, out, n, this.canvas.width, this.canvas.height, (c) => this.camera.apply(c));
+    if (glow) ctx.drawImage(glow, 0, 0);
   }
 
   /** Night: the world darkens, then campfires, wildfires and lit windows glow. */
