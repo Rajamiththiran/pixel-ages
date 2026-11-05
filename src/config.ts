@@ -727,6 +727,21 @@ export const CONFIG = {
       // Phase 5: the UI as the design system's wooden tray (tokens, components, Pixelify Sans). Off:
       // `?off=tray` (the old dark UI; its stylesheet stays underneath until the owner approves removing it).
       trayUi: { on: true },
+      // Phase 6: moments as in the design system's Moment component (readme "Motion"; tokens/effects.css
+      // --t-moment, --t-icon). Off: `?off=moments` (the F8 arcs and fades).
+      moments: {
+        on: true,
+        ringFrames: 6,             // the ring grows in 6 stepped frames …
+        ringMs: 600,               // … over 600 ms (--t-moment) …
+        ringDiameterPx: 40,        // … out to 40 px across (map px; mockup 1g: 160 screen px at 4×) …
+        ringWidthPx: 1,            // … a 1-px pixel circle, then holds until the icon goes
+        iconMs: 1600,              // the icon rises over 1600 ms (--t-icon) …
+        iconRisePx: 12,            // … 12 px, then vanishes in one step
+        platePadPx: 2,             // the icon's tray-600 plate: this much round the 7 × 7 icon …
+        plateEdgePx: 3,            // … with a 3-px hard edge under it (--plate) …
+        iconGapPx: 2,              // … starting this far above the group's label (label px)
+        sparkBlinkMs: 170,         // sparks switch on or off at most every 170 ms: under 3 flashes a second (readme)
+      },
       // Sun shadows are day only (owner): they fade out over this many steps of dusk and back over
       // dawn (the night lighting uses the same steps, phase 4).
       duskSteps: 4,

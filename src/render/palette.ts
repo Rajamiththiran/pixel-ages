@@ -38,6 +38,11 @@ export const PALETTE = {
   mud: '#5a4632',                // F8: silt left by a flood, river banks
   night: '#0b1030',              // F8: night tint
   sick: '#8fbf3a',               // F8: disease tint over sick villages
+  // Diorama phase 6: moment colours from the design system (tokens/colors.css).
+  brass: '#e0b030',              // discovery rings
+  dangerText: '#f08a7a',         // the revolt ring
+  plate: '#2a1f19',              // tray-600: the moment icon's plate …
+  plateEdge: '#120c09',          // … and its hard edge (tray-900)
 } as const;
 
 export type PaletteKey = keyof typeof PALETTE;

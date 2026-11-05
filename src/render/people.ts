@@ -66,6 +66,16 @@ const PLATE = { ground: '#2a1f19', edge: '#120c09', name: '#f3e7cf', era: '#c9b4
 const PL = { padX: 4, padY: 3, swatch: 5, gap: 3, edge: 3, outline: 2 } as const;
 const NO_SHADOW = 'rgba(0,0,0,0)';
 
+/** Height of a group label above its anchor, in label px (a plate with its edge, or two lines of text). */
+export function groupLabelHeight(): number {
+  return trayLabels ? PL.padY * 2 + GLYPH_H + PL.edge : (GLYPH_H + 1) * 2 + 1;
+}
+
+/** The map point a group's label stands on: above its home tile. Moment icons rise from here too. */
+export function labelAnchor(homeX: number, homeY: number): [number, number] {
+  return [(homeX + 0.5) * TILE, homeY * TILE - R.founderSpreadPx - 2];
+}
+
 function drawPlate(ctx: CanvasRenderingContext2D, g: GroupLabel, x: number, y: number): void {
   const nameW = textWidth(g.name);
   const era = g.sub ?? '';

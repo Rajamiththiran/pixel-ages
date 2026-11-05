@@ -15,7 +15,7 @@ import {
 import type { GroupView, HeatLayer, RelationView } from '../shared/protocol';
 import { BuildingLayer, CampLayer, CampLife, TrampleLayer, WildAnimals, paintedDensities, type WalkerSprite } from './decor';
 import { getSprite } from './sprites';
-import { PeopleLayer, Battles, collectFounders, drawGroupLabels, type GroupLabel } from './people';
+import { PeopleLayer, Battles, collectFounders, drawGroupLabels, groupLabelHeight, labelAnchor, type GroupLabel } from './people';
 import { RealmLayer } from './realms';
 import { MarketLayer } from './markets';
 import { Camera } from './camera';
@@ -401,6 +401,8 @@ export class Renderer {
     const project = (mx: number, my: number): [number, number] => [((mx - c.ox) * c.zoom) / scale, ((my - c.oy) * c.zoom) / scale];
     if (v.running) {
       if (!v.photo) drawGroupLabels(ctx, v.runGroups, project);
+      // Phase 6: moment icons above the labels (on top of them, and readable at every zoom).
+      this.effects.drawMomentIcons(ctx, now, labelAnchor, project, v.photo ? 0 : groupLabelHeight());
     } else {
       drawGroupLabels(ctx, v.founders.map((f) => ({ name: f.name, x: f.x, y: f.y, colorIndex: f.colorIndex })), project);
     }

@@ -1,4 +1,4 @@
-// Toy Diorama look (docs/diorama-plan): phase 1 colour ramps and shading, phase 2 dither, phase 3 shadows, phase 4 night.
+// Toy Diorama look (docs/diorama-plan): phase 1 colour ramps and shading, phase 2 dither, phase 3 shadows, phase 4 night, phase 6 moments.
 // The design system is in docs/mockups/Pixel Ages UI mockups/_ds/ (readme.md, tokens/*.css).
 
 import { describe, expect, it } from 'vitest';
@@ -7,12 +7,13 @@ import { Ground, Plant, Resource, WallType } from '../src/shared/ids';
 import { HazardMark, Look, Mark } from '../src/shared/protocol';
 import { createMap } from '../src/editor/mapState';
 import { Mat, NIGHT_HEX, RAMP_HEX, hexRgb, lineageShade, rampColours, rampsOn, shadowOf } from '../src/render/ramps';
-import { darken, GROUP_COLORS, usePalette } from '../src/render/palette';
+import { darken, GROUP_COLORS, PALETTE, usePalette } from '../src/render/palette';
 import { drawTilePixels } from '../src/render/terrain';
 import { computeDepth, forestCrown } from '../src/render/terrainDetail';
 import { castMultiplyAdd, castOf, shadowStrength, spriteShadow } from '../src/render/shadows';
 import { buildCrowns, canopyDistance, crownColourAt } from '../src/render/crowns';
 import { lightBand, nightLevel, nightMultiplyAdd, nightOf } from '../src/render/light';
+import { ringPixels, ringRadiusAt } from '../src/render/effects';
 import { bayer, ditherPixel, mixGrad, valueNoise } from '../src/render/dither';
 import { stippleCells, stippleCounts, TintClass } from '../src/render/season';
 import { scenarioA } from './fixtures';
@@ -393,5 +394,54 @@ describe('Diorama night (phase 4)', () => {
 
   it('the lit colour is the owner rule: day × (1.10, 0.90, 0.66)', () => {
     expect(CONFIG.render.diorama.night.litMul).toEqual([1.10, 0.90, 0.66]);
+  });
+});
+
+// ---------- phase 6: moments (docs/diorama-plan/06-moments.md) ----------
+
+describe('Diorama moments (phase 6)', () => {
+  const DM = CONFIG.render.diorama.moments;
+
+  it('the ring grows in exactly 6 stepped sizes over 600 ms, out to 40 px across, then holds', () => {
+    const sizes: number[] = [];
+    for (let t = 0; t < DM.ringMs; t += 5) { const r = ringRadiusAt(t); if (sizes[sizes.length - 1] !== r) sizes.push(r); }
+    expect(sizes.length).toBe(6);
+    expect(sizes).toEqual([...sizes].sort((a, b) => a - b));            // only grows
+    expect(sizes[5]! * 2).toBe(40);
+    for (let t = DM.ringMs; t < DM.iconMs; t += 50) expect(ringRadiusAt(t)).toBe(sizes[5]);
+    expect(ringRadiusAt(-1)).toBe(0);                                    // a delayed ring has not started
+  });
+
+  it('the ring is a closed, 1-px pixel circle (no antialiasing, no gaps)', () => {
+    for (const r of [3, 7, 10, 20]) {
+      const px = ringPixels(r);
+      const set = new Set(px.map(([x, y]) => `${x},${y}`));
+      for (const [x, y] of px) {
+        expect(Math.abs(Math.hypot(x, y) - r)).toBeLessThanOrEqual(0.5);
+        // Symmetric, and every pixel touches the next (8-way), so the ring is closed.
+        expect(set.has(`${-x},${y}`) && set.has(`${x},${-y}`) && set.has(`${y},${x}`)).toBe(true);
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && set.has(`${x + dx},${y + dy}`)) n++;
+        expect(n).toBeGreaterThanOrEqual(2);
+      }
+      // Thin: about one pixel per unit of circumference, not a filled band.
+      expect(px.length).toBeLessThan(2 * Math.PI * r * 1.6);
+    }
+  });
+
+  it('the moment colours are the design system tokens', () => {
+    expect(PALETTE.brass).toBe('#e0b030');        // --brass: discovery rings
+    expect(PALETTE.fireYellow).toBe('#f4d35e');   // --fire-yellow: era, town, city, chiefdom, kingdom rings
+    expect(PALETTE.dangerText).toBe('#f08a7a');   // --danger-text: the revolt ring
+    expect(PALETTE.plate).toBe('#2a1f19');        // tray-600 plate …
+    expect(PALETTE.plateEdge).toBe('#120c09');    // … with its tray-900 edge
+  });
+
+  it('nothing flashes more than 3 times a second, and the icon rises 12 px over 1600 ms', () => {
+    expect(1000 / (2 * DM.sparkBlinkMs)).toBeLessThanOrEqual(3);
+    expect(DM.iconRisePx).toBe(12);
+    expect(DM.iconMs).toBe(1600);
+    expect(DM.ringFrames).toBe(6);
+    expect(DM.ringMs).toBe(600);
   });
 });

@@ -1121,11 +1121,34 @@ function tileInfo(x: number, y: number): string {
 
 // ---------- keyboard (§20.7) ----------
 
+/**
+ * Dev only (Diorama phase 6): plays one moment of each kind in turn at the selected group (or the
+ * first), through the same path as real log lines, so the moments can be checked without waiting.
+ */
+let testMoment = 0;
+function playTestMoment(): void {
+  const groups = session?.lastFrame?.groups ?? [];
+  const g = groups.find((o) => o.id === selectedGroup) ?? groups[0];
+  if (!g) { showToast(ui.toast, 'Start a run first: moments play at a group.'); return; }
+  const kinds: Array<[LogEntry['type'], string]> = [
+    ['discovery', `${g.name} discovered Pottery`], ['eraUp', `${g.name} reached era 3: Farmers`],
+    ['town', `${g.name} grew into a town`], ['town', `${g.name} holds a market`], ['town', `${g.name} became a city`],
+    ['realm', `${g.name} founded a chiefdom`], ['realm', `${g.name} became the Kingdom of ${g.name}`],
+    ['realm', `${g.name} joined a chiefdom`], ['realm', `${g.name} rebelled`], ['realm', `${g.name}'s chiefdom fell apart`],
+  ];
+  const [type, text] = kinds[testMoment++ % kinds.length]!;
+  renderer.onLog([{ year: 0, month: 0, type, groupId: g.id, otherId: null, lineageId: null, text, x: g.homeX, y: g.homeY }]);
+  showToast(ui.toast, `Test moment: ${text}`);
+}
+
 window.addEventListener('keydown', (e) => {
   const target = e.target as HTMLElement | null;
   if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
   if (document.querySelector('.modal-back')) return;
   const key = e.key.toLowerCase();
+
+  // Dev builds only (never in a release): Shift+K plays the next moment kind (Diorama phase 6).
+  if (import.meta.env.DEV && e.shiftKey && key === 'k') { playTestMoment(); return; }
 
   // Both modes: photo mode, zoom and pan.
   if (!e.ctrlKey && !e.metaKey && !e.altKey) {
