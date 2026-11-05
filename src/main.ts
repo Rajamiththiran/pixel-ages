@@ -2,6 +2,9 @@
 // Two modes: setup (paint + place people) and run (watch; nothing can be edited).
 
 import './ui/styles.css';
+import './ui/tokens.css';
+import './ui/tray.css';
+import { trayOn } from './ui/theme';
 import { CONFIG } from './config';
 import {
   Ground, WallType, Plant, Resource,
@@ -115,7 +118,9 @@ const caption = h('div', { class: 'caption' });
 ui.stage.append(caption);
 let followOn = false;
 let lastLapse = false;
-void installPixelFont();
+// Diorama phase 5: the tray UI (Pixelify Sans) or the classic UI (its generated pixel font for headings).
+if (trayOn) document.documentElement.dataset.ui = 'tray';
+else void installPixelFont();
 const regions = new RegionsPreview(editor.map, (a) => renderer.setAreas(a));
 renderer.setAreas(regions.current);
 
@@ -897,7 +902,8 @@ renderer.onFrame = (now) => {
   const moment = mode === 'run' ? story.update(now) : null;
   if (moment?.fresh && moment.entry.x !== null && moment.entry.y !== null) {
     renderer.camera.centreOn((moment.entry.x + 0.5) * TILE, (moment.entry.y + 0.5) * TILE, CONFIG.render.f8.story.zoom);
-    caption.textContent = `Year ${moment.entry.year.toLocaleString('en-US')} — ${moment.entry.text}`;
+    // StoryCaption (design system): the year in brass, a dash, then what happened.
+    caption.replaceChildren(h('span', { class: 'caption-year', text: `Year ${moment.entry.year.toLocaleString('en-US')}` }), ` — ${moment.entry.text}`);
     caption.style.display = 'block';
     refreshPresent();
   } else if (!moment) caption.style.display = 'none';
@@ -1115,11 +1121,34 @@ function tileInfo(x: number, y: number): string {
 
 // ---------- keyboard (§20.7) ----------
 
+/**
+ * Dev only (Diorama phase 6): plays one moment of each kind in turn at the selected group (or the
+ * first), through the same path as real log lines, so the moments can be checked without waiting.
+ */
+let testMoment = 0;
+function playTestMoment(): void {
+  const groups = session?.lastFrame?.groups ?? [];
+  const g = groups.find((o) => o.id === selectedGroup) ?? groups[0];
+  if (!g) { showToast(ui.toast, 'Start a run first: moments play at a group.'); return; }
+  const kinds: Array<[LogEntry['type'], string]> = [
+    ['discovery', `${g.name} discovered Pottery`], ['eraUp', `${g.name} reached era 3: Farmers`],
+    ['town', `${g.name} grew into a town`], ['town', `${g.name} holds a market`], ['town', `${g.name} became a city`],
+    ['realm', `${g.name} founded a chiefdom`], ['realm', `${g.name} became the Kingdom of ${g.name}`],
+    ['realm', `${g.name} joined a chiefdom`], ['realm', `${g.name} rebelled`], ['realm', `${g.name}'s chiefdom fell apart`],
+  ];
+  const [type, text] = kinds[testMoment++ % kinds.length]!;
+  renderer.onLog([{ year: 0, month: 0, type, groupId: g.id, otherId: null, lineageId: null, text, x: g.homeX, y: g.homeY }]);
+  showToast(ui.toast, `Test moment: ${text}`);
+}
+
 window.addEventListener('keydown', (e) => {
   const target = e.target as HTMLElement | null;
   if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
   if (document.querySelector('.modal-back')) return;
   const key = e.key.toLowerCase();
+
+  // Dev builds only (never in a release): Shift+K plays the next moment kind (Diorama phase 6).
+  if (import.meta.env.DEV && e.shiftKey && key === 'k') { playTestMoment(); return; }
 
   // Both modes: photo mode, zoom and pan.
   if (!e.ctrlKey && !e.metaKey && !e.altKey) {

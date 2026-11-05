@@ -7,8 +7,12 @@ import { Ground, Plant, WallType } from '../shared/ids';
 import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
+import { Mat, rampMix, rampRgb, rampShift, rampsOn } from './ramps';
+import { ditherOn, mixGrad } from './dither';
 
 const D = CONFIG.render.detail;
+const DR = CONFIG.render.diorama.ramps;
+const DS = CONFIG.render.diorama.shadows;
 const TILE = CONFIG.map.tilePx;
 const LAST = TILE - 1;
 
@@ -33,6 +37,18 @@ export function scale(out: RGB, m: number): void {
 }
 
 const tmp: RGB = [0, 0, 0];
+
+/** Blend a → b: arithmetic in the classic look, along the colour ramps in the Diorama look (phase 1). */
+export const mix: (a: RGB, b: RGB, t: number, out: RGB) => void = rampsOn ? rampMix : blend;
+
+/** A gradient blend (plant density): `mix`, dithered between tones in phase 2. */
+export const grad: (a: RGB, b: RGB, t: number, out: RGB) => void = ditherOn ? mixGrad : mix;
+
+/** Shading: the classic look multiplies by `mult`; the Diorama look moves `steps` along the ramp. */
+export function shade(out: RGB, mult: number, steps: number): void {
+  if (rampsOn) rampShift(out, steps);
+  else scale(out, mult);
+}
 
 // ---------- tile classification ----------
 
@@ -121,19 +137,21 @@ function sampleDepth(depth: Uint8Array, w: number, h: number, px: number, py: nu
 }
 
 const SHALLOW: RGB = [0, 0, 0];
-blend(RGBS.water, RGBS.waterLight, D.waterShallowBlend, SHALLOW);
+mix(RGBS.water, RGBS.waterLight, D.waterShallowBlend, SHALLOW);
 
 export function waterPixel(
   map: MapData, depth: Uint8Array, px: number, py: number, sea: boolean, waveStep: number, out: RGB,
 ): void {
   let t = Math.min(1, sampleDepth(depth, map.width, map.height, px, py) / D.waterDeepAtTiles);
   if (sea) t = D.seaMinDepth + (1 - D.seaMinDepth) * t;
-  if (t <= D.waterShallowShare) blend(SHALLOW, RGBS.water, t / D.waterShallowShare, out);
-  else blend(RGBS.water, RGBS.deepWater, (t - D.waterShallowShare) / (1 - D.waterShallowShare), out);
-  if (sea) scale(out, D.seaDarken);
+  // Depth is banded, not dithered: a narrow stream has one depth all along and would turn into an
+  // even checker; the mockup leaves water untextured too (readme: "banded or dithered").
+  if (t <= D.waterShallowShare) mix(SHALLOW, RGBS.water, t / D.waterShallowShare, out);
+  else mix(RGBS.water, RGBS.deepWater, (t - D.waterShallowShare) / (1 - D.waterShallowShare), out);
+  if (sea) shade(out, D.seaDarken, DR.seaSteps);
   if (isWave(px, py, waveStep)) {
     copy(out, tmp);
-    blend(tmp, RGBS.waterLight, D.waveBlend, out);
+    mix(tmp, RGBS.waterLight, D.waveBlend, out);
   }
 }
 
@@ -162,6 +180,11 @@ export function applyFoam(d: number, px: number, py: number, waveStep: number, o
 
 /** Wet sand/soil on land pixels next to water. */
 export function applyWetEdge(d: number, out: RGB): void {
+  if (rampsOn) {
+    const s = DR.wetEdgeSteps[d];
+    if (s) rampShift(out, s);
+    return;
+  }
   const m = D.wetEdgeMult[d];
   if (m !== undefined) scale(out, m);
 }
@@ -177,9 +200,9 @@ export function applyGrassDetail(px: number, py: number, chance: number, flowers
     // Blade fits inside its cell: x in 0..c-2 (room for the shadow), y in 1..c-1 (room for the tip).
     const bx = cx * c + Math.floor(hash01(cx, cy, SALT.tuft + 1) * (c - 1));
     const by = cy * c + 1 + Math.floor(hash01(cx, cy, SALT.tuft + 2) * (c - 1));
-    if (px === bx && py === by) { scale(out, D.tuftLight); return; }
-    if (px === bx && py === by - 1) { scale(out, D.tuftTip); return; }
-    if (px === bx + 1 && py === by) { scale(out, D.tuftShadow); return; }
+    if (px === bx && py === by) { shade(out, D.tuftLight, DR.tuftLightSteps); return; }
+    if (px === bx && py === by - 1) { shade(out, D.tuftTip, DR.tuftTipSteps); return; }
+    if (px === bx + 1 && py === by) { shade(out, D.tuftShadow, DR.tuftShadowSteps); return; }
   }
   if (!flowers) return;
   const f = D.flowerCell;
@@ -195,6 +218,49 @@ export function applyGrassDetail(px: number, py: number, chance: number, flowers
 
 // ---------- forest ----------
 
+/** One tree: crown centre (px), radius, and a 0–1 hash that sets its tone. */
+export interface Crown { x: number; y: number; r: number; tone: number }
+
+/**
+ * The tree of crown cell (cx, cy): one possible crown per cell, on forest tiles only, existing
+ * with a chance that grows with density. False when the cell has none.
+ */
+export function crownIn(map: MapData, cx: number, cy: number, out: Crown): boolean {
+  const c = D.treeCell;
+  const tx = cx * c + Math.floor(hash01(cx, cy, SALT.tree) * c);
+  const ty = cy * c + Math.floor(hash01(cx, cy, SALT.tree + 1) * c);
+  const tileX = Math.floor(tx / TILE);
+  const tileY = Math.floor(ty / TILE);
+  if (tileX < 0 || tileY < 0 || tileX >= map.width || tileY >= map.height) return false;
+  const ti = tileY * map.width + tileX;
+  if (map.plantType[ti] !== Plant.Forest || map.wall[ti] !== WallType.None) return false;
+  const dens = map.plantDensity[ti]! / 255;
+  if (hash01(cx, cy, SALT.tree + 2) >= D.treeBase + (1 - D.treeBase) * dens) return false;
+  out.x = tx; out.y = ty;
+  out.r = D.treeRadiusMin + hash01(cx, cy, SALT.tree + 3) * (D.treeRadiusMax - D.treeRadiusMin);
+  out.tone = hash01(cx, cy, SALT.tree + 4);
+  return true;
+}
+
+/** A crown pixel's colour, (dx, dy) from the crown's centre: lit top-left, shaded bottom-right. */
+export function crownColour(dx: number, dy: number, r: number, tone: number, out: RGB): void {
+  const n = (dx + dy) / r;
+  if (rampsOn) {
+    // Diorama: forest-2 crowns, one step up on the lit top-left, two down on the far side; some
+    // crowns a step darker or lighter so a wood isn't one flat green.
+    const t = tone < DR.treeToneShare ? -1 : tone >= 1 - DR.treeToneShare ? 1 : 0;
+    const side = n <= D.treeLightBelow ? DR.treeLightSteps : n >= D.treeShadowAbove ? DR.treeShadowSteps : 0;
+    copy(rampRgb(Mat.Forest, 2 + t + side), out);
+    return;
+  }
+  if (n <= D.treeLightBelow) blend(RGBS.forest, RGBS.grassLight, D.treeLightBlend, out);
+  else copy(RGBS.forest, out);
+  if (n >= D.treeShadowAbove) scale(out, D.treeShadowMult);
+  scale(out, 1 - D.treeToneVar / 2 + tone * D.treeToneVar);
+}
+
+const crown: Crown = { x: 0, y: 0, r: 0, tone: 0 };
+
 /**
  * Round tree crowns lit from the top-left. Returns true if (px, py) is covered by a crown
  * (out = crown colour); crowns from neighbouring forest tiles may overhang this pixel.
@@ -208,51 +274,40 @@ export function forestCrown(map: MapData, px: number, py: number, out: RGB): boo
   let bestDx = 0, bestDy = 0, bestR = 0, bestTone = 1;
   for (let cy = pcy - 1; cy <= pcy + 1; cy++) {
     for (let cx = pcx - 1; cx <= pcx + 1; cx++) {
-      const tx = cx * c + Math.floor(hash01(cx, cy, SALT.tree) * c);
-      const ty = cy * c + Math.floor(hash01(cx, cy, SALT.tree + 1) * c);
-      const tileX = Math.floor(tx / TILE);
-      const tileY = Math.floor(ty / TILE);
-      if (tileX < 0 || tileY < 0 || tileX >= map.width || tileY >= map.height) continue;
-      const ti = tileY * map.width + tileX;
-      if (map.plantType[ti] !== Plant.Forest || map.wall[ti] !== WallType.None) continue;
-      const dens = map.plantDensity[ti]! / 255;
-      if (hash01(cx, cy, SALT.tree + 2) >= D.treeBase + (1 - D.treeBase) * dens) continue;
-      const r = D.treeRadiusMin + hash01(cx, cy, SALT.tree + 3) * (D.treeRadiusMax - D.treeRadiusMin);
-      const dx = px - tx;
-      const dy = py - ty;
-      if (dx * dx + dy * dy > r * r) continue;
+      if (!crownIn(map, cx, cy, crown)) continue;
+      const dx = px - crown.x;
+      const dy = py - crown.y;
+      if (dx * dx + dy * dy > crown.r * crown.r) continue;
       // Front-most crown wins: lower on screen, then further right.
-      if (ty > bestY || (ty === bestY && tx > bestX)) {
-        bestY = ty; bestX = tx; bestDx = dx; bestDy = dy; bestR = r;
-        bestTone = 1 - D.treeToneVar / 2 + hash01(cx, cy, SALT.tree + 4) * D.treeToneVar;
+      if (crown.y > bestY || (crown.y === bestY && crown.x > bestX)) {
+        bestY = crown.y; bestX = crown.x; bestDx = dx; bestDy = dy; bestR = crown.r; bestTone = crown.tone;
       }
     }
   }
   if (bestY < 0) return false;
-  const n = (bestDx + bestDy) / bestR;
-  if (n <= D.treeLightBelow) blend(RGBS.forest, RGBS.grassLight, D.treeLightBlend, out);
-  else copy(RGBS.forest, out);
-  if (n >= D.treeShadowAbove) scale(out, D.treeShadowMult);
-  scale(out, bestTone);
+  crownColour(bestDx, bestDy, bestR, bestTone, out);
   return true;
 }
 
 /** Dark ground between trees, stronger with density. */
 export function forestFloor(dens: number, out: RGB): void {
   copy(out, tmp);
-  blend(tmp, FOREST_FLOOR, dens, out);
+  grad(tmp, FOREST_FLOOR, dens, out);
 }
 
-const FOREST_FLOOR: RGB = [
+// Diorama: the forest's deepest step, forest-0, instead of the forest colour × 0.55.
+const FOREST_FLOOR: RGB = rampsOn ? rampRgb(Mat.Forest, 0) : [
   RGBS.forest[0] * D.forestFloorMult, RGBS.forest[1] * D.forestFloorMult, RGBS.forest[2] * D.forestFloorMult,
 ];
 
 // ---------- mountains ----------
 
 const PEAK_GROUND_LIGHT: RGB = [0, 0, 0];
-blend(RGBS.stone, RGBS.stoneLight, D.peakLightBlend, PEAK_GROUND_LIGHT);
+mix(RGBS.stone, RGBS.stoneLight, D.peakLightBlend, PEAK_GROUND_LIGHT);
+// Diorama: a wall's body is stone-1 (terrain.ts), so its peaks' dark slope is stone-0, not ink.
 const PEAK_WALL_DARK: RGB = [0, 0, 0];
-blend(RGBS.mountainDark, RGBS.ink, D.wallPeakDarkBlend, PEAK_WALL_DARK);
+if (rampsOn) copy(rampRgb(Mat.Stone, 0), PEAK_WALL_DARK);
+else blend(RGBS.mountainDark, RGBS.ink, D.wallPeakDarkBlend, PEAK_WALL_DARK);
 
 /**
  * Triangular peaks: light left slope, dark right slope, snow on tall ones. A peak exists only
@@ -286,6 +341,38 @@ export function mountainPeak(map: MapData, kind: number, px: number, py: number,
   return true;
 }
 
+/**
+ * Is (px, py) in a peak's cast shadow? Each peak pixel h px above the peak's base row throws its
+ * shadow (h + 1) × 0.45 px right and down (+1 row, +0–1 px wide), as the mockup projects its peaks
+ * (pixel-scenes.js). Only pixels a peak really draws (on its own mountain kind) cast.
+ */
+export function peakShadowAt(map: MapData, px: number, py: number): boolean {
+  const W = D.peakCellW;
+  const H = D.peakCellH;
+  const hMax = D.peakMaxH;
+  const a = DS.perHeightPx;
+  const far = Math.round((hMax + 1) * a);
+  for (let cy = Math.floor((py - far - 1) / H); cy <= Math.floor((py + hMax) / H); cy++) {
+    for (let cx = Math.floor((px - far - DS.peakSpreadPx - hMax) / W); cx <= Math.floor((px + hMax) / W); cx++) {
+      if (hash01(cx, cy, SALT.peak) >= D.peakChance) continue;
+      const bx = cx * W + Math.floor(hash01(cx, cy, SALT.peak + 1) * W);
+      const by = cy * H + Math.floor(hash01(cx, cy, SALT.peak + 2) * H);
+      const hgt = D.peakMinH + Math.floor(hash01(cx, cy, SALT.peak + 3) * (hMax - D.peakMinH + 1));
+      const kind = kindAt(map, bx, by);
+      if (kind === PeakKind.None || kindAt(map, bx, by - hgt) !== kind) continue;
+      for (let h = 0; h <= hgt; h++) {
+        const qy = by - h;
+        if (qy + 1 + Math.round((h + 1) * a) !== py) continue;
+        for (let e = 0; e <= DS.peakSpreadPx; e++) {
+          const qx = px - Math.round((h + 1) * a) - e;
+          if (Math.abs(qx - bx) <= hgt - h && kindAt(map, qx, qy) === kind) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 function kindAt(map: MapData, px: number, py: number): number {
   const x = Math.floor(px / TILE);
   const y = Math.floor(py / TILE);
@@ -308,8 +395,8 @@ export function applyDesertDetail(px: number, py: number, out: RGB): void {
     if (hash01(k, seg, SALT.dune + 2) >= D.duneKeep) continue;
     // Render-only code, so Math.sin is fine here (the determinism rule covers src/sim).
     const crest = Math.round(k * P + phase + D.duneAmp * Math.sin(((px + shift) / D.duneWavelength) * TWO_PI));
-    if (py === crest) { scale(out, D.duneDark); return; }
-    if (py === crest - 1) { scale(out, D.duneLight); return; }
+    if (py === crest) { shade(out, D.duneDark, DR.duneDarkSteps); return; }
+    if (py === crest - 1) { shade(out, D.duneLight, DR.duneLightSteps); return; }
   }
   if (hash01(px, py, SALT.pebble) < D.pebbleChance) {
     copy(hash01(px, py, SALT.pebble + 1) < 0.5 ? RGBS.stone : RGBS.wood, out);

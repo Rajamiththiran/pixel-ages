@@ -7,9 +7,10 @@ import type { Editor } from '../editor/editor';
 import { PALETTE } from '../render/palette';
 import { AgeClass, personSprite } from '../render/sprites';
 import { h } from './layout';
+import { trayOn } from './theme';
 import type { HeatLayer } from '../shared/protocol';
 
-interface ToolSpec { name: string; tool: Tool; swatch: string | 'eraser' | 'people'; dot?: boolean }
+interface ToolSpec { name: string; tool: Tool; swatch: string | 'eraser' | 'people'; dot?: boolean; short?: string }
 interface ToolGroup { label: string; tools: ToolSpec[] }
 
 export const TOOL_GROUPS: ToolGroup[] = [
@@ -24,9 +25,9 @@ export const TOOL_GROUPS: ToolGroup[] = [
   {
     label: 'Plants', tools: [
       { name: 'Forest', tool: { kind: 'plant', value: Plant.Forest }, swatch: PALETTE.forest },
-      { name: 'Fruit bushes', tool: { kind: 'plant', value: Plant.FruitBushes }, swatch: PALETTE.fruitBush, dot: true },
+      { name: 'Fruit bushes', short: 'Fruit bushes', tool: { kind: 'plant', value: Plant.FruitBushes }, swatch: PALETTE.fruitBush, dot: true },
       { name: 'Grass', tool: { kind: 'plant', value: Plant.Grass }, swatch: PALETTE.grassLight },
-      { name: 'Plant eraser', tool: { kind: 'plant', value: Plant.None }, swatch: 'eraser' },
+      { name: 'Plant eraser', short: 'Eraser', tool: { kind: 'plant', value: Plant.None }, swatch: 'eraser' },
     ],
   },
   {
@@ -37,39 +38,39 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { name: 'Iron', tool: { kind: 'resource', value: Resource.Iron }, swatch: PALETTE.iron },
       { name: 'Tin', tool: { kind: 'resource', value: Resource.Tin }, swatch: PALETTE.tin },
       { name: 'Salt', tool: { kind: 'resource', value: Resource.Salt }, swatch: PALETTE.salt },
-      { name: 'Resource eraser', tool: { kind: 'resource', value: Resource.None }, swatch: 'eraser' },
+      { name: 'Resource eraser', short: 'Eraser', tool: { kind: 'resource', value: Resource.None }, swatch: 'eraser' },
     ],
   },
   {
     label: 'Rain', tools: [
-      { name: 'Rain (strength = rain 0–100)', tool: { kind: 'rain' }, swatch: PALETTE.waterLight },
+      { name: 'Rain (strength = rain 0–100)', short: 'Rain', tool: { kind: 'rain' }, swatch: PALETTE.waterLight },
     ],
   },
   {
     label: 'Height', tools: [
-      { name: 'Elevation (strength = height 0–9)', tool: { kind: 'elevation' }, swatch: PALETTE.stoneLight },
+      { name: 'Elevation (strength = height 0–9)', short: 'Height', tool: { kind: 'elevation' }, swatch: PALETTE.stoneLight },
     ],
   },
   {
     label: 'Animals', tools: [
-      { name: 'Prey (deer)', tool: { kind: 'animal', species: Species.Prey }, swatch: PALETTE.mudBrick },
-      { name: 'Predator (wolves)', tool: { kind: 'animal', species: Species.Predator }, swatch: PALETTE.stone },
-      { name: 'Herd (goats)', tool: { kind: 'animal', species: Species.Herd }, swatch: PALETTE.stoneLight },
-      { name: 'Riding (horses)', tool: { kind: 'animal', species: Species.Riding }, swatch: PALETTE.wood },
-      { name: 'Animal eraser', tool: { kind: 'animal', species: ANIMAL_ERASER }, swatch: 'eraser' },
+      { name: 'Prey (deer)', short: 'Prey', tool: { kind: 'animal', species: Species.Prey }, swatch: PALETTE.mudBrick },
+      { name: 'Predator (wolves)', short: 'Predator', tool: { kind: 'animal', species: Species.Predator }, swatch: PALETTE.stone },
+      { name: 'Herd (goats)', short: 'Herd', tool: { kind: 'animal', species: Species.Herd }, swatch: PALETTE.stoneLight },
+      { name: 'Riding (horses)', short: 'Riding', tool: { kind: 'animal', species: Species.Riding }, swatch: PALETTE.wood },
+      { name: 'Animal eraser', short: 'Eraser', tool: { kind: 'animal', species: ANIMAL_ERASER }, swatch: 'eraser' },
     ],
   },
   {
     label: 'Walls', tools: [
-      { name: 'River wall', tool: { kind: 'wall', value: WallType.River }, swatch: PALETTE.water },
-      { name: 'Mountain wall', tool: { kind: 'wall', value: WallType.Mountain }, swatch: PALETTE.mountainDark },
-      { name: 'Sea wall', tool: { kind: 'wall', value: WallType.Sea }, swatch: PALETTE.deepWater },
-      { name: 'Wall eraser', tool: { kind: 'wall', value: WallType.None }, swatch: 'eraser' },
+      { name: 'River wall', short: 'River', tool: { kind: 'wall', value: WallType.River }, swatch: PALETTE.water },
+      { name: 'Mountain wall', short: 'Mountain', tool: { kind: 'wall', value: WallType.Mountain }, swatch: PALETTE.mountainDark },
+      { name: 'Sea wall', short: 'Sea', tool: { kind: 'wall', value: WallType.Sea }, swatch: PALETTE.deepWater },
+      { name: 'Wall eraser', short: 'Eraser', tool: { kind: 'wall', value: WallType.None }, swatch: 'eraser' },
     ],
   },
   {
     label: 'People', tools: [
-      { name: 'Place group (click the map)', tool: { kind: 'people' }, swatch: 'people' },
+      { name: 'Place group (click the map)', short: 'Group', tool: { kind: 'people' }, swatch: 'people' },
     ],
   },
 ];
@@ -171,6 +172,40 @@ export function buildRunToolbar(root: HTMLElement, a: RunToolbarActions): RunToo
   };
 }
 
+/** The classic 27 × 22 brush button. */
+function classicTool(spec: ToolSpec): HTMLButtonElement {
+  const b = h('button', { class: 'tb-btn', title: spec.name });
+  if (spec.swatch === 'eraser') b.classList.add('eraser');
+  else if (spec.swatch === 'people') {
+    b.classList.add('wide');
+    b.append(personSprite({ female: false, ageClass: AgeClass.Adult, colorIndex: 0, skin: 1, hair: 0, clothed: false }, 1));
+    b.append(personSprite({ female: true, ageClass: AgeClass.Adult, colorIndex: 0, skin: 0, hair: 1, clothed: false }, 1));
+  } else b.style.background = spec.swatch;
+  if (spec.dot) b.append(h('span', { class: 'dot' }));
+  return b;
+}
+
+/**
+ * Diorama phase 5: a 56 × 56 tool (the design system's ToolButton): a 20 px material swatch, or
+ * the eraser checker, or a man and a woman for "Place group", over its short name.
+ */
+function trayTool(spec: ToolSpec): HTMLButtonElement {
+  const b = h('button', { class: 'tb-tool', title: spec.name, 'aria-label': spec.name });
+  if (spec.swatch === 'people') {
+    b.append(h('span', { class: 'tb-people' },
+      personSprite({ female: false, ageClass: AgeClass.Adult, colorIndex: 0, skin: 1, hair: 0, clothed: false }, 1),
+      personSprite({ female: true, ageClass: AgeClass.Adult, colorIndex: 0, skin: 0, hair: 1, clothed: false }, 1)));
+  } else {
+    const sw = h('span', { class: spec.swatch === 'eraser' ? 'tb-swatch eraser' : 'tb-swatch' });
+    if (spec.swatch === 'eraser') sw.append(h('span', { class: 'chk' }));
+    else sw.style.background = spec.swatch;
+    if (spec.dot) sw.append(h('span', { class: 'dot' }));
+    b.append(sw);
+  }
+  b.append(h('span', { text: spec.short ?? spec.name }));
+  return b;
+}
+
 export const sameTool =(a: Tool, b: Tool): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 export interface ToolbarApi {
@@ -188,14 +223,7 @@ export function buildToolbar(
     root.append(h('div', { class: 'tb-group-label', text: g.label }));
     const grid = h('div', { class: 'tb-grid' });
     for (const spec of g.tools) {
-      const b = h('button', { class: 'tb-btn', title: spec.name });
-      if (spec.swatch === 'eraser') b.classList.add('eraser');
-      else if (spec.swatch === 'people') {
-        b.classList.add('wide');
-        b.append(personSprite({ female: false, ageClass: AgeClass.Adult, colorIndex: 0, skin: 1, hair: 0, clothed: false }, 1));
-        b.append(personSprite({ female: true, ageClass: AgeClass.Adult, colorIndex: 0, skin: 0, hair: 1, clothed: false }, 1));
-      } else b.style.background = spec.swatch;
-      if (spec.dot) b.append(h('span', { class: 'dot' }));
+      const b = trayOn ? trayTool(spec) : classicTool(spec);
       b.addEventListener('click', () => {
         editor.tool = spec.tool;
         // Fill doesn't apply to placing people.

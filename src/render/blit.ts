@@ -4,6 +4,38 @@
 // and draw it once (§18.9: 60 fps with 6,000 people, 400 animals and 300 buildings).
 
 import { spritePixels, type SpritePixels as Pixels } from './sprites';
+import { contactOn, shadowsOn, spriteShadow } from './shadows';
+import { nightOn } from './light';
+import { PALETTE } from './palette';
+
+const SHADOW = 0xff000000;               // opaque black: a shadow mask pixel (ShadowPass colours it)
+
+// Emissive colours (phase 4): pixels that are light, not lit, keep their day colour at night
+// (the mockup's flames, fire and lit windows). Packed like the sprite pixels (little-endian RGBA).
+const pack = (hex: string): number => {
+  const v = parseInt(hex.slice(1), 16);
+  return ((255 << 24) | ((v & 255) << 16) | (v & 0xff00) | ((v >> 16) & 255)) >>> 0;
+};
+const EMISSIVE = new Set([pack(PALETTE.fireOrange), pack(PALETTE.fireYellow)]);
+
+/** A sprite's emissive pixels: (dx, dy) pairs and their colours. */
+interface Glow { at: Int16Array; colour: Uint32Array }
+const glows = new WeakMap<Pixels, Glow>();
+
+function glowOf(px: Pixels): Glow {
+  let g = glows.get(px);
+  if (g) return g;
+  const at: number[] = [], colour: number[] = [];
+  for (let k = 0; k < px.data.length; k++) {
+    const c = px.data[k]!;
+    if (!EMISSIVE.has(c)) continue;
+    at.push(k % px.w, Math.floor(k / px.w));
+    colour.push(c);
+  }
+  g = { at: Int16Array.from(at), colour: Uint32Array.from(colour) };
+  glows.set(px, g);
+  return g;
+}
 
 const cache = new WeakMap<HTMLCanvasElement, Pixels>();
 
@@ -30,6 +62,29 @@ export class SpriteLayer {
   private maxY = -1;
   private lastMinY = 0;
   private lastMaxY = -1;
+  // Phase 3: cast shadows and contact lines of the sprites drawn this frame (mask, opaque = shadowed).
+  readonly shadowCanvas: HTMLCanvasElement | null = null;
+  private readonly shadowCtx: CanvasRenderingContext2D | null = null;
+  private readonly shadowImg: ImageData | null = null;
+  private readonly shadowBuf: Uint32Array | null = null;
+  private sMinY = Infinity;
+  private sMaxY = -1;
+  private sLastMinY = 0;
+  private sLastMaxY = -1;
+  /** Sprites that cast no shadow (flames: they are light, not things). */
+  readonly noShadow = new WeakSet<HTMLCanvasElement>();
+  // Phase 4: emissive pixels of this frame's sprites, drawn back over the night pass.
+  readonly glowCanvas: HTMLCanvasElement | null = null;
+  private readonly glowCtx: CanvasRenderingContext2D | null = null;
+  private readonly glowImg: ImageData | null = null;
+  private readonly glowBuf: Uint32Array | null = null;
+  private gMinY = Infinity;
+  private gMaxY = -1;
+  private gLastMinY = 0;
+  private gLastMaxY = -1;
+  private glowAt: number[] = [];          // buffer indices written this frame
+  /** Set by the renderer each frame: collect emissive pixels only while it is night. */
+  night = false;
 
   constructor(width: number, height: number) {
     this.canvas = document.createElement('canvas');
@@ -40,6 +95,22 @@ export class SpriteLayer {
     this.ctx = this.canvas.getContext('2d')!;
     this.img = this.ctx.createImageData(width, height);
     this.buf = new Uint32Array(this.img.data.buffer);
+    if (shadowsOn || contactOn) {
+      this.shadowCanvas = document.createElement('canvas');
+      this.shadowCanvas.width = width;
+      this.shadowCanvas.height = height;
+      this.shadowCtx = this.shadowCanvas.getContext('2d')!;
+      this.shadowImg = this.shadowCtx.createImageData(width, height);
+      this.shadowBuf = new Uint32Array(this.shadowImg.data.buffer);
+    }
+    if (nightOn) {
+      this.glowCanvas = document.createElement('canvas');
+      this.glowCanvas.width = width;
+      this.glowCanvas.height = height;
+      this.glowCtx = this.glowCanvas.getContext('2d')!;
+      this.glowImg = this.glowCtx.createImageData(width, height);
+      this.glowBuf = new Uint32Array(this.glowImg.data.buffer);
+    }
   }
 
   begin(): void {
@@ -47,6 +118,13 @@ export class SpriteLayer {
     if (this.lastMaxY >= this.lastMinY) this.buf.fill(0, this.lastMinY * this.w, (this.lastMaxY + 1) * this.w);
     this.minY = Infinity;
     this.maxY = -1;
+    if (this.shadowBuf && this.sLastMaxY >= this.sLastMinY) this.shadowBuf.fill(0, this.sLastMinY * this.w, (this.sLastMaxY + 1) * this.w);
+    this.sMinY = Infinity;
+    this.sMaxY = -1;
+    if (this.glowBuf && this.gLastMaxY >= this.gLastMinY) this.glowBuf.fill(0, this.gLastMinY * this.w, (this.gLastMaxY + 1) * this.w);
+    this.gMinY = Infinity;
+    this.gMaxY = -1;
+    this.glowAt.length = 0;
   }
 
   /** Copies a sprite with its top-left at integer (x, y); transparent pixels are skipped. */
@@ -69,6 +147,44 @@ export class SpriteLayer {
     }
     if (y0 < this.minY) this.minY = y0;
     if (y1 - 1 > this.maxY) this.maxY = y1 - 1;
+    if (this.shadowBuf && !this.noShadow.has(sprite)) {
+      const sh = spriteShadow(px);
+      if (shadowsOn) this.stamp(sh.cast, x, y);
+      if (contactOn) this.stamp(sh.contact, x, y);
+    }
+    if (this.glowBuf && this.night) {
+      const g = glowOf(px);
+      for (let k = 0; k < g.colour.length; k++) {
+        const gx = x + g.at[k * 2]!, gy = y + g.at[k * 2 + 1]!;
+        if (gx < 0 || gy < 0 || gx >= this.w || gy >= this.h) continue;
+        // Only where this sprite's pixel is on top (a later sprite may cover it).
+        this.glowBuf[gy * this.w + gx] = g.colour[k]!;
+        this.glowAt.push(gy * this.w + gx);
+        if (gy < this.gMinY) this.gMinY = gy;
+        if (gy > this.gMaxY) this.gMaxY = gy;
+      }
+    }
+  }
+
+  /**
+   * Drops glow pixels that a sprite drawn later covered with a non-emissive pixel. Called once
+   * after all sprites are drawn (cheaper than clearing per sprite).
+   */
+  private settleGlow(): void {
+    const buf = this.glowBuf!;
+    for (const i of this.glowAt) if (this.buf[i] !== buf[i]) buf[i] = 0;
+  }
+
+  /** Marks a sprite's shadow pixels, (dx, dy) pairs from its top-left at (x, y). */
+  private stamp(pairs: Int16Array, x: number, y: number): void {
+    const buf = this.shadowBuf!;
+    for (let k = 0; k < pairs.length; k += 2) {
+      const sx = x + pairs[k]!, sy = y + pairs[k + 1]!;
+      if (sx < 0 || sy < 0 || sx >= this.w || sy >= this.h) continue;
+      buf[sy * this.w + sx] = SHADOW;
+      if (sy < this.sMinY) this.sMinY = sy;
+      if (sy > this.sMaxY) this.sMaxY = sy;
+    }
   }
 
   /** Uploads the rows used this frame (and last frame, to erase them) and returns the canvas. */
@@ -80,6 +196,19 @@ export class SpriteLayer {
     }
     this.lastMinY = Number.isFinite(this.minY) ? this.minY : 0;
     this.lastMaxY = this.maxY;
+    if (this.shadowCtx) {
+      const st = Math.min(this.sMinY, this.sLastMinY), sb = Math.max(this.sMaxY, this.sLastMaxY);
+      if (sb >= st && Number.isFinite(st)) this.shadowCtx.putImageData(this.shadowImg!, 0, 0, 0, st, this.w, sb - st + 1);
+      this.sLastMinY = Number.isFinite(this.sMinY) ? this.sMinY : 0;
+      this.sLastMaxY = this.sMaxY;
+    }
+    if (this.glowCtx) {
+      this.settleGlow();
+      const gt = Math.min(this.gMinY, this.gLastMinY), gb = Math.max(this.gMaxY, this.gLastMaxY);
+      if (gb >= gt && Number.isFinite(gt)) this.glowCtx.putImageData(this.glowImg!, 0, 0, 0, gt, this.w, gb - gt + 1);
+      this.gLastMinY = Number.isFinite(this.gMinY) ? this.gMinY : 0;
+      this.gLastMaxY = this.gMaxY;
+    }
     return this.canvas;
   }
 }

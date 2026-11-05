@@ -5,6 +5,7 @@ import { CONFIG } from '../config';
 import type { LogEntry, LogType } from '../shared/types';
 import type { LineageInfo } from './graphs';
 import { h } from './layout';
+import { trayOn } from './theme';
 import { iconUrl, logIcon } from '../render/icons';
 
 export const LOG_GROUPS: ReadonlyArray<readonly [string, readonly LogType[]]> = [
@@ -31,7 +32,8 @@ export function buildEventLog(
   log: readonly LogEntry[], lineages: () => LineageInfo[], viewYear: () => number | null,
   onPick: (e: LogEntry) => void,
 ): EventLogApi {
-  const ROW = CONFIG.ui.logRowPx;
+  // Diorama phase 5: the design system's log row (16/22 text, 6 px padding) in the tray UI.
+  const ROW = trayOn ? CONFIG.ui.logRowTrayPx : CONFIG.ui.logRowPx;
   let newestFirst = true;
   const hiddenTypes = new Set<LogType>();
   const hiddenLineages = new Set<number>();
@@ -56,6 +58,7 @@ export function buildEventLog(
     minorBox, h('span', { text: 'Small events' })));
   const lins = h('div', { class: 'log-filters' });
   const spacer = h('div', { class: 'log-spacer' });
+  spacer.style.setProperty('--log-row', `${ROW}px`);
   const scroller = h('div', { class: 'log-scroll' }, spacer);
   const empty = h('p', { class: 'hint', text: 'Nothing has happened yet: discoveries, contact, moves and events appear here.' });
   const element = h('div', { class: 'event-log' }, title, h('div', { class: 'row' }, order), types, lins, empty, scroller);

@@ -10,15 +10,21 @@ import { hash01 } from '../shared/hash';
 import { N8 } from '../shared/grid';
 import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
+import { Mat, rampFinal, rampRgb, rampShift, rampsOn } from './ramps';
+import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
+import { buildCrowns, canopyDistance, crownColourAt, inTreeShadow } from './crowns';
+import { occlusionOn, shadowsOn } from './shadows';
 import { HazardMark, Look, Mark, lookLevel } from '../shared/protocol';
 import {
   PeakKind, SALT as DETAIL_SALT, applyDesertDetail, applyFoam, applyGrassDetail, applyWetEdge, blend, computeDepth, copy,
-  edgeDistance, forestCrown, forestFloor, isWaterTile, mountainPeak, peakKind, scale, waterPixel,
+  edgeDistance, forestCrown, forestFloor, grad, isWaterTile, mix, mountainPeak, peakKind, peakShadowAt, scale, shade, waterPixel,
 } from './terrainDetail';
 
 const R = CONFIG.render;
 const D = R.detail;
 const F8 = R.f8;
+const DR = R.diorama.ramps;
+const DO = R.diorama.forestOcclusion;
 const TILE = CONFIG.map.tilePx;
 const LAST = TILE - 1;
 
@@ -53,7 +59,13 @@ export interface TileExtras {
   hazards: Uint8Array | null;    // F5: burning (flood water is drawn by the effects layer, F8)
   look: Uint8Array | null;       // F8: worn soil, salt, ash stage, silt
   base: MapData | null;          // F8: the painted map, for stumps where forest was cut
+  shadow?: Uint8ClampedArray | null; // Diorama phase 3: cast-shadow mask (alpha 255 = shadowed), same layout as the image
 }
+
+// What the pixel being drawn turned out to be, for shadows and occlusion (phase 3).
+let onCrown = false;
+let onPeak = false;
+let crownsReady = false;
 
 // Per-tile scratch, reused so drawing allocates nothing.
 const nb = new Uint8Array(8);
@@ -61,7 +73,11 @@ const nbLake = new Uint8Array(8);
 const out: RGB = [0, 0, 0];
 const tmp: RGB = [0, 0, 0];
 const BANK: RGB = [0, 0, 0];
-blend(RGBS.grass, RGBS.mud, 0.55, BANK);
+mix(RGBS.grass, RGBS.mud, 0.55, BANK);
+// Diorama: a mountain wall's body sits one step above stone-0, so its peaks' dark slopes show.
+const WALL_BODY: RGB = rampsOn ? rampRgb(Mat.Stone, DR.wallBodyStep) : RGBS.mountainDark;
+// Diorama farmland rows (crop ramp): a furrow, a lit ridge, then the crop.
+const CROP_ROWS: readonly RGB[] = [rampRgb(Mat.Crop, 0), rampRgb(Mat.Crop, 3), rampRgb(Mat.Crop, 2)];
 
 const isRiver = (map: MapData, x: number, y: number): boolean =>
   x >= 0 && y >= 0 && x < map.width && y < map.height && map.wall[y * map.width + x] === WallType.River;
@@ -95,6 +111,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
   let hasEdge = false;
   let hasLake = false;
   let nearForest = plant === Plant.Forest && wall === WallType.None;
+  let nearPeak = kind !== PeakKind.None;
   for (let k = 0; k < 8; k++) {
     const [dx, dy] = N8[k]!;
     const nx = tx + dx;
@@ -107,6 +124,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
     if (wj !== water) { nb[k] = 1; hasEdge = true; }
     if (!water && wj && map.wall[j] !== WallType.River && !narrowWater(map, ex.depth, nx, ny)) { nbLake[k] = 1; hasLake = true; }
     if (map.plantType[j] === Plant.Forest && map.wall[j] === WallType.None) nearForest = true;
+    if (peakKind(map, j) !== PeakKind.None) nearPeak = true;
   }
   const beachGround = !water && wall === WallType.None && (ground === Ground.Grassland || ground === Ground.Desert);
   const sea = wall === WallType.Sea;
@@ -117,6 +135,10 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
   const painted = ex.base && ex.base.plantType[i] === Plant.Forest ? ex.base.plantDensity[i]! / 255 : 0;
   const nowForest = plant === Plant.Forest ? dens : 0;
   const stumps = !water && wall === WallType.None && painted - nowForest > F8.stumps.belowPainted;
+  // Phase 3: lay out the crowns near a forest once, for crown pixels, tree shadows and the canopy edge.
+  crownsReady = nearForest && (shadowsOn || occlusionOn);
+  if (crownsReady) buildCrowns(map, tx, ty);
+  const occlude = occlusionOn && crownsReady && wall === WallType.None && plant !== Plant.Forest && plant !== Plant.Farmland;
 
   for (let oy = 0; oy < TILE; oy++) {
     const py = ty * TILE + oy;
@@ -124,6 +146,9 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
       const px = tx * TILE + ox;
       const edge = hasEdge ? edgeDistance(ox, oy, nb) : 99;
       const corner = corners !== 0 ? cornerCut(ox, oy, corners) : false;
+      if (ditherOn) ditherPixel(px, py);
+      onCrown = false;
+      onPeak = false;
 
       if (water && !corner) {
         if (river) riverPixel(map, tx, ty, px, py, time.riverStep, out);
@@ -133,15 +158,18 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         // A rounded-off corner of a water tile: the bank.
         copy(cornerLand, out);
         applyWetEdge(0, out);
+        if (ditherOn) applyTexture(px, py, out);
       } else if (corner) {
         // A land corner inside a bend: the water rounds it off.
         if (corners & RIVER_BEND) riverPixel(map, tx, ty, px, py, time.riverStep, out);
         else waterPixel(map, ex.depth, px, py, false, time.waterStep, out);
       } else if (wall === WallType.Mountain) {
         mountainWallPixel(isCrossing, px, py, out);
-        if (kind === PeakKind.Wall) mountainPeak(map, kind, px, py, out);
-        if (shaded) scale(out, heightShade(map, px, py));
+        if (kind === PeakKind.Wall) onPeak = mountainPeak(map, kind, px, py, out);
+        if (shaded) shadeHeight(map, px, py, out);
         if (hasEdge) applyWetEdge(edge, out);
+        // Diorama phase 2: clustered ordered dither on land (the mockup leaves water untextured).
+        if (ditherOn) applyTexture(px, py, out);
       } else {
         landPixel(map, ground, plant, dens, kind, nearForest, stumps ? painted : -1, px, py, out);
         if (resShare > 0 && hash01(px, py, SALT.resource + res) < resShare) copy(RESOURCE_COLOR[res]!, out);
@@ -150,15 +178,27 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         if (tileHazards & HazardMark.Fire) {
           const f = hash01(px, py, SALT.fire);
           if (f < R.marks.flameShare) copy(f < R.marks.flameShare / 2 ? RGBS.fireYellow : RGBS.fireOrange, out);
-          else scale(out, R.marks.burnDark);
+          else shade(out, R.marks.burnDark, DR.burnSteps);
         }
         if (beachGround && hasLake && edgeDistance(ox, oy, nbLake) < F8.beachPx) copy(RGBS.sand, out);
-        if (shaded) scale(out, heightShade(map, px, py));
+        if (shaded) shadeHeight(map, px, py, out);
         if (hasEdge) applyWetEdge(edge, out);
+        if (occlude && !onCrown) occludePixel(px, py, out);
+        // Diorama phase 2: clustered ordered dither on land (the mockup leaves water untextured).
+        if (ditherOn) applyTexture(px, py, out);
       }
 
-      const g = 1 + R.grain * (2 * hash01(px, py, SALT.grain) - 1);
+      // Diorama: no random grain (readme: texture is ordered dither, applyTexture above), and
+      // every pixel ends on a ramp or accent colour.
+      let g = 1;
+      if (rampsOn) rampFinal(out);
+      else g = 1 + R.grain * (2 * hash01(px, py, SALT.grain) - 1);
       const o = (py * imgW + px) * 4;
+      if (ex.shadow) {
+        // Phase 3: trees and peaks cast down-right; the crowns and peaks themselves stand above it.
+        const cast = (crownsReady && !onCrown && inTreeShadow(px, py)) || (nearPeak && !onPeak && peakShadowAt(map, px, py));
+        ex.shadow[o + 3] = cast ? 255 : 0;
+      }
       data[o] = out[0] * g;
       data[o + 1] = out[1] * g;
       data[o + 2] = out[2] * g;
@@ -270,11 +310,17 @@ function heightAt(map: MapData, px: number, py: number): number {
 }
 
 /** Light from the top-left: slopes facing it are brighter, slopes facing away darker. */
-function heightShade(map: MapData, px: number, py: number): number {
+function shadeHeight(map: MapData, px: number, py: number, out: RGB): void {
   const half = TILE / 2;
   const d = heightAt(map, px - half, py - half) - heightAt(map, px + half, py + half);
+  if (rampsOn) {
+    // Whole ramp steps: lit slopes warmer and lighter, far slopes cooler and darker.
+    const steps = -Math.round(d / DR.heightPerStep);
+    if (steps !== 0) rampShift(out, Math.max(-DR.heightMaxSteps, Math.min(DR.heightMaxSteps, steps)));
+    return;
+  }
   const S = F8.shade;
-  return 1 - Math.max(-S.max, Math.min(S.max, d * S.perStep));
+  scale(out, 1 - Math.max(-S.max, Math.min(S.max, d * S.perStep)));
 }
 
 // ---------- soil, marks, land ----------
@@ -283,12 +329,16 @@ function heightShade(map: MapData, px: number, py: number): number {
 function soilPixel(look: number, plant: number, px: number, py: number, o: RGB): void {
   const S = F8.soil;
   const worn = lookLevel(look, Look.wornShift);
-  if (worn > 0 && plant === Plant.Farmland) { copy(o, tmp); blend(tmp, RGBS.sand, S.wornPale[worn - 1]!, o); }
+  if (worn > 0 && plant === Plant.Farmland) {
+    // Diorama: one step paler per wear level (a blend toward sand under halfway would not show on the ramps).
+    if (rampsOn) rampShift(o, worn * DR.wornSteps);
+    else { copy(o, tmp); blend(tmp, RGBS.sand, S.wornPale[worn - 1]!, o); }
+  }
   const salt = lookLevel(look, Look.saltShift);
   if (salt > 0 && hash01(px, py, SALT.salt) < S.saltWhite[salt - 1]!) copy(RGBS.salt, o);
   if (look & Look.Silt) {
     copy(o, tmp);
-    blend(tmp, RGBS.mud, S.siltBlend, o);
+    mix(tmp, RGBS.mud, S.siltBlend, o);
     if (hash01(px, py, SALT.puddle) < S.puddle) copy(RGBS.waterLight, o);
   }
 }
@@ -312,7 +362,7 @@ function markPixel(
   map: MapData, marks: Uint8Array, i: number, m: number, plant: number, look: number,
   ox: number, oy: number, px: number, py: number, out: RGB,
 ): void {
-  if (m & Mark.Terrace && plant === Plant.Farmland && oy % 3 === 2) scale(out, R.marks.terraceDark);
+  if (m & Mark.Terrace && plant === Plant.Farmland && oy % 3 === 2) shade(out, R.marks.terraceDark, DR.terraceSteps);
   if (m & Mark.Ash && hash01(px, py, SALT.ash) < R.marks.ashSpeck) {
     const greening = lookLevel(look, Look.ashShift) === 1;
     copy(greening && hash01(px, py, SALT.ashGreen) < F8.soil.ashGreen ? RGBS.grassLight : RGBS.ink, out);
@@ -332,8 +382,8 @@ function markPixel(
   };
   if (m & Mark.Canal && onLine(Mark.Canal, false, true)) copy(RGBS.waterLight, out);
   if (m & Mark.Road) {
-    if (onLine(Mark.Road | Mark.Path, true, false)) blend(out, RGBS.stoneLight, R.marks.roadBlend, out);
-  } else if (m & Mark.Path && onLine(Mark.Path | Mark.Road, false, false)) blend(out, RGBS.sand, R.marks.pathBlend, out);
+    if (onLine(Mark.Road | Mark.Path, true, false)) mix(out, RGBS.stoneLight, R.marks.roadBlend, out);
+  } else if (m & Mark.Path && onLine(Mark.Path | Mark.Road, false, false)) mix(out, RGBS.sand, R.marks.pathBlend, out);
   if (m & Mark.Quarry) {
     const d2 = (ox - mid - 0.5) ** 2 + (oy - mid - 0.5) ** 2;
     if (d2 <= R.marks.pitRadius2) copy(d2 <= 1 ? RGBS.ink : RGBS.mountainDark, out);
@@ -368,6 +418,17 @@ function stumpAt(map: MapData, px: number, py: number, painted: number): boolean
   return wasTree && !isTree && hash01(cx, cy, SALT.stump) < F8.stumps.share;
 }
 
+/**
+ * Forest-edge occlusion: ground just right of or below a canopy is darker, by the mockup's shade
+ * of 0.3 / distance, as a share of pixels dropping one ramp step (Bayer, or rounding without dither).
+ */
+function occludePixel(px: number, py: number, out: RGB): void {
+  const d = canopyDistance(px, py);
+  if (d === 0) return;
+  const share = Math.min(1, DO.shade / d / DO.shadePerStep);
+  if (share > (ditherOn ? bayer(px, py) : 0.5)) rampShift(out, -1);
+}
+
 function landPixel(
   map: MapData, ground: number, plant: number, dens: number, kind: number, nearForest: boolean, painted: number,
   px: number, py: number, out: RGB,
@@ -381,7 +442,7 @@ function landPixel(
       if (speck(px, py, SALT.mountainLight, R.mountainLightSpeck)) copy(RGBS.stoneLight, out);
       else if (speck(px, py, SALT.mountainDark, R.mountainDarkSpeck)) copy(RGBS.mountainDark, out);
       else copy(RGBS.stone, out);
-      if (kind === PeakKind.Ground) mountainPeak(map, kind, px, py, out);
+      if (kind === PeakKind.Ground) onPeak = mountainPeak(map, kind, px, py, out);
       break;
     default:
       copy(RGBS.grass, out);
@@ -392,7 +453,7 @@ function landPixel(
     case Plant.Grass: {
       const desert = ground === Ground.Desert;
       copy(out, tmp);
-      blend(tmp, RGBS.grassLight, desert ? dens * R.desertGrassMaxBlend : dens, out);
+      grad(tmp, RGBS.grassLight, desert ? dens * R.desertGrassMaxBlend : dens, out);
       const chance = (ground === Ground.Grassland ? D.tuftBase : 0) + D.tuftGrassBonus * dens;
       applyGrassDetail(px, py, chance, ground === Ground.Grassland, out);
       break;
@@ -402,25 +463,26 @@ function landPixel(
       break;
     case Plant.FruitBushes:
       copy(out, tmp);
-      blend(tmp, RGBS.fruitBush, dens, out);
+      grad(tmp, RGBS.fruitBush, dens, out);
       if (speck(px, py, SALT.fruit, R.fruitSpeck * dens)) copy(RGBS.fruit, out);
       break;
     case Plant.Farmland:
       // Crop rows; the season's colour (green → gold → stubble → bare) is the season tint (F8).
-      copy(py % R.farmSoilRowEvery === 0 ? RGBS.wood : RGBS.grass, out);
+      if (rampsOn) copy(CROP_ROWS[Math.min(2, py % R.farmSoilRowEvery)]!, out);
+      else copy(py % R.farmSoilRowEvery === 0 ? RGBS.wood : RGBS.grass, out);
       break;
   }
 
   if (painted >= 0 && stumpAt(map, px, py, painted)) copy((px & 1) === 0 ? RGBS.wood : RGBS.darkWood, out);
   // Crowns last: they stand above the ground and may overhang from a neighbouring forest tile.
-  if (nearForest) forestCrown(map, px, py, out);
+  if (nearForest) onCrown = crownsReady ? crownColourAt(px, py, out) : forestCrown(map, px, py, out);
 }
 
 function mountainWallPixel(isCrossing: boolean, px: number, py: number, out: RGB): void {
   if (isCrossing) copy(speck(px, py, SALT.pass, R.mountainPassSpeck) ? RGBS.stone : RGBS.sand, out);
   else if (speck(px, py, SALT.wallInk, R.mountainWallInkSpeck)) copy(RGBS.ink, out);
   else if (speck(px, py, SALT.wallLight, R.mountainWallLightSpeck)) copy(RGBS.stoneLight, out);
-  else copy(RGBS.mountainDark, out);
+  else copy(WALL_BODY, out);
 }
 
 /** Offscreen terrain canvas with dirty-tile redraw. */
@@ -428,6 +490,10 @@ export class TerrainLayer {
   readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly img: ImageData;
+  /** Phase 3: where trees and peaks cast their shadow (opaque = shadowed); null with shadows off. */
+  readonly shadowCanvas: HTMLCanvasElement | null = null;
+  private readonly shadowCtx: CanvasRenderingContext2D | null = null;
+  private readonly shadowImg: ImageData | null = null;
   private readonly dirty: Uint8Array;
   private dirtyList: number[] = [];
   private time: TerrainTime = { waterStep: 0, riverStep: 0 };
@@ -449,7 +515,14 @@ export class TerrainLayer {
     this.depth = new Uint8Array(n);
     this.depthNext = new Uint8Array(n);
     computeDepth(map, this.depth);
-    this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null };
+    if (shadowsOn) {
+      this.shadowCanvas = document.createElement('canvas');
+      this.shadowCanvas.width = this.canvas.width;
+      this.shadowCanvas.height = this.canvas.height;
+      this.shadowCtx = this.shadowCanvas.getContext('2d')!;
+      this.shadowImg = this.shadowCtx.createImageData(this.canvas.width, this.canvas.height);
+    }
+    this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null, shadow: this.shadowImg?.data ?? null };
     this.markAll();
   }
 
@@ -559,6 +632,10 @@ export class TerrainLayer {
     this.dirtyList = k === this.dirtyList.length ? [] : this.dirtyList.slice(k);
     this.ctx.putImageData(
       this.img, 0, 0,
+      minX * TILE, minY * TILE, (maxX - minX + 1) * TILE, (maxY - minY + 1) * TILE,
+    );
+    this.shadowCtx?.putImageData(
+      this.shadowImg!, 0, 0,
       minX * TILE, minY * TILE, (maxX - minX + 1) * TILE, (maxY - minY + 1) * TILE,
     );
   }

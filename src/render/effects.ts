@@ -3,6 +3,9 @@
 // drains away (the silt it leaves is the look byte); rocks and dust where walls break or land
 // slides; a sickly tint over villages with an outbreak; haze over cities; and a sparkle with
 // the discovery's icon, or a golden ring for a new era, at the group's home.
+// Toy Diorama phase 6 (docs/diorama-plan/06-moments.md): moments as the design system's Moment
+// component (docs/mockups/Pixel Ages UI mockups/_ds/…/_ds_bundle.js, Moment.jsx; readme "Motion"):
+// a pixel ring growing in 6 stepped frames, an icon on a tray plate rising 12 px, then all gone at once.
 
 import { CONFIG } from '../config';
 import { Mode } from '../shared/ids';
@@ -15,17 +18,82 @@ import { getSprite } from './sprites';
 import { discoveryIcon, discoveryInText, ERA_ICONS, iconSprite, realmIcon } from './icons';
 import { isWaterTile } from './terrainDetail';
 import { glowSprite } from './light';
+import { styleOff } from './ramps';
 
 const E = CONFIG.render.f8.effects;
 const SM = CONFIG.render.f8.smoke;
 const TILE = CONFIG.map.tilePx;
 const RR = CONFIG.render.realms;
 const RT = CONFIG.render.towns;
+const DM = CONFIG.render.diorama.moments;
+
+/** Phase 6 switch. */
+export const momentsOn: boolean = DM.on && !styleOff('moments');
+
+/** How long a moment's ring or icon lasts: the design system's 1600 ms, or the classic time. */
+const momentMs = (classic: number): number => (momentsOn ? DM.iconMs : classic);
+
+/** The ring's radius `elapsedMs` into a moment: 0 before it starts, then 6 stepped sizes up to half the diameter. */
+export function ringRadiusAt(elapsedMs: number): number {
+  if (elapsedMs < 0) return 0;
+  const f = Math.min(DM.ringFrames, Math.floor(elapsedMs / (DM.ringMs / DM.ringFrames)) + 1);
+  return Math.round(((DM.ringDiameterPx / 2) * f) / DM.ringFrames);
+}
+
+/** The pixels of a ring of radius r, (dx, dy) from its centre: a closed, 1-px pixel circle. */
+export function ringPixels(r: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  const w = DM.ringWidthPx;
+  for (let dy = -r - 1; dy <= r + 1; dy++) {
+    for (let dx = -r - 1; dx <= r + 1; dx++) {
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d <= r + 0.5 && d > r + 0.5 - w) out.push([dx, dy]);
+    }
+  }
+  return out;
+}
+
+const rings = new Map<string, HTMLCanvasElement>();
+/** A ring of radius r in a colour, drawn once and cached (6 sizes per colour). */
+function ringSprite(colour: string, r: number): HTMLCanvasElement {
+  const key = `${colour}|${r}`;
+  let c = rings.get(key);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = c.height = 2 * r + 3;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = colour;
+  for (const [dx, dy] of ringPixels(r)) ctx.fillRect(r + 1 + dx, r + 1 + dy, 1, 1);
+  rings.set(key, c);
+  return c;
+}
+
+const plates = new WeakMap<HTMLCanvasElement, HTMLCanvasElement>();
+/** A moment icon on its plate: tray-600 round the icon with a hard tray-900 edge under it (cached). */
+function plateSprite(icon: HTMLCanvasElement): HTMLCanvasElement {
+  let c = plates.get(icon);
+  if (c) return c;
+  const pad = DM.platePadPx, w = icon.width + pad * 2, h = icon.height + pad * 2;
+  c = document.createElement('canvas');
+  c.width = w;
+  c.height = h + DM.plateEdgePx;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = PALETTE.plateEdge;
+  ctx.fillRect(0, DM.plateEdgePx, w, h);
+  ctx.fillStyle = PALETTE.plate;
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(icon, pad, pad);
+  plates.set(icon, c);
+  return c;
+}
 
 export const Particle = { Smoke: 0, Dust: 1, Spark: 2, Rock: 3, Ember: 4 } as const;
 const COLOURS = [RGBS.stoneLight, RGBS.sand, RGBS.fireYellow, RGBS.stone, RGBS.fireOrange];
 
-interface Burst { kind: 'icon' | 'glow'; x: number; y: number; start: number; ms: number; img: HTMLCanvasElement | null; colour?: string; radius?: number }
+interface Burst {
+  kind: 'icon' | 'glow'; x: number; y: number; start: number; ms: number; img: HTMLCanvasElement | null; colour?: string; radius?: number;
+  home?: [number, number];       // phase 6: the group's home tile, so its icon rises above the group's label
+}
 
 export interface View { x: number; y: number; w: number; h: number }
 
@@ -135,14 +203,17 @@ export class Effects {
       if (e.x === null || e.y === null) continue;
       if (this.bursts.length >= E.maxBursts) break;
       const cx = (e.x + 0.5) * TILE, cy = (e.y + 0.5) * TILE;
+      const before = this.bursts.length;
       if (e.type === 'discovery') {
         const d = discoveryInText(e.text);
-        this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE, start: nowMs, ms: E.sparkleMs, img: iconSprite(d === null ? 'star' : discoveryIcon(d)) });
+        // Phase 6: a discovery gets a brass ring too (design system: brass "discovery rings").
+        if (momentsOn) this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs, ms: DM.iconMs, img: null, colour: PALETTE.brass });
+        this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE, start: nowMs, ms: momentMs(E.sparkleMs), img: iconSprite(d === null ? 'star' : discoveryIcon(d)) });
         for (let k = 0; k < E.sparkles; k++) this.spawn(Particle.Spark, cx + (Math.random() - 0.5) * 14, cy - Math.random() * 12, (Math.random() - 0.5) * 6, -4 - Math.random() * 6, E.sparkleMs * (0.4 + Math.random() * 0.6));
       } else if (e.type === 'eraUp') {
         const m = /era (\d)/.exec(e.text);
-        this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs, ms: E.eraGlowMs, img: null });
-        this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: E.eraGlowMs, img: iconSprite(ERA_ICONS[m ? Number(m[1]) : 0] ?? 'star') });
+        this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs, ms: momentMs(E.eraGlowMs), img: null });
+        this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: momentMs(E.eraGlowMs), img: iconSprite(ERA_ICONS[m ? Number(m[1]) : 0] ?? 'star') });
       } else if (e.type === 'realm' && !e.minor) {
         this.realmMoment(e, cx, cy, nowMs);
       } else if (e.type === 'town' && !e.minor) {
@@ -150,6 +221,7 @@ export class Effects {
       } else if (e.type === 'breach' || (e.type === 'event' && /earthquake/i.test(e.text)) || (e.type === 'hazard' && /slide|collapse/i.test(e.text))) {
         this.quake(cx, cy);
       }
+      for (let k = before; k < this.bursts.length; k++) this.bursts[k]!.home = [e.x, e.y];
     }
   }
 
@@ -163,14 +235,15 @@ export class Effects {
     const ruler = this.groups.find((g) => g.id === e.groupId);
     const colour = GROUP_COLORS[(ruler && ruler.realmHead >= 0 ? ruler.realmColour : ruler?.colourIndex ?? 0) % GROUP_COLORS.length]!;
     const ring = (c: string, delay = 0): void => {
-      this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs + delay, ms: RR.ringMs, img: null, colour: c, radius: RR.ringRadiusPx });
+      // Phase 6: a delayed second ring (a kingdom's) still vanishes with the icon.
+      this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs + delay, ms: momentsOn ? DM.iconMs - delay : RR.ringMs, img: null, colour: c, radius: RR.ringRadiusPx });
     };
     const sparks = (n: number): void => {
       for (let k = 0; k < n; k++) {
         this.spawn(Particle.Spark, cx + (Math.random() - 0.5) * 16, cy - Math.random() * 10, (Math.random() - 0.5) * 10, -5 - Math.random() * 8, RR.ringMs * (0.5 + Math.random() * 0.5));
       }
     };
-    this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: E.eraGlowMs, img: iconSprite(icon) });
+    this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: momentMs(E.eraGlowMs), img: iconSprite(icon) });
     if (/became the Kingdom/.test(e.text)) {
       ring(PALETTE.fireYellow);
       ring(PALETTE.fireYellow, RR.kingdomRingDelayMs);
@@ -179,7 +252,7 @@ export class Effects {
       ring(PALETTE.fireYellow);
       sparks(RR.sparks);
     } else if (/rebelled|broke free/.test(e.text)) {
-      ring(PALETTE.fruit);
+      ring(momentsOn ? PALETTE.dangerText : PALETTE.fruit);   // phase 6: the design system's revolt ring
       for (let k = 0; k < RR.sparks; k++) {
         this.spawn(Particle.Ember, cx + (Math.random() - 0.5) * 12, cy - Math.random() * 6, (Math.random() - 0.5) * 6, -6 - Math.random() * 6, RR.ringMs * (0.6 + Math.random() * 0.6));
         this.spawn(Particle.Smoke, cx + (Math.random() - 0.5) * 10, cy - TILE, (Math.random() - 0.5) * 3, -4 - Math.random() * 3, RR.ringMs * 1.5);
@@ -202,7 +275,7 @@ export class Effects {
     const g = this.groups.find((o) => o.id === e.groupId);
     const colour = GROUP_COLORS[(g?.colourIndex ?? 0) % GROUP_COLORS.length]!;
     const ring = (c: string, delay = 0): void => {
-      this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs + delay, ms: RT.ringMs, img: null, colour: c, radius: RR.ringRadiusPx });
+      this.bursts.push({ kind: 'glow', x: cx, y: cy, start: nowMs + delay, ms: momentsOn ? DM.iconMs - delay : RT.ringMs, img: null, colour: c, radius: RR.ringRadiusPx });
     };
     const sparks = (n: number): void => {
       for (let k = 0; k < n; k++) {
@@ -211,7 +284,7 @@ export class Effects {
     };
     const market = /market/.test(e.text);
     const city = /became a city/.test(e.text);
-    this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: E.eraGlowMs, img: iconSprite(market ? 'stall' : city ? 'city' : 'house') });
+    this.bursts.push({ kind: 'icon', x: cx, y: cy - TILE * 1.5, start: nowMs, ms: momentMs(E.eraGlowMs), img: iconSprite(market ? 'stall' : city ? 'city' : 'house') });
     if (market) { ring(colour); sparks(RT.sparks); }
     else if (city) { ring(PALETTE.fireYellow); ring(PALETTE.fireYellow, RR.kingdomRingDelayMs); sparks(RT.sparks); }
     else ring(PALETTE.fireYellow);
@@ -324,6 +397,17 @@ export class Effects {
     return n;
   }
 
+  /** Diorama phase 4: burning tiles as night lights, [x, y, radius, strength] quadruples from `n`; returns the new count. */
+  addFlameLights(out: number[], n: number, radius: number, strength: number): number {
+    const w = this.map.width;
+    for (const i of this.burning) {
+      out[n * 4] = (i % w + 0.5) * TILE; out[n * 4 + 1] = (Math.floor(i / w) + 0.5) * TILE;
+      out[n * 4 + 2] = radius; out[n * 4 + 3] = strength;
+      n++;
+    }
+    return n;
+  }
+
   /** Flood water (spreading in, draining out) with ripples, city haze and sick villages: over the ground, under sprites. */
   drawGround(ctx: CanvasRenderingContext2D, nowMs: number): void {
     if (this.floodTiles.length > 0) {
@@ -372,24 +456,33 @@ export class Effects {
     }
   }
 
-  /** Particles, sparkles, era rings and floating icons: over the sprites. */
-  drawSky(ctx: CanvasRenderingContext2D, nowMs: number): void {
+  /**
+   * Particles, sparkles, era rings and floating icons: over the sprites. With the Diorama night
+   * (phase 4) it is drawn in two parts: `plain` (smoke, dust, rocks) before the night pass, and
+   * `glow` (sparks, embers, rings and icons: light, and moments that must stay readable) after it.
+   */
+  drawSky(ctx: CanvasRenderingContext2D, nowMs: number, part: 'all' | 'plain' | 'glow' = 'all'): void {
     ctx.save();
     for (let k = 0; k < this.count; k++) {
       const kd = this.kind[k]!;
+      const glows = kd === Particle.Spark || kd === Particle.Ember;
+      if ((part === 'plain' && glows) || (part === 'glow' && !glows)) continue;
       const t = this.age[k]! / this.life[k]!;
       const c = COLOURS[kd]!;
       let size = 1;
       let alpha = 1 - t;
       if (kd === Particle.Smoke) { size = 1 + Math.floor(t * 3); alpha = 0.55 * (1 - t); }
       else if (kd === Particle.Dust) { size = 2 + Math.floor(t * 3); alpha = 0.5 * (1 - t); }
-      else if (kd === Particle.Spark) alpha = Math.floor(nowMs / 90 + k) % 2 === 0 ? 1 - t : 0.2;
+      // Phase 6: at most 3 flashes a second (readme: "Nothing flashes > 3×/s"); classic: every 90 ms.
+      else if (kd === Particle.Spark) alpha = Math.floor(nowMs / (momentsOn ? DM.sparkBlinkMs : 90) + k) % 2 === 0 ? 1 - t : 0.2;
       else if (kd === Particle.Rock) { size = 2; alpha = t < 0.8 ? 1 : (1 - t) * 5; }
       ctx.globalAlpha = Math.max(0, alpha);
       ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
       ctx.fillRect(Math.round(this.x[k]! - size / 2), Math.round(this.y[k]! - size / 2), size, size);
     }
+    if (momentsOn && part !== 'plain') { this.drawMoments(ctx, nowMs); ctx.restore(); return; }
     for (const b of this.bursts) {
+      if (part === 'plain') break;
       const t = (nowMs - b.start) / b.ms;
       if (t < 0) continue;                     // a burst that starts a little later (a kingdom's second ring)
       if (b.kind === 'glow') {
@@ -408,6 +501,44 @@ export class Effects {
       }
     }
     ctx.restore();
+  }
+
+  /**
+   * Phase 6 moments: each ring a cached pixel circle at its stepped size, each icon on its plate,
+   * risen by whole pixels; all opaque, and gone in one step when the moment ends.
+   */
+  private drawMoments(ctx: CanvasRenderingContext2D, nowMs: number): void {
+    ctx.globalAlpha = 1;
+    for (const b of this.bursts) {
+      const el = nowMs - b.start;
+      if (el < 0 || el >= b.ms) continue;
+      if (b.kind === 'glow') {
+        const r = ringRadiusAt(el);
+        if (r <= 0) continue;
+        const img = ringSprite(b.colour ?? PALETTE.fireYellow, r);
+        ctx.drawImage(img, Math.round(b.x) - (img.width >> 1), Math.round(b.y) - (img.height >> 1));
+      }
+    }
+  }
+
+  /**
+   * Phase 6 moment icons, in label space after the group labels (mockup 1g: the icon's plate stands
+   * above the group's label): on their plate, rising 12 px, gone in one step. `project` maps a map
+   * point into label space; `labelH` is a label's height there (0 when labels are hidden).
+   */
+  drawMomentIcons(ctx: CanvasRenderingContext2D, nowMs: number, anchor: (hx: number, hy: number) => [number, number],
+    project: (mx: number, my: number) => [number, number], labelH: number): void {
+    if (!momentsOn) return;
+    for (const b of this.bursts) {
+      if (b.kind !== 'icon' || !b.img || !b.home) continue;
+      const el = nowMs - b.start;
+      if (el < 0 || el >= b.ms) continue;
+      const [mx, my] = anchor(b.home[0], b.home[1]);
+      const [x, y] = project(mx, my);
+      const plate = plateSprite(b.img);
+      const rise = Math.round(DM.iconRisePx * Math.min(1, el / DM.iconMs));
+      ctx.drawImage(plate, Math.round(x - plate.width / 2), Math.round(y - labelH - DM.iconGapPx - plate.height - rise));
+    }
   }
 
   /** Burning tiles in view (for sound). */

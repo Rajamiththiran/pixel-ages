@@ -663,6 +663,108 @@ export const CONFIG = {
       pebbleChance: 0.01,
     },
     farmSoilRowEvery: 3,         // every 3rd pixel row of farmland is soil
+    // Toy Diorama look (docs/diorama-plan; design system in docs/mockups). Render only. Each effect
+    // has an off switch here; `?off=ramps` in the URL also turns one off for a quick comparison.
+    diorama: {
+      // Phase 1: colours come from 5-step ramps and shading moves whole steps (− darker and cooler,
+      // + lighter and warmer) instead of multiplying. These replace the classic multipliers.
+      ramps: {
+        on: true,
+        wetEdgeSteps: [-1, 0],     // land 0 and 1 px from water (classic ×0.75, ×0.88)
+        tuftLightSteps: 1, tuftTipSteps: 2, tuftShadowSteps: -1, // grass blades (classic ×1.18, ×1.3, ×0.82)
+        duneDarkSteps: -1, duneLightSteps: 1,                   // dune crest and its lit row
+        treeLightSteps: 1,         // crown's top-left side
+        treeShadowSteps: -2,       // crown's bottom-right side (the mockup's darkVar ≈ step 0)
+        treeToneShare: 0.2,        // this share of crowns one step darker, the same share one lighter
+        seaSteps: -1,              // sea walls a step darker than lakes (classic ×0.9)
+        terraceSteps: -1,          // terrace contour rows
+        burnSteps: -2,             // char on burning ground (classic ×0.45; mockup: two shade steps)
+        heightPerStep: 2,          // hills: one ramp step per this many height levels across a tile …
+        heightMaxSteps: 2,         // … at most this many steps either way
+        wallBodyStep: 1,           // a mountain wall's body is stone-1, so its peaks' dark slope (stone-0) shows
+        wornSteps: 1,              // worn fields one step paler per wear level
+      },
+      // Phase 2: ground texture is clustered ordered dither, a 4×4 Bayer over value noise (readme
+      // "Texture"; numbers from the mockup renderer pixel-scenes.js). Needs the ramps; off → phase 1's flat ramps.
+      dither: {
+        on: true,
+        noiseScalePx: 4.5,         // value-noise cell size: clusters about this many px across
+        lightAbove: 0.6,           // noise above this lifts a pixel one ramp step …
+        darkBelow: 0.38,           // … below this drops it one step …
+        gain: 5,                   // … where (distance past the line × gain) beats the Bayer threshold …
+        stepShare: 0.44,           // … scaled by this: the mockup shades 0.22 of the way to the ramp's end, about
+                                   //     0.44 of one step, so on whole-step ramps at most 44% of a cluster's pixels move
+        noiseSalt: 19,
+        gradientLevels: 4,         // a blend between two materials (grass into forest floor) dithers across this many tones
+      },
+      // Phase 2: the season tint as a crisp 4×4 Bayer stipple of the season's colour, instead of a
+      // blurred translucent wash (readme: "banded or dithered, never blurred").
+      // Off (owner, 5 Nov 2026): at 1× the shares change ~12 times a second and the same 4×4 pattern
+      // repeats on every tile, so it flickered and showed a screen-door grid. Seasons are being
+      // redesigned (diorama-plan/07-seasons-weather-brief.md); `on: true` brings the stipple back.
+      ditherSeason: { on: false },
+      // Phase 3: sun from the top-left, everything casts a shadow down-right (readme "Light";
+      // geometry from the mockup renderer pixel-scenes.js). Off: `?off=shadows`.
+      shadows: {
+        on: true,
+        perHeightPx: 0.45,         // readme: 0.45 px right and 0.45 px down per px of height
+        strength: 0.8,             // --op-cast: how far a shadowed pixel goes toward its shade colour …
+        tint: [28, 30, 58], tintMix: 0.28, // … which is shadowOf(c) mixed 28% toward this navy: the --cast-* tokens exactly
+        treeLiftPx: 3,             // a crown stands this high plus its radius (mockup lift = 3 + r)
+        peakSpreadPx: 1,           // a peak pixel's shadow is this many px wider to the right (mockup e = 0…1)
+      },
+      // Phase 3: a 1-px shadow line one pixel right of and under every sprite's footprint. Off: `?off=contact`.
+      contactLines: { on: true },
+      // Phase 3: ground just right of or below a forest edge is darker, as under a canopy (mockup:
+      // shade −0.3 / distance). Needs the ramps. Off: `?off=occlusion`.
+      forestOcclusion: {
+        on: true,
+        reachPx: 3,                // up to this many px from the canopy …
+        shade: 0.3,                // … shaded this much at 1 px (÷ distance farther out) …
+        shadePerStep: 0.5,         // … where one ramp step is a shade of 0.5 (steps sit at ±0.5, ±1), so 1 px from
+                                   //     the canopy 60% of pixels drop a step, at 2 px 30%, at 3 px 20%
+      },
+      // Phase 5: the UI as the design system's wooden tray (tokens, components, Pixelify Sans). Off:
+      // `?off=tray` (the old dark UI; its stylesheet stays underneath until the owner approves removing it).
+      trayUi: { on: true },
+      // Phase 6: moments as in the design system's Moment component (readme "Motion"; tokens/effects.css
+      // --t-moment, --t-icon). Off: `?off=moments` (the F8 arcs and fades).
+      moments: {
+        on: true,
+        ringFrames: 6,             // the ring grows in 6 stepped frames …
+        ringMs: 600,               // … over 600 ms (--t-moment) …
+        ringDiameterPx: 40,        // … out to 40 px across (map px; mockup 1g: 160 screen px at 4×) …
+        ringWidthPx: 1,            // … a 1-px pixel circle, then holds until the icon goes
+        iconMs: 1600,              // the icon rises over 1600 ms (--t-icon) …
+        iconRisePx: 12,            // … 12 px, then vanishes in one step
+        platePadPx: 2,             // the icon's tray-600 plate: this much round the 7 × 7 icon …
+        plateEdgePx: 3,            // … with a 3-px hard edge under it (--plate) …
+        iconGapPx: 2,              // … starting this far above the group's label (label px)
+        sparkBlinkMs: 170,         // sparks switch on or off at most every 170 ms: under 3 flashes a second (readme)
+      },
+      // Sun shadows are day only (owner): they fade out over this many steps of dusk and back over
+      // dawn (the night lighting uses the same steps, phase 4).
+      duskSteps: 4,
+      // Phase 4: night maps every colour through night(c) = c × mul + add (the Night tokens in
+      // tokens/world.css, exactly), with firelight in dithered bands round each light (readme "Light";
+      // falloff from the mockup renderer pixel-scenes.js). Off: `?off=night` (back to the F8 tint and glows).
+      night: {
+        on: true,
+        mul: [0.2, 0.25, 0.42], add: [10, 14, 40],
+        bands: 3,                  // readme: 3 dithered bands of firelight
+        reachMult: 1.15,           // a light reaches its radius × this; strength (1 − d / reach)² × k, summed
+        litMul: [1.10, 0.90, 0.66], // lit colour = the day colour × this (owner: the original design system's rule)
+        // Light sources: radius (map px) and strength k (mockup values). Every lit building uses `window`
+        // (the game's building lights carry no type; the mockup's kiln and temple are r 8 and 11).
+        campfire: { r: 16, k: 1 },
+        window: { r: 7, k: 0.5 },
+        flame: { r: 12, k: 0.6 }, // a burning tile
+      },
+      // The design system's shade formula, shadowOf(c) = c × shadeMul + shadeAdd (cool and darker),
+      // and lineage shade = mix(c, shadowOf(c), lineageShadeMix): the colour tokens follow it exactly,
+      // so colours without a token (the colour-blind lineages) use it too.
+      shadeMul: [0.62, 0.58, 0.64], shadeAdd: [6, 6, 22], lineageShadeMix: 0.85,
+    },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,
     founderSpreadPx: 10,         // placed founders stand within ±10 px of their home tile
@@ -777,6 +879,7 @@ export const CONFIG = {
     hoverInfoRefreshMs: 50,
     inspectRefreshMs: 250,       // §21.1: inspector refreshes about 4 times per second
     logRowPx: 20,                // event log: height of one row (the list is virtualised, §21.3)
+    logRowTrayPx: 34,            // … in the tray UI: the design system's log row (16/22 text, 6 px padding)
     graphs: { width: 292, height: 112, maxPoints: 2000, redrawMs: 250 }, // §21.2: draw every n-th year past 2,000 points
     eventDialog: { year: 100, length: 20, strength: 50 }, // a new event's starting values
     toastMs: 2500,
