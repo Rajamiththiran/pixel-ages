@@ -25,6 +25,7 @@ import { DayNight } from './light';
 import { Weather } from './weather';
 import { Effects, Particle, type View } from './effects';
 import { Traffic } from './traffic';
+import { ShadowPass } from './shadows';
 
 /** What is on screen now, for the ambient sound (0–1 shares unless said otherwise). */
 export interface SoundScene {
@@ -98,6 +99,7 @@ export class Renderer {
   private itemCount = 0;
   private sortKeys = new Float64Array(1024);
   private readonly sprites: SpriteLayer;
+  private readonly shadows = new ShadowPass();      // Diorama phase 3: cast shadows and contact lines
   private lights: number[] = [];
   private lastMs = 0;
   private frames = 0;
@@ -129,6 +131,8 @@ export class Renderer {
     this.effects = new Effects(view.map);
     this.trample = new TrampleLayer(view.map.width, view.map.height);
     this.sprites = new SpriteLayer(canvas.width, canvas.height);
+    // Flames are light, not things: no shadow (as in the mockup).
+    for (const f of ['flame_1', 'flame_2']) this.sprites.noShadow.add(getSprite(f));
     this.camera = new Camera(canvas.width, canvas.height);
     this.people.splash = (x, y) => this.effects.spawn(Particle.Spark, x, y, 0, -6, 300);
     this.battles.dust = (x, y) => this.effects.puff(x, y);
@@ -354,7 +358,12 @@ export class Renderer {
       const it = list[keys[k]! % SORT_STRIDE]!;
       layer.blit(it.img, Math.round(it.x) - (it.img.width >> 1), Math.round(it.y) - it.img.height);
     }
-    ctx.drawImage(layer.end(), 0, 0);
+    const spriteCanvas = layer.end();
+    // Phase 3: shadows of trees, peaks and every sprite, over the ground and under the sprites;
+    // day only, fading out over the dusk steps.
+    this.shadows.draw(ctx, [this.terrain.shadowCanvas, layer.shadowCanvas], v.running ? this.light.darkness : 0,
+      vr, this.canvas.width, this.canvas.height);
+    ctx.drawImage(spriteCanvas, 0, 0);
     if (v.running) {
       this.weather.drawSky(ctx);
       this.effects.drawSky(ctx, now);

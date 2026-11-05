@@ -700,6 +700,30 @@ export const CONFIG = {
       // Phase 2: the season tint as a crisp 4×4 Bayer stipple of the season's colour, instead of a
       // blurred translucent wash (readme: "banded or dithered, never blurred").
       ditherSeason: { on: true },
+      // Phase 3: sun from the top-left, everything casts a shadow down-right (readme "Light";
+      // geometry from the mockup renderer pixel-scenes.js). Off: `?off=shadows`.
+      shadows: {
+        on: true,
+        perHeightPx: 0.45,         // readme: 0.45 px right and 0.45 px down per px of height
+        strength: 0.8,             // --op-cast: how far a shadowed pixel goes toward its shade colour …
+        tint: [28, 30, 58], tintMix: 0.28, // … which is shadowOf(c) mixed 28% toward this navy: the --cast-* tokens exactly
+        treeLiftPx: 3,             // a crown stands this high plus its radius (mockup lift = 3 + r)
+        peakSpreadPx: 1,           // a peak pixel's shadow is this many px wider to the right (mockup e = 0…1)
+      },
+      // Phase 3: a 1-px shadow line one pixel right of and under every sprite's footprint. Off: `?off=contact`.
+      contactLines: { on: true },
+      // Phase 3: ground just right of or below a forest edge is darker, as under a canopy (mockup:
+      // shade −0.3 / distance). Needs the ramps. Off: `?off=occlusion`.
+      forestOcclusion: {
+        on: true,
+        reachPx: 3,                // up to this many px from the canopy …
+        shade: 0.3,                // … shaded this much at 1 px (÷ distance farther out) …
+        shadePerStep: 0.5,         // … where one ramp step is a shade of 0.5 (steps sit at ±0.5, ±1), so 1 px from
+                                   //     the canopy 60% of pixels drop a step, at 2 px 30%, at 3 px 20%
+      },
+      // Sun shadows are day only (owner): they fade out over this many steps of dusk and back over
+      // dawn (the night lighting uses the same steps, phase 4).
+      duskSteps: 4,
       // The design system's shade formula, shadowOf(c) = c × shadeMul + shadeAdd (cool and darker),
       // and lineage shade = mix(c, shadowOf(c), lineageShadeMix): the colour tokens follow it exactly,
       // so colours without a token (the colour-blind lineages) use it too.

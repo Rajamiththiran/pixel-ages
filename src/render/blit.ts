@@ -4,6 +4,9 @@
 // and draw it once (§18.9: 60 fps with 6,000 people, 400 animals and 300 buildings).
 
 import { spritePixels, type SpritePixels as Pixels } from './sprites';
+import { contactOn, shadowsOn, spriteShadow } from './shadows';
+
+const SHADOW = 0xff000000;               // opaque black: a shadow mask pixel (ShadowPass colours it)
 
 const cache = new WeakMap<HTMLCanvasElement, Pixels>();
 
@@ -30,6 +33,17 @@ export class SpriteLayer {
   private maxY = -1;
   private lastMinY = 0;
   private lastMaxY = -1;
+  // Phase 3: cast shadows and contact lines of the sprites drawn this frame (mask, opaque = shadowed).
+  readonly shadowCanvas: HTMLCanvasElement | null = null;
+  private readonly shadowCtx: CanvasRenderingContext2D | null = null;
+  private readonly shadowImg: ImageData | null = null;
+  private readonly shadowBuf: Uint32Array | null = null;
+  private sMinY = Infinity;
+  private sMaxY = -1;
+  private sLastMinY = 0;
+  private sLastMaxY = -1;
+  /** Sprites that cast no shadow (flames: they are light, not things). */
+  readonly noShadow = new WeakSet<HTMLCanvasElement>();
 
   constructor(width: number, height: number) {
     this.canvas = document.createElement('canvas');
@@ -40,6 +54,14 @@ export class SpriteLayer {
     this.ctx = this.canvas.getContext('2d')!;
     this.img = this.ctx.createImageData(width, height);
     this.buf = new Uint32Array(this.img.data.buffer);
+    if (shadowsOn || contactOn) {
+      this.shadowCanvas = document.createElement('canvas');
+      this.shadowCanvas.width = width;
+      this.shadowCanvas.height = height;
+      this.shadowCtx = this.shadowCanvas.getContext('2d')!;
+      this.shadowImg = this.shadowCtx.createImageData(width, height);
+      this.shadowBuf = new Uint32Array(this.shadowImg.data.buffer);
+    }
   }
 
   begin(): void {
@@ -47,6 +69,9 @@ export class SpriteLayer {
     if (this.lastMaxY >= this.lastMinY) this.buf.fill(0, this.lastMinY * this.w, (this.lastMaxY + 1) * this.w);
     this.minY = Infinity;
     this.maxY = -1;
+    if (this.shadowBuf && this.sLastMaxY >= this.sLastMinY) this.shadowBuf.fill(0, this.sLastMinY * this.w, (this.sLastMaxY + 1) * this.w);
+    this.sMinY = Infinity;
+    this.sMaxY = -1;
   }
 
   /** Copies a sprite with its top-left at integer (x, y); transparent pixels are skipped. */
@@ -69,6 +94,23 @@ export class SpriteLayer {
     }
     if (y0 < this.minY) this.minY = y0;
     if (y1 - 1 > this.maxY) this.maxY = y1 - 1;
+    if (this.shadowBuf && !this.noShadow.has(sprite)) {
+      const sh = spriteShadow(px);
+      if (shadowsOn) this.stamp(sh.cast, x, y);
+      if (contactOn) this.stamp(sh.contact, x, y);
+    }
+  }
+
+  /** Marks a sprite's shadow pixels, (dx, dy) pairs from its top-left at (x, y). */
+  private stamp(pairs: Int16Array, x: number, y: number): void {
+    const buf = this.shadowBuf!;
+    for (let k = 0; k < pairs.length; k += 2) {
+      const sx = x + pairs[k]!, sy = y + pairs[k + 1]!;
+      if (sx < 0 || sy < 0 || sx >= this.w || sy >= this.h) continue;
+      buf[sy * this.w + sx] = SHADOW;
+      if (sy < this.sMinY) this.sMinY = sy;
+      if (sy > this.sMaxY) this.sMaxY = sy;
+    }
   }
 
   /** Uploads the rows used this frame (and last frame, to erase them) and returns the canvas. */
@@ -80,6 +122,12 @@ export class SpriteLayer {
     }
     this.lastMinY = Number.isFinite(this.minY) ? this.minY : 0;
     this.lastMaxY = this.maxY;
+    if (this.shadowCtx) {
+      const st = Math.min(this.sMinY, this.sLastMinY), sb = Math.max(this.sMaxY, this.sLastMaxY);
+      if (sb >= st && Number.isFinite(st)) this.shadowCtx.putImageData(this.shadowImg!, 0, 0, 0, st, this.w, sb - st + 1);
+      this.sLastMinY = Number.isFinite(this.sMinY) ? this.sMinY : 0;
+      this.sLastMaxY = this.sMaxY;
+    }
     return this.canvas;
   }
 }

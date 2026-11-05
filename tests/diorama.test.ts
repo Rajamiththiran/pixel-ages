@@ -1,4 +1,4 @@
-// Toy Diorama look (docs/diorama-plan): phase 1 colour ramps and shading, phase 2 dither.
+// Toy Diorama look (docs/diorama-plan): phase 1 colour ramps and shading, phase 2 dither, phase 3 shadows.
 // The design system is in docs/mockups/Pixel Ages UI mockups/_ds/ (readme.md, tokens/*.css).
 
 import { describe, expect, it } from 'vitest';
@@ -9,7 +9,9 @@ import { createMap } from '../src/editor/mapState';
 import { Mat, NIGHT_HEX, RAMP_HEX, hexRgb, lineageShade, rampColours, rampsOn, shadowOf } from '../src/render/ramps';
 import { darken, GROUP_COLORS, usePalette } from '../src/render/palette';
 import { drawTilePixels } from '../src/render/terrain';
-import { computeDepth } from '../src/render/terrainDetail';
+import { computeDepth, forestCrown } from '../src/render/terrainDetail';
+import { castMultiplyAdd, castOf, shadowStrength, spriteShadow } from '../src/render/shadows';
+import { buildCrowns, canopyDistance, crownColourAt } from '../src/render/crowns';
 import { bayer, ditherPixel, mixGrad, valueNoise } from '../src/render/dither';
 import { stippleCells, stippleCounts, TintClass } from '../src/render/season';
 import { scenarioA } from './fixtures';
@@ -240,5 +242,106 @@ describe('Diorama dither (phase 2)', () => {
     // Counts follow weight × the class's tint strength (farmland in summer: 0.55 → 9 of 16 cells).
     expect(stippleCounts(TintClass.Farm, [0, 1, 0, 0])).toEqual([0, 9, 0, 0]);
     expect(stippleCounts(TintClass.None, [1, 0, 0, 0])).toEqual([0, 0, 0, 0]);
+  });
+});
+
+// ---------- phase 3: shadows (docs/diorama-plan/03-shadows.md) ----------
+
+describe('Diorama shadows (phase 3)', () => {
+  it('the cast colour is the --cast-* tokens, and the GPU multiply + add gives the same', () => {
+    const t = tokens('world.css');
+    const pairs: Array<[string, string]> = [['world-grass-2', 'cast-grass'], ['world-sand-2', 'cast-sand'], ['world-crop-1', 'cast-crop'], ['world-stone-2', 'cast-stone']];
+    const { mul, add } = castMultiplyAdd(CONFIG.render.diorama.shadows.strength);
+    for (const [ground, cast] of pairs) {
+      const c = hexRgb(t[ground]!), want = hexRgb(t[cast]!), got = castOf(c);
+      got.forEach((v, i) => expect(Math.abs(v - want[i]!), `${cast}`).toBeLessThanOrEqual(0.5));
+      // GPU: multiply by the rounded colour, then add the rounded colour, within 1 of the token.
+      c.forEach((v, i) => expect(Math.abs(Math.round(v * Math.round(mul[i]!) / 255) + Math.round(add[i]!) - want[i]!)).toBeLessThanOrEqual(1));
+    }
+  });
+
+  it('sun shadows are day only: full by day, stepping down over dusk, none at night', () => {
+    const S = CONFIG.render.diorama.shadows.strength, n = CONFIG.render.diorama.duskSteps;
+    expect(shadowStrength(0)).toBe(S);
+    expect(shadowStrength(1)).toBe(0);
+    const seen = new Set<number>();
+    for (let d = 0; d <= 1; d += 0.01) seen.add(shadowStrength(d));
+    expect(seen.size).toBe(n + 1);                                  // stepped, not smooth
+    for (let d = 0.01; d < 1; d += 0.01) expect(shadowStrength(d)).toBeLessThan(S);
+  });
+
+  it('a sprite casts down-right at 0.45 px per px of height, with a contact line under its footprint', () => {
+    const w = 2, h = 6;
+    const sh = spriteShadow({ w, h, data: new Uint32Array(w * h).fill(0xff0000ff) });
+    const pts = (a: Int16Array): Array<[number, number]> => Array.from({ length: a.length / 2 }, (_, k) => [a[k * 2]!, a[k * 2 + 1]!]);
+    const cast = pts(sh.cast);
+    for (const [x, y] of cast) { expect(y).toBeGreaterThanOrEqual(h - 1); expect(x).toBeGreaterThanOrEqual(0); }
+    // The top pixel is 5 px up: its shadow lands round(5 × 0.45) = 2 px right and down of the foot.
+    expect(cast).toContainEqual([1 + 2, h - 1 + 2]);
+    expect(Math.max(...cast.map(([x]) => x))).toBe(3);
+    expect(pts(sh.contact).sort()).toEqual([[1, h], [2, h]]);
+  });
+
+  it('the crown field draws exactly the crowns forestCrown draws', () => {
+    const W = 12, H = 8, m = createMap(W, H);
+    for (let i = 0; i < W * H; i++) if ((i % W) > 2 && (i % W) < 9) { m.plantType[i] = Plant.Forest; m.plantDensity[i] = (i * 37) % 256; }
+    const a: [number, number, number] = [0, 0, 0], b: [number, number, number] = [0, 0, 0];
+    for (let ty = 0; ty < H; ty++) {
+      for (let tx = 0; tx < W; tx++) {
+        buildCrowns(m, tx, ty);
+        for (let py = ty * 8; py < ty * 8 + 8; py++) {
+          for (let px = tx * 8; px < tx * 8 + 8; px++) {
+            const fa = crownColourAt(px, py, a), fb = forestCrown(m, px, py, b);
+            expect(fa).toBe(fb);
+            if (fa) expect(a).toEqual(b);
+          }
+        }
+      }
+    }
+  });
+
+  it('trees and peaks cast down-right only, never onto the crowns or peaks themselves', () => {
+    const W = 12, H = 10, m = createMap(W, H);
+    const forest = (x: number, y: number): boolean => x >= 3 && x <= 4 && y >= 3 && y <= 4;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (forest(x, y)) { m.plantType[y * W + x] = Plant.Forest; m.plantDensity[y * W + x] = 255; }
+      if (x >= 8 && y >= 2 && y <= 6) m.ground[y * W + x] = Ground.Mountain;
+    }
+    const imgW = W * 8, shadow = new Uint8ClampedArray(imgW * H * 8 * 4);
+    const data = render(m, { depth: new Uint8Array(W * H), crossing: null, marks: null, hazards: null, look: null, base: null, shadow });
+    let treeShade = 0, peakShade = 0;
+    for (let py = 0; py < H * 8; py++) {
+      for (let px = 0; px < imgW; px++) {
+        if (shadow[(py * imgW + px) * 4 + 3] !== 255) continue;
+        const tx = px >> 3, ty = py >> 3;
+        if (tx >= 7) { peakShade++; continue; }
+        treeShade++;
+        // Tree shadows lie on or down-right of the wood, never above or left of it.
+        expect(tx >= 3 && ty >= 3 && tx <= 5 && ty <= 5, `(${px}, ${py})`).toBe(true);
+      }
+    }
+    expect(treeShade).toBeGreaterThan(20);
+    expect(peakShade).toBeGreaterThan(20);
+    expect(data.length).toBe(shadow.length);
+  });
+
+  it('the canopy edge: ground right of or below a crown knows how far the crown is', () => {
+    const W = 6, H = 4, m = createMap(W, H);
+    for (let y = 0; y < H; y++) { m.plantType[y * W + 2] = Plant.Forest; m.plantDensity[y * W + 2] = 255; }
+    buildCrowns(m, 3, 1);
+    const c: [number, number, number] = [0, 0, 0];
+    // Walk right from the forest along a row until a pixel without a crown: the next ones are 1, 2, 3 px off.
+    let found = false;
+    for (let py = 8; py < 16 && !found; py++) {
+      let x = 3 * 8;
+      while (x < 3 * 8 + 8 && crownColourAt(x, py, c)) x++;
+      if (x >= 3 * 8 + 4 || x === 3 * 8) continue;
+      if (crownColourAt(x - 1, py, c) && !crownColourAt(x, py - 1, c)) {
+        expect(canopyDistance(x, py)).toBe(1);
+        found = true;
+      }
+    }
+    expect(found).toBe(true);
+    expect(canopyDistance(3 * 8 + 7, 1 * 8 + 7) === 0 || canopyDistance(3 * 8 + 7, 1 * 8 + 7) <= 3).toBe(true);
   });
 });
