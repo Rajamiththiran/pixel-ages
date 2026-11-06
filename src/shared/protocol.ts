@@ -3,7 +3,7 @@
 import type { Intervention, LogEntry, RunSetup, YearStats } from './types';
 import type { Speed } from './speeds';
 
-/** 1 | 2 | 4 | 6 | 8, from the speed table in CONFIG.time.speeds. */
+/** 0 | 1 | 2 | 4 | 6 | 8, from the speed table in CONFIG.time.speeds. */
 export type { Speed };
 
 export type ToWorker =

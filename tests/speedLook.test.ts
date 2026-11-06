@@ -11,9 +11,9 @@ const R = CONFIG.render;
 const HELD = CONFIG.render.f8.season.heldWeights;
 const playing = (speed: number) => ({ speed, playing: true, timelapse: false, yearsPerSecond: 0 });
 
-describe('season look by speed (owner §7.3: full at 1× and 2×, softened at 4×, held at 6× and 8×)', () => {
+describe('season look by speed (owner §7.3: full at Drift, 1× and 2×, softened at 4×, held at 6× and 8×)', () => {
   it('the table says full, softened and held', () => {
-    expect(SPEEDS.map((v) => speedRow(v).seasonShow)).toEqual([1, 1, 0.5, 0, 0]);
+    expect(SPEEDS.map((v) => speedRow(v).seasonShow)).toEqual([1, 1, 1, 0.5, 0, 0]);
   });
 
   it('full shows the turning year exactly as before', () => {
@@ -38,7 +38,7 @@ describe('season look by speed (owner §7.3: full at 1× and 2×, softened at 4�
   it('paused shows the full season; a time-lapse holds the look', () => {
     expect(seasonShow({ speed: 8, playing: false, timelapse: false, yearsPerSecond: 0 })).toBe(1);
     expect(seasonShow({ speed: 2, playing: false, timelapse: true, yearsPerSecond: 0 })).toBe(0);
-    expect(SPEEDS.map((v) => seasonShow(playing(v)))).toEqual([1, 1, 0.5, 0, 0]);
+    expect(SPEEDS.map((v) => seasonShow(playing(v)))).toEqual([1, 1, 1, 0.5, 0, 0]);
   });
 
   it('switching to Fly blends into the held look instead of popping', () => {
@@ -69,7 +69,8 @@ describe('walker pace by speed', () => {
       expect(paces[k]!.basePx).toBeGreaterThan(paces[k - 1]!.basePx);
       expect(paces[k]!.arriveSec).toBeLessThan(paces[k - 1]!.arriveSec);
     }
-    expect(paces[0]!.arriveSec).toBeCloseTo(0.5, 9);      // Crawl: a season is half a second
+    expect(paces[1]!.arriveSec).toBeCloseTo(0.5, 9);      // Crawl: a season is half a second
+    expect(paces[0]!.arriveSec).toBeCloseTo(1.5, 9);      // Drift: a season is 1.5 seconds
   });
 
   it('follows the real pace while playing, the chosen speed while paused, the top speed in a time-lapse', () => {

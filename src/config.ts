@@ -10,7 +10,9 @@ export const CONFIG = {
     // creative, set A of plan §7.2). Months per second = yearsPerSecond × ticksPerYear.
     // `seasonShow` (Phase 4, owner's choice §7.3): how much of the season shows while time runs at
     // this speed, from 1 (the full year) to 0 (the held fast-forward look, render.f8.season.heldWeights).
+    // Drift (owner, 6 Nov 2026): a sixth, slowest speed on key 0, to watch seasons and climate turn.
     speeds: [
+      { speed: 0, label: 'Drift', yearsPerSecond: 1 / 6, seasonShow: 1 },  // 2 months a second
       { speed: 1, label: 'Crawl', yearsPerSecond: 0.5, seasonShow: 1 },    // 6 months a second
       { speed: 2, label: 'Walk', yearsPerSecond: 1, seasonShow: 1 },       // 12: the old 1×
       { speed: 4, label: 'Trot', yearsPerSecond: 3, seasonShow: 0.5 },     // 36: softened

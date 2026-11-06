@@ -8,13 +8,13 @@ import { DEFAULT_SPEED, SPEEDS, speedForKey, speedRow, speedTitle, stepSpeed, ti
 const SIM = import.meta.glob('../src/sim/**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 describe('speed table', () => {
-  it('has the five buttons, slowest first', () => {
-    expect(SPEEDS).toEqual([1, 2, 4, 6, 8]);
+  it('has the six buttons, slowest first (Drift added by the owner)', () => {
+    expect(SPEEDS).toEqual([0, 1, 2, 4, 6, 8]);
   });
 
   it('gives the plan\'s years and months per second', () => {
-    expect(SPEEDS.map(yearsPerSecondAt)).toEqual([0.5, 1, 3, 5, 8]);
-    expect(SPEEDS.map(ticksPerSecondAt)).toEqual([6, 12, 36, 60, 96]);
+    expect(SPEEDS.map(yearsPerSecondAt)).toEqual([1 / 6, 0.5, 1, 3, 5, 8]);
+    expect(SPEEDS.map(ticksPerSecondAt)).toEqual([2, 6, 12, 36, 60, 96]);
   });
 
   it('starts at 2×, the old 1× pace, and keeps the old 8× pace at the top', () => {
@@ -30,25 +30,27 @@ describe('speed table', () => {
   it('writes tooltips with the real rate', () => {
     expect(speedTitle(1)).toBe('0.5 years per second');
     expect(speedTitle(2)).toBe('1 year per second');
+    expect(speedTitle(0)).toBe('2 months per second');
   });
 });
 
 describe('buttons and keys (Phase 2)', () => {
-  it('names every speed shortly, so five buttons fit the bar', () => {
+  it('names every speed shortly, so six buttons fit the bar', () => {
     for (const v of SPEEDS) expect(speedRow(v).label.length).toBeLessThanOrEqual(5);
     expect(new Set(SPEEDS.map((v) => speedRow(v).label)).size).toBe(SPEEDS.length);
   });
 
-  it('keys 1 2 4 6 8 pick their speed; other keys pick none', () => {
+  it('keys 0 1 2 4 6 8 pick their speed; other keys pick none', () => {
     for (const v of SPEEDS) expect(speedForKey(String(v))).toBe(v);
-    for (const k of ['0', '3', '5', '7', '9', 'a', ' ']) expect(speedForKey(k)).toBeNull();
+    for (const k of ['3', '5', '7', '9', 'a', ' ']) expect(speedForKey(k)).toBeNull();
   });
 
   it('− and + step one speed and stop at the ends', () => {
     expect(stepSpeed(2, 1)).toBe(4);
     expect(stepSpeed(6, -1)).toBe(4);
     expect(stepSpeed(8, 1)).toBe(8);
-    expect(stepSpeed(1, -1)).toBe(1);
+    expect(stepSpeed(1, -1)).toBe(0);
+    expect(stepSpeed(0, -1)).toBe(0);
   });
 });
 
