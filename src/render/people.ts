@@ -20,6 +20,7 @@ import { Species } from '../shared/ids';
 import { GLYPH_H, drawPixelText, textCanvas, textWidth } from './pixelFont';
 import { styleOff } from './ramps';
 import { RouteCache, type WalkMap } from './paths';
+import { walkPace } from './speedLook';
 import { Discovery, has } from '../shared/discoveries';
 
 const TILE = CONFIG.map.tilePx;
@@ -161,7 +162,8 @@ export class PeopleLayer {
   private readonly people = new Map<number, VisualPerson>();
   private list: VisualPerson[] = [];
   private frameNo = 0;
-  private speedMult = 1;
+  /** Walking pace at the frame's speed (speeds plan Phase 4). */
+  private pace = walkPace(CONFIG.time.ticksPerYear);
   private map: MapData | null = null;
   private homes = new Map<number, [number, number]>();
   private shore = new Map<number, [number, number, boolean]>();
@@ -244,9 +246,9 @@ export class PeopleLayer {
   }
 
   /** Applies a frame's people array (§22: PERSON_FLOATS per person) and the groups' homes. */
-  update(data: Float32Array, fast: boolean, nowMs: number, groups: readonly GroupView[] = []): void {
+  update(data: Float32Array, monthsPerSecond: number, nowMs: number, groups: readonly GroupView[] = []): void {
     this.frameNo++;
-    this.speedMult = fast ? R.fastWalkMult : 1;
+    this.pace = walkPace(monthsPerSecond);
     this.homes = new Map(groups.map((g) => [g.id, [(g.homeX + 0.5) * TILE, (g.homeY + 0.5) * TILE + TILE / 2]]));
     this.rafts = new Set(groups.filter((g) => has(g.discoveries, Discovery.raft)).map((g) => g.id));
     const m = this.map;
@@ -348,12 +350,12 @@ export class PeopleLayer {
   /**
    * Moves everyone toward their target (children toward their mother; at night, to the fire).
    * Item 2b: workers follow their route's waypoints, and everyone walks fast enough to arrive
-   * within `arriveMs` (÷ the speed button) — never slower than the normal pace, never faster
-   * than `maxWalkMult` × it.
+   * within a season of screen time at the current speed — never slower than the speed's normal
+   * pace, never faster than `maxWalkMult` × it (speeds plan Phase 4: `walkPace`).
    */
   animate(nowMs: number, dtMs: number): void {
-    const base = R.walkSpeedPx * this.speedMult;
-    const arriveSec = R.arriveMs / 1000 / this.speedMult;
+    const base = this.pace.basePx;
+    const arriveSec = this.pace.arriveSec;
     const pace = (left: number): number => (Math.min(base * R.maxWalkMult, Math.max(base, left / arriveSec)) * dtMs) / 1000;
     const [cox, coy] = R.childOffsetPx;
     const night = this.darkness > P8.nightGatherAbove;

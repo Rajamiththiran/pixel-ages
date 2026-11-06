@@ -4,6 +4,7 @@
 import { CONFIG } from '../config';
 import { nowMs } from '../shared/clock';
 import { packTile, TILE_BYTES, TILE_UPDATE_BYTES, type Frame, type FromWorker, type Speed, type ToWorker } from '../shared/protocol';
+import { DEFAULT_SPEED, ticksPerSecondAt } from '../shared/speeds';
 import { computeMarks } from './world/landscape';
 import { computeHazardMarks } from './world/hazards';
 import type { MapLayer, RelationView } from '../shared/protocol';
@@ -35,7 +36,7 @@ let playing = false;
 // F7 Compare: a second run with no screen, kept in step with the first (stats and log only).
 let headless = false;
 let headlessTarget = 0;
-let speed: Speed = 1;
+let speed: Speed = DEFAULT_SPEED;
 // F8 time-lapse: the past replays from year 0 as fast as the machine allows, then pauses at now.
 let timelapse = false;
 
@@ -264,7 +265,7 @@ function loop(): void {
     if (playing) schedule(1000 / T.maxFramesPerSecond);
     return;
   }
-  const tps = T.ticksPerSecond1x * (speed === 8 ? T.fastMultiplier : 1);
+  const tps = ticksPerSecondAt(speed);
   budget = Math.min(budget + ((t0 - lastLoopMs) / 1000) * tps, tps * T.maxBacklogSeconds + 1);
   lastLoopMs = t0;
   let ran = 0;

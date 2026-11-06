@@ -4,6 +4,8 @@ import { runTicks, tick } from '../src/sim/tick';
 import { cloneState, hashState } from '../src/sim/serialize';
 import { computeDriftMult } from '../src/sim/world/climate';
 import { livingWorld } from './fixtures';
+import { CONFIG } from '../src/config';
+import { SPEEDS, ticksPerSecondAt } from '../src/shared/speeds';
 
 const YEAR = 12;
 
@@ -45,6 +47,28 @@ describe('determinism (§16.3)', () => {
     for (let k = 0; k < 100 * YEAR; k++) tick(a);
     for (let k = 0; k < 100 * YEAR; k += 96) runTicks(b, Math.min(96, 100 * YEAR - k));
     expect(hashState(a)).toBe(hashState(b));
+  });
+
+  // Speeds plan Phase 6: the bench runs the simulation without the worker loop, so speed never
+  // reaches it there. What a speed changes is how many ticks the worker runs per loop; replay
+  // that pacing at all five speeds and every history must be the same.
+  it('every speed gives the same history (the worker\'s batches at Crawl … Fly)', () => {
+    const months = 40 * YEAR;
+    const hashes = SPEEDS.map((v) => {
+      const s = createState(livingWorld(11, 'strong'));
+      const tps = ticksPerSecondAt(v);
+      const loopMs = Math.max(1000 / tps, 1000 / CONFIG.time.maxFramesPerSecond);
+      let budget = 0, done = 0;
+      while (done < months) {
+        budget += (tps * loopMs) / 1000;
+        const n = Math.min(Math.floor(budget), months - done);
+        runTicks(s, n);
+        budget -= n;
+        done += n;
+      }
+      return hashState(s);
+    });
+    expect(new Set(hashes).size).toBe(1);
   });
 
   it('a copy is independent of the original', () => {

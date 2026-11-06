@@ -11,7 +11,8 @@ import {
   GROUND_NAMES, PLANT_NAMES, RESOURCE_NAMES, WALL_NAMES, SPECIES_NAMES,
 } from './shared/ids';
 import type { FounderGroup, Intervention, LogEntry, MapData, PlannedEvent, RunSetup, YearStats } from './shared/types';
-import type { Frame, GroupView, HeatLayer } from './shared/protocol';
+import type { Frame, GroupView, HeatLayer, Speed } from './shared/protocol';
+import { DEFAULT_SPEED, speedForKey, stepSpeed } from './shared/speeds';
 import { ERA_NAMES } from './shared/discoveries';
 import { logCsv, statsCsv } from './shared/csv';
 import type { MapLine } from './render/overlays';
@@ -25,6 +26,7 @@ import { Editor } from './editor/editor';
 import { Layer, cloneMap, createMap } from './editor/mapState';
 import { RegionsPreview } from './editor/regionsPreview';
 import { Renderer, type SetupView } from './render/renderer';
+import { clockPace, gradualLand, seasonShow, walkerPace } from './render/speedLook';
 import { GROUP_COLORS, usePalette } from './render/palette';
 import { AgeClass, carrySprite, clearComposites, personSprite } from './render/sprites';
 import type { WalkerSprite } from './render/decor';
@@ -414,11 +416,21 @@ let trailsOn = false;
 let tool: InterveneTool | null = null;
 let compare: CompareApi | null = null;
 
+// Speeds plan Phase 2: the speed last asked for, until a frame shows it, so quick − / + presses
+// step on from it instead of from a frame that has not caught up yet.
+let askedSpeed: Speed | null = null;
+let devTilesChanged = 0;   // tiles whose look changed this run (read by the dev hook only)
+function setSpeed(v: Speed): void {
+  if (!session) return;
+  askedSpeed = v;
+  session.send({ type: 'speed', value: v });
+}
+
 const bottom = buildBottomBar(ui.bottom, {
   start: () => startRun(),
   play: () => session?.send({ type: 'play' }),
   pause: () => session?.send({ type: 'pause' }),
-  speed: (v) => session?.send({ type: 'speed', value: v }),
+  speed: (v) => setSpeed(v),
   step: () => session?.send({ type: 'step' }),
   viewYear: (y) => {
     if (!session) return;
@@ -715,22 +727,28 @@ function startRun(): void {
   story.clear();
   renderer.clearRun();
   renderer.fog.setKnown(null);
+  askedSpeed = null;
   session = new RunSession(runSetup0, {
     started: () => {},
-    terrainChanged: (tiles) => (tiles === 'all' ? renderer.markAllTiles() : renderer.markTiles(tiles)),
-    rainChanged: () => renderer.invalidateRain(),
+    terrainChanged: (tiles) => { if (tiles !== 'all') devTilesChanged += tiles.length; if (tiles === 'all') renderer.markAllTiles(); else renderer.markTiles(tiles, true); },
+    rainChanged: (jump) => renderer.invalidateRain(jump),
     animalsChanged: (d) => { runAnimals = d; renderer.setAnimalDensities(d); },
     frame: (f) => {
+      if (f.speed === askedSpeed) askedSpeed = null;
       bottom.update(f);
       if (f.timelapse !== lastLapse) { lastLapse = f.timelapse; refreshPresent(); }
       // The world changes under a still mouse, so keep the hover tooltip live.
       if (view.hover && ui.tooltip.style.display === 'block') ui.tooltip.textContent = tileInfo(view.hover.x, view.hover.y);
-      // F8: seasons ease with the months; a jump in time (full tiles) snaps them.
-      renderer.setMonth(f.month, f.fullTiles !== undefined);
+      // Speeds plan Phases 3–4: the screen clock runs on at the speed between frames, so seasons flow;
+      // a jump in time (full tiles) snaps it. Paused and time-lapse frames only set the month. How
+      // much of the year shows follows the speed (the fast speeds hold one calm look).
+      renderer.setTime(f.year, f.month, clockPace(f), f.fullTiles !== undefined, seasonShow(f));
+      // Phase 5: land changes dissolve and the yearly rain slides while a season can be read.
+      renderer.gradual = gradualLand(f);
       view.playing = f.playing;
       setBanner(f.timelapse ? `Time-lapse — ${yearLabel(f.year, f.month)} of ${f.liveYear.toLocaleString('en-US')}`
         : f.isPast ? `Viewing the past — ${yearLabel(f.year, f.month)}` : null);
-      renderer.people.update(f.people, f.speed === 8 || f.timelapse, performance.now(), f.groups);
+      renderer.people.update(f.people, walkerPace(f), performance.now(), f.groups);
       renderer.setGroups(f.groups, f.relations, walkerSprite);
       view.runGroups = f.groups.map((g) => ({
         name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup,
@@ -1121,6 +1139,20 @@ function tileInfo(x: number, y: number): string {
 
 // ---------- keyboard (§20.7) ----------
 
+// Dev only (speeds plan Phases 3 and 5): lets a browser check read the screen clock, the last frame's
+// month and how many tiles changed. Vite removes it from release builds.
+if (import.meta.env.DEV) {
+  (window as unknown as { pixelAgesDev: unknown }).pixelAgesDev = {
+    clock: () => renderer.clock.t,
+    simMonth: () => { const f = session?.lastFrame; return f ? f.year * CONFIG.time.ticksPerYear + f.month : null; },
+    seasonWeights: () => Array.from(renderer.season.weights),
+    tilesChanged: () => devTilesChanged,
+    frameMs: () => renderer.frameMs,
+    rainArrays: () => { const r = renderer.rainShown; return r ? { shown: Array.from(r), sim: Array.from(view.map.rain) } : null; },
+    rainMean: () => { const r = renderer.rainShown; const avg = (x: ArrayLike<number>): number => { let t = 0; for (let i = 0; i < x.length; i++) t += x[i]!; return t / x.length; }; return r ? { shown: avg(r), sim: avg(view.map.rain) } : null; },
+  };
+}
+
 /**
  * Dev only (Diorama phase 6): plays one moment of each kind in turn at the selected group (or the
  * first), through the same path as real log lines, so the moments can be checked without waiting.
@@ -1172,8 +1204,10 @@ window.addEventListener('keydown', (e) => {
     if (!session || e.ctrlKey || e.metaKey || e.altKey) return;
     const f = session.lastFrame;
     if (e.key === ' ') { e.preventDefault(); session.send({ type: f?.playing ? 'pause' : 'play' }); }
-    else if (e.key === '1') session.send({ type: 'speed', value: 1 });
-    else if (e.key === '8') session.send({ type: 'speed', value: 8 });
+    // Speeds plan Phase 2: keys 1 2 4 6 8 pick a speed; − and + step one speed down or up.
+    else if (speedForKey(e.key) !== null) setSpeed(speedForKey(e.key)!);
+    else if (e.key === '-' || e.key === '_') setSpeed(stepSpeed(askedSpeed ?? f?.speed ?? DEFAULT_SPEED, -1));
+    else if (e.key === '+' || e.key === '=') setSpeed(stepSpeed(askedSpeed ?? f?.speed ?? DEFAULT_SPEED, 1));
     else if (e.key === '.') session.send({ type: 'step' });
     else if (e.key === 'Escape') {
       if (tool !== null) setTool(null);

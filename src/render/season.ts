@@ -1,8 +1,9 @@
 // Seasons on all land (F8 §14.1): a tint per tile, one pixel per tile scaled up over the
 // terrain. Spring greens the grass and crops, summer turns them gold, autumn colours the forest
 // and stubbles the fields, winter frosts the lowland and snows on the mountains. The season's
-// weights follow the month smoothly and are eased in real time: at 1× (a year a second) the
-// year visibly turns; at 8× it blurs toward the yearly average instead of flashing.
+// weights follow the screen clock's fractional month (speeds plan Phase 3), so the year turns with
+// no monthly steps. At the fast speeds no season can be read, so the year softens (Trot) or
+// gives way to one calm held look (Ride, Fly; Phase 4); the easing blends any change of speed.
 // Toy Diorama phase 2 (docs/diorama-plan/02-dither.md): the tint is a crisp 4×4 Bayer stipple of
 // each season's colour instead of a blurred translucent wash (readme: "never blurred").
 
@@ -70,6 +71,27 @@ export function seasonWeights(m: number, out: Float64Array = new Float64Array(4)
   return out;
 }
 
+/**
+ * The season weights to draw at `month` (0–12, with a fraction) when `show` of the turning year
+ * shows (speeds plan Phase 4): 1 is the year as it turns, 0 the held fast-forward look
+ * (`heldWeights`), between is a softened year. They always sum to 1.
+ */
+export function seasonTarget(month: number, show: number, out: Float64Array = new Float64Array(4)): Float64Array {
+  seasonWeights(month + 0.5, out);
+  for (let s = 0; s < 4; s++) out[s] = S.heldWeights[s]! + (out[s]! - S.heldWeights[s]!) * show;
+  return out;
+}
+
+/**
+ * Moves the drawn weights `now` toward `target` over `dtMs` (time constant `easeMs`). With the
+ * screen clock the target already flows; the ease stays as a gentle filter, so a change of speed
+ * (to or from the held look) blends over a moment instead of popping.
+ */
+export function easeWeights(now: Float64Array, target: ArrayLike<number>, dtMs: number): void {
+  const k = 1 - Math.exp(-dtMs / S.easeMs);
+  for (let s = 0; s < 4; s++) now[s] = now[s]! + (target[s]! - now[s]!) * k;
+}
+
 export function tintClass(map: MapData, i: number): number {
   const wall = map.wall[i];
   const ground = map.ground[i];
@@ -131,18 +153,23 @@ export class SeasonLayer {
   setMap(map: MapData): void { this.map = map; this.classesDirty = true; }
   tilesChanged(): void { this.classesDirty = true; }
 
-  /** The month on screen (0–11). Snaps when `snap` (a jump in time), else eases. */
+  /**
+   * The month on screen, 0 ≤ m < 12 with a fraction (the screen clock, speeds plan Phase 3).
+   * A whole month m gives the same weights as before the clock. Snaps when `snap` (a jump in time).
+   */
   setMonth(month: number, snap = false): void {
-    seasonWeights(month + 0.5, this.target);
+    seasonTarget(month, this.show, this.target);
     if (snap) this.now.set(this.target);
   }
+
+  /** How much of the turning year shows, 1 to 0 (the held look); speeds plan Phase 4. */
+  show = 1;
 
   /** The eased weights now (for weather and sound). */
   get weights(): ArrayLike<number> { return this.now; }
 
   update(dtMs: number): void {
-    const k = 1 - Math.exp(-dtMs / S.easeMs);
-    for (let s = 0; s < 4; s++) this.now[s] = this.now[s]! + (this.target[s]! - this.now[s]!) * k;
+    easeWeights(this.now, this.target, dtMs);
     if (seasonDitherOn) { this.updateStipple(); return; }
     let moved = this.classesDirty;
     for (let s = 0; s < 4; s++) if (Math.abs(this.now[s]! - this.drawn[s]!) > 0.004) moved = true;

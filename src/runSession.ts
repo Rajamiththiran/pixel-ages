@@ -12,7 +12,8 @@ export interface RunHandlers {
   started(areas: AreaInfo[]): void;
   /** Tiles whose terrain look changed (not rain-only changes). */
   terrainChanged(tiles: number[] | 'all'): void;
-  rainChanged(): void;
+  /** The rain changed; `jump` with a jump in time (full tiles), else a year's change (Phase 5). */
+  rainChanged(jump: boolean): void;
   animalsChanged(density: Float32Array[]): void;
   frame(f: Frame): void;
   progress(label: string): void;
@@ -83,7 +84,7 @@ export class RunSession {
     if (f.fullTiles) {
       for (let i = 0; i < n; i++) unpackTile(f.fullTiles, i * TILE_BYTES, m, m.rain, this.crossing, this.marks, this.hazards, this.look, i);
       this.h.terrainChanged('all');
-      this.h.rainChanged();
+      this.h.rainChanged(true);
     } else if (f.tileUpdates) {
       const u = f.tileUpdates;
       const terrain: number[] = [];
@@ -99,7 +100,7 @@ export class RunSession {
         if (lookBytes(m, this.crossing, i) + this.marks[i]! * 2 ** 48 + this.hazards[i]! * 2 ** 56 !== before || this.look[i] !== beforeLook) terrain.push(i);
       }
       if (terrain.length > 0) this.h.terrainChanged(terrain);
-      if (rain) this.h.rainChanged();
+      if (rain) this.h.rainChanged(false);
     }
     if (f.animalDensity) {
       const d = f.animalDensity;

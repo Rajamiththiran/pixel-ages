@@ -1,8 +1,10 @@
 // Worker message protocol (§22).
 
 import type { Intervention, LogEntry, RunSetup, YearStats } from './types';
+import type { Speed } from './speeds';
 
-export type Speed = 1 | 8;
+/** 1 | 2 | 4 | 6 | 8, from the speed table in CONFIG.time.speeds. */
+export type { Speed };
 
 export type ToWorker =
   | { type: 'start'; setup: RunSetup; headless?: boolean }  // headless (F7 Compare): no frames or keyframes

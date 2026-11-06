@@ -485,6 +485,47 @@ function mountainWallPixel(isCrossing: boolean, px: number, py: number, out: RGB
   else copy(WALL_BODY, out);
 }
 
+// ---------- Speeds plan Phase 5: tiles dissolve instead of popping ----------
+
+const GR = CONFIG.render.gradual;
+const TILE_BYTES_PX = TILE * TILE * 4;
+
+/** A tile changing look: its old and new pixels, when it began, and the step drawn. */
+interface TileFade { old: Uint8ClampedArray; neu: Uint8ClampedArray; start: number; step: number }
+
+/** Copies tile (tx, ty)'s pixels out of the terrain image. */
+export function readTile(data: Uint8ClampedArray, imgW: number, tx: number, ty: number, out: Uint8ClampedArray = new Uint8ClampedArray(TILE_BYTES_PX)): Uint8ClampedArray {
+  for (let y = 0; y < TILE; y++) {
+    const o = ((ty * TILE + y) * imgW + tx * TILE) * 4;
+    out.set(data.subarray(o, o + TILE * 4), y * TILE * 4);
+  }
+  return out;
+}
+
+export function sameTile(a: Uint8ClampedArray, b: Uint8ClampedArray): boolean {
+  for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) return false;
+  return true;
+}
+
+/**
+ * Writes tile (tx, ty) at dissolve `step` of `fadeSteps`: a pixel shows its new colour once its
+ * Bayer threshold (the same 4×4 order as the ground dither) is below step ÷ fadeSteps, so the new
+ * look arrives in even 25% patches and each pixel changes once.
+ */
+export function dissolveTile(data: Uint8ClampedArray, imgW: number, tx: number, ty: number,
+  old: Uint8ClampedArray, neu: Uint8ClampedArray, step: number): void {
+  const share = step / GR.fadeSteps;
+  for (let y = 0; y < TILE; y++) {
+    const py = ty * TILE + y;
+    const o = (py * imgW + tx * TILE) * 4;
+    for (let x = 0; x < TILE; x++) {
+      const src = bayer(tx * TILE + x, py) < share ? neu : old;
+      const s = (y * TILE + x) * 4;
+      data[o + x * 4] = src[s]!; data[o + x * 4 + 1] = src[s + 1]!; data[o + x * 4 + 2] = src[s + 2]!; data[o + x * 4 + 3] = src[s + 3]!;
+    }
+  }
+}
+
 /** Offscreen terrain canvas with dirty-tile redraw. */
 export class TerrainLayer {
   readonly canvas: HTMLCanvasElement;
@@ -503,6 +544,11 @@ export class TerrainLayer {
   private depthNext: Uint8Array;
   private depthDirty = false;
   private readonly extras: TileExtras;
+  // Speeds plan Phase 5: tiles the simulation changed dissolve from their old look (see TileFade).
+  /** Off at the speeds that hold the season look, in a time-lapse and in setup. */
+  fadeOn = false;
+  private fadeWanted: Uint8Array;
+  private readonly fades = new Map<number, TileFade>();
 
   constructor(private map: MapData) {
     this.canvas = document.createElement('canvas');
@@ -512,6 +558,7 @@ export class TerrainLayer {
     this.img = this.ctx.createImageData(this.canvas.width, this.canvas.height);
     const n = map.width * map.height;
     this.dirty = new Uint8Array(n);
+    this.fadeWanted = new Uint8Array(n);
     this.depth = new Uint8Array(n);
     this.depthNext = new Uint8Array(n);
     computeDepth(map, this.depth);
@@ -553,12 +600,12 @@ export class TerrainLayer {
    * Tiles whose map data changed. Neighbours are redrawn too: foam, wet edges, beaches, river
    * bends, height shading, overhanging tree crowns and mountain peaks all reach one tile across.
    */
-  mapChanged(tiles: Iterable<number>): void {
-    for (const i of tiles) this.markWithNeighbours(i);
+  mapChanged(tiles: Iterable<number>, fade = false): void {
+    for (const i of tiles) this.markWithNeighbours(i, fade && this.fadeOn);
     this.depthDirty = true;
   }
 
-  private markWithNeighbours(i: number): void {
+  private markWithNeighbours(i: number, fade = false): void {
     const w = this.map.width;
     const h = this.map.height;
     const x = i % w;
@@ -567,12 +614,19 @@ export class TerrainLayer {
       for (let dx = -1; dx <= 1; dx++) {
         const nx = x + dx;
         const ny = y + dy;
-        if (nx >= 0 && ny >= 0 && nx < w && ny < h) this.markDirty(ny * w + nx);
+        if (nx >= 0 && ny >= 0 && nx < w && ny < h) {
+          this.markDirty(ny * w + nx);
+          if (fade) this.fadeWanted[ny * w + nx] = 1;
+        }
       }
     }
   }
 
+  /** Redraws every tile at once (a new map, a jump in time): no tile fades. */
   markAll(): void {
+    this.fades.clear();
+    if (this.fadeWanted.length !== this.dirty.length) this.fadeWanted = new Uint8Array(this.dirty.length);
+    else this.fadeWanted.fill(0);
     for (let i = 0; i < this.dirty.length; i++) this.markDirty(i);
   }
 
@@ -611,25 +665,59 @@ export class TerrainLayer {
       [this.depth, this.depthNext] = [this.depthNext, this.depth];
       this.extras.depth = this.depth;
     }
-    if (this.dirtyList.length === 0) return;
+    if (this.dirtyList.length === 0 && this.fades.size === 0) return;
     const w = this.map.width;
+    const imgW = this.canvas.width;
+    const data = this.img.data;
     let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
-    const t0 = performance.now();
-    let k = 0;
-    for (; k < this.dirtyList.length; k++) {
-      // Check the clock every 64 tiles; reading it per tile would cost more than it saves.
-      if ((k & 63) === 63 && performance.now() - t0 > budgetMs) break;
-      const i = this.dirtyList[k]!;
-      drawTilePixels(this.map, i, this.img.data, this.canvas.width, this.time, this.extras);
-      this.dirty[i] = 0;
+    const grow = (i: number): void => {
       const x = i % w;
       const y = (i - x) / w;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
+    };
+    const t0 = performance.now();
+
+    // Speeds plan Phase 5: fading tiles move on a step (75%, 50%, 25% old, then new).
+    for (const [i, f] of this.fades) {
+      const step = Math.min(GR.fadeSteps, Math.floor(((t0 - f.start) / GR.fadeMs) * GR.fadeSteps));
+      if (step === f.step) continue;
+      f.step = step;
+      dissolveTile(data, imgW, i % w, Math.floor(i / w), f.old, f.neu, step);
+      if (step >= GR.fadeSteps) this.fades.delete(i);
+      grow(i);
+    }
+
+    let k = 0;
+    for (; k < this.dirtyList.length; k++) {
+      // Check the clock every 64 tiles; reading it per tile would cost more than it saves.
+      if ((k & 63) === 63 && performance.now() - t0 > budgetMs) break;
+      const i = this.dirtyList[k]!;
+      const tx = i % w, ty = (i - tx) / w;
+      let fade = this.fades.get(i);
+      // A tile the simulation changed keeps its old pixels to dissolve from (if not fading already).
+      const old = !fade && this.fadeWanted[i] === 1 && this.fades.size < GR.fadeMaxTiles ? readTile(data, imgW, tx, ty) : null;
+      this.fadeWanted[i] = 0;
+      drawTilePixels(this.map, i, data, imgW, this.time, this.extras);
+      this.dirty[i] = 0;
+      if (fade) {
+        // Redrawn while fading (a neighbour changed, water moved): the newest look is the new one.
+        readTile(data, imgW, tx, ty, fade.neu);
+        dissolveTile(data, imgW, tx, ty, fade.old, fade.neu, fade.step);
+      } else if (old) {
+        const neu = readTile(data, imgW, tx, ty);
+        if (!sameTile(old, neu)) {
+          fade = { old, neu, start: t0, step: 0 };
+          this.fades.set(i, fade);
+          dissolveTile(data, imgW, tx, ty, old, neu, 0);
+        }
+      }
+      grow(i);
     }
     this.dirtyList = k === this.dirtyList.length ? [] : this.dirtyList.slice(k);
+    if (maxX < 0) return;
     this.ctx.putImageData(
       this.img, 0, 0,
       minX * TILE, minY * TILE, (maxX - minX + 1) * TILE, (maxY - minY + 1) * TILE,

@@ -44,6 +44,7 @@ All project documents live in `docs/`. Read them there, and create every new doc
   - Founders, war churn and log (owner, 28 Oct 2026): built (DECISIONS 20.1–20.11, TUNING pass 8); approved.
   - C4 chiefdoms and kingdoms (owner, 28 Oct 2026; plan in [pixel-ages-c4-plan.md](docs/pixel-ages-c4-plan.md)): built (DECISIONS 21.1–21.11, TUNING pass 9 and 9b). Awaiting the owner's try.
   - G1 towns that grow (owner, 29 Oct 2026; plan in [pixel-ages-towns-plan.md](docs/pixel-ages-towns-plan.md)): built (DECISIONS 22.1–22.7, TUNING pass 10). Awaiting the owner's try. Next plans, after approval: diplomacy, then the built world (roads, reservoirs, bridges).
+- Game speeds 1× 2× 4× 6× 8× (owner, 6 Nov 2026; plan in [pixel-ages-speeds-plan.md](docs/pixel-ages-speeds-plan.md), always follow it): all six phases built (DECISIONS 30.1–30.34): 1 speeds in the loop, 2 bar and keys (buttons Crawl · Walk · Trot · Ride · Fly), 3 screen clock, 4 speed-aware walkers and season look, 5 rain slides and tiles dissolve (`?off=gradual`), 6 docs and tests. Awaiting the owner's try; then the seasons wave.
 
 ## Test bench (fast checks of simulation changes)
 

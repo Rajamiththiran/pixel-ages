@@ -21,6 +21,8 @@ import { MarketLayer } from './markets';
 import { Camera } from './camera';
 import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
+import { ScreenClock } from './screenClock';
+import { RainEase } from './rainEase';
 import { DayNight, NightPass, nightLevel, nightOn } from './light';
 import { Weather } from './weather';
 import { Effects, Particle, type View } from './effects';
@@ -90,6 +92,20 @@ export class Renderer {
   readonly traffic = new Traffic();
   readonly battles = new Battles();
   readonly season: SeasonLayer;
+  /** The fractional month on screen (speeds plan Phase 3). */
+  readonly clock = new ScreenClock();
+  /** Speeds plan Phase 5: the rain the screen draws, sliding over the year (run mode only). */
+  private rainEase: RainEase | null = null;
+  private gradualOn = false;
+
+  /** The rain the screen draws in a run (dev checks), or null. */
+  get rainShown(): Uint8Array | null { return this.rainEase?.shown ?? null; }
+
+  /** Phase 5: land changes dissolve and rain slides (off at the speeds that hold the look). */
+  set gradual(on: boolean) {
+    this.gradualOn = on;
+    this.terrain.fadeOn = on;
+  }
   readonly light = new DayNight();
   readonly weather: Weather;
   readonly effects: Effects;
@@ -149,13 +165,18 @@ export class Renderer {
     this.season.setMap(map);
     this.effects.setMap(map);
     this.people.setMap(map);
+    if (this.rainEase) {
+      this.rainEase.set(map.rain, this.clock.t, true);
+      this.weather.rainSource = this.rainEase.shown;
+    }
     this.rain.invalidate();
     this.rebuildAnimals();
   }
 
-  markTiles(tiles: Iterable<number>): void {
+  /** Tiles whose look changed; `fade` (a running world's change, Phase 5) lets them dissolve. */
+  markTiles(tiles: Iterable<number>, fade = false): void {
     const list = Array.isArray(tiles) ? tiles : [...tiles];
-    this.terrain.mapChanged(list);
+    this.terrain.mapChanged(list, fade);
     this.season.tilesChanged();
     if (this.hazards) this.effects.hazardsChanged(this.hazards, list, performance.now());
   }
@@ -177,6 +198,8 @@ export class Renderer {
     const running = base !== null;
     this.season.enabled = running;
     this.animals.lively = running;
+    this.rainEase = running ? new RainEase(this.view.map.rain) : null;
+    this.weather.rainSource = this.rainEase?.shown ?? null;
     this.weather.setMap(this.view.map, base ? base.rain : null);
     this.effects.clear();
     this.trample.clear();
@@ -190,12 +213,31 @@ export class Renderer {
     this.people.setCrossing(crossing);
   }
 
-  /** The month on screen; `jump` after a jump in time (the season snaps instead of easing). */
-  setMonth(month: number, jump: boolean): void {
-    this.season.setMonth(month, jump);
+  /**
+   * A frame's time (speeds plan Phase 3). `monthsPerSecond`: the speed while time runs at it, else
+   * 0 (paused, time-lapse). `jump` after a jump in time: the clock and the season snap.
+   * `seasonShow` (Phase 4): how much of the turning year shows at this speed (0 = the held look).
+   */
+  setTime(year: number, month: number, monthsPerSecond: number, jump: boolean, seasonShow = 1): void {
+    this.season.show = seasonShow;
+    this.clock.sync(year * CONFIG.time.ticksPerYear + month, monthsPerSecond, jump);
+    if (jump) this.season.setMonth(this.clock.monthOfYear, true);
   }
 
-  invalidateRain(): void { this.rain.invalidate(); this.weather.rainChanged(); }
+  /**
+   * The map's rain changed. In a run (Phase 5) the screen's rain slides to it over a year, unless
+   * `jump` (a jump in time) or the speed holds the look: then it shows at once.
+   */
+  invalidateRain(jump = true): void {
+    if (this.rainEase) {
+      const snap = jump || !this.gradualOn;
+      this.rainEase.set(this.view.map.rain, this.clock.t, snap);
+      this.weather.rainSource = this.rainEase.shown;
+      if (!snap) return;   // the slide redraws as it goes (drawFrame)
+    }
+    this.rain.invalidate();
+    this.weather.rainChanged();
+  }
   invalidateElevation(): void { this.elevation.invalidate(); }
   setHeat(kind: HeatLayer, data: Uint8Array): void { this.heat.set(kind, data, this.view.map.width, this.view.map.height); }
   setTerritory(data: Uint8Array): void { this.territoryFill.set(data, this.view.map.width, this.view.map.height); }
@@ -296,6 +338,9 @@ export class Renderer {
     this.terrain.animate(now);
     this.terrain.flush(this.terrainBudgetMs);
     if (v.running) {
+      this.clock.advance(dt);
+      if (this.rainEase?.update(this.clock.t, now)) { this.rain.invalidate(); this.weather.rainChanged(); }
+      this.season.setMonth(this.clock.monthOfYear);
       this.season.update(dt);
       this.light.update(dt, v.playing);
       this.weather.update(now, dt, vr, this.season.weights[3]!, v.playing);
@@ -387,7 +432,7 @@ export class Renderer {
     if (v.running && !v.photo) drawLines(ctx, v.lines);
     if (v.running && !v.photo) this.drawSelectedPerson(ctx, v.selectedPerson);
 
-    if (v.showRain) this.rain.draw(ctx, v.map.rain, v.map);
+    if (v.showRain) this.rain.draw(ctx, this.rainEase?.shown ?? v.map.rain, v.map);
     if (v.showElevation) this.elevation.draw(ctx, v.map);
     if (v.showHeat) this.heat.draw(ctx, v.map);
     if (v.hover && !v.photo) {
