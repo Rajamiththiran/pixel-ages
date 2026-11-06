@@ -12,7 +12,7 @@ import {
 } from './shared/ids';
 import type { FounderGroup, Intervention, LogEntry, MapData, PlannedEvent, RunSetup, YearStats } from './shared/types';
 import type { Frame, GroupView, HeatLayer, Speed } from './shared/protocol';
-import { DEFAULT_SPEED, speedForKey, stepSpeed } from './shared/speeds';
+import { DEFAULT_SPEED, speedForKey, stepSpeed, ticksPerSecondAt } from './shared/speeds';
 import { ERA_NAMES } from './shared/discoveries';
 import { logCsv, statsCsv } from './shared/csv';
 import type { MapLine } from './render/overlays';
@@ -26,6 +26,7 @@ import { Editor } from './editor/editor';
 import { Layer, cloneMap, createMap } from './editor/mapState';
 import { RegionsPreview } from './editor/regionsPreview';
 import { Renderer, type SetupView } from './render/renderer';
+import { clockRate } from './render/screenClock';
 import { GROUP_COLORS, usePalette } from './render/palette';
 import { AgeClass, carrySprite, clearComposites, personSprite } from './render/sprites';
 import type { WalkerSprite } from './render/decor';
@@ -737,8 +738,9 @@ function startRun(): void {
       if (f.timelapse !== lastLapse) { lastLapse = f.timelapse; refreshPresent(); }
       // The world changes under a still mouse, so keep the hover tooltip live.
       if (view.hover && ui.tooltip.style.display === 'block') ui.tooltip.textContent = tileInfo(view.hover.x, view.hover.y);
-      // F8: seasons ease with the months; a jump in time (full tiles) snaps them.
-      renderer.setMonth(f.month, f.fullTiles !== undefined);
+      // Speeds plan Phase 3: the screen clock runs on at the speed between frames, so seasons flow;
+      // a jump in time (full tiles) snaps it. Paused and time-lapse frames only set the month.
+      renderer.setTime(f.year, f.month, f.playing && !f.timelapse ? clockRate(ticksPerSecondAt(f.speed), f.yearsPerSecond) : 0, f.fullTiles !== undefined);
       view.playing = f.playing;
       setBanner(f.timelapse ? `Time-lapse — ${yearLabel(f.year, f.month)} of ${f.liveYear.toLocaleString('en-US')}`
         : f.isPast ? `Viewing the past — ${yearLabel(f.year, f.month)}` : null);
@@ -1132,6 +1134,16 @@ function tileInfo(x: number, y: number): string {
 }
 
 // ---------- keyboard (§20.7) ----------
+
+// Dev only (speeds plan Phase 3): lets a browser check read the screen clock and the last frame's
+// month. Vite removes it from release builds.
+if (import.meta.env.DEV) {
+  (window as unknown as { pixelAgesDev: unknown }).pixelAgesDev = {
+    clock: () => renderer.clock.t,
+    simMonth: () => { const f = session?.lastFrame; return f ? f.year * CONFIG.time.ticksPerYear + f.month : null; },
+    seasonWeights: () => Array.from(renderer.season.weights),
+  };
+}
 
 /**
  * Dev only (Diorama phase 6): plays one moment of each kind in turn at the selected group (or the

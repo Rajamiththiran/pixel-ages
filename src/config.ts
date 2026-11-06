@@ -787,6 +787,15 @@ export const CONFIG = {
     // F4 marks on the land (terrain.ts markPixel).
     marks: { terraceDark: 0.75, ashSpeck: 0.25, pathBlend: 0.6, roadBlend: 0.8, pitRadius2: 4.5, ruinGap: 0.3,
       flameShare: 0.35, burnDark: 0.45 }, // F5: flames and char on burning tiles (F8: flood water is the effects layer, f8.effects.floodAlpha)
+    // Speeds plan Phase 3: the screen clock, a fractional month that runs on between the worker's
+    // frames so seasons flow instead of stepping once a month. It may run ahead of the last frame
+    // by `leadMonths` (frames come 10–20 ms late; a lead of exactly one month made it wait once a
+    // month, measured in Chrome), or by `leadSteps` × the months the last frame brought when that
+    // is more (at Fly on a busy map a frame brings ~14 months every ~140 ms). Behind the last
+    // frame it runs `catchUp` times as fast, so an early frame never makes it step; further
+    // behind than that same room, it snaps. Frames further apart than `maxGapMs` are hitches
+    // (a busy moment), not the pace, and do not widen the room.
+    screenClock: { leadMonths: 1.5, leadSteps: 1.5, catchUp: 2, maxGapMs: 250 },
     // F8 graphics and sound (future blueprint §14). Visual only: nothing here reaches the simulation,
     // except `look`, which the worker uses to pack the look byte it sends with each tile.
     f8: {
@@ -795,7 +804,10 @@ export const CONFIG = {
       // Seasons (§14.1): a tint per tile class and season, eased in real time so 8× (8 years a
       // second) blurs toward the yearly average instead of flashing. Colours are palette keys.
       season: {
-        easeMs: 150,             // time constant of the tint easing (1×: a year lasts 1,000 ms, ~70% of the swing shows; 8×: ~13%)
+        // Time constant of the tint easing, a gentle filter on the screen clock (speeds plan Phase 3).
+        // Share of the yearly swing that shows (measured, tests/screenClock.test.ts): Crawl ~80%,
+        // Walk ~63%, Trot ~30%, Ride ~18%, Fly ~12%.
+        easeMs: 150,
         snowElevation: 6,        // winter snow lies on Mountain ground and on land at least this high
         // [colour, alpha] per class: grass, forest, fruit, farmland, desert, cold (snow line)
         spring: { grass: ['grassLight', 0.14], forest: ['grassLight', 0.10], fruit: ['flowerWhite', 0.10], farm: ['grassLight', 0.55], desert: ['grassLight', 0.06], cold: ['snow', 0.25] },

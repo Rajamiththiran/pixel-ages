@@ -21,6 +21,7 @@ import { MarketLayer } from './markets';
 import { Camera } from './camera';
 import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
+import { ScreenClock } from './screenClock';
 import { DayNight, NightPass, nightLevel, nightOn } from './light';
 import { Weather } from './weather';
 import { Effects, Particle, type View } from './effects';
@@ -90,6 +91,8 @@ export class Renderer {
   readonly traffic = new Traffic();
   readonly battles = new Battles();
   readonly season: SeasonLayer;
+  /** The fractional month on screen (speeds plan Phase 3). */
+  readonly clock = new ScreenClock();
   readonly light = new DayNight();
   readonly weather: Weather;
   readonly effects: Effects;
@@ -190,9 +193,13 @@ export class Renderer {
     this.people.setCrossing(crossing);
   }
 
-  /** The month on screen; `jump` after a jump in time (the season snaps instead of easing). */
-  setMonth(month: number, jump: boolean): void {
-    this.season.setMonth(month, jump);
+  /**
+   * A frame's time (speeds plan Phase 3). `monthsPerSecond`: the speed while time runs at it, else
+   * 0 (paused, time-lapse). `jump` after a jump in time: the clock and the season snap.
+   */
+  setTime(year: number, month: number, monthsPerSecond: number, jump: boolean): void {
+    this.clock.sync(year * CONFIG.time.ticksPerYear + month, monthsPerSecond, jump);
+    if (jump) this.season.setMonth(this.clock.monthOfYear, true);
   }
 
   invalidateRain(): void { this.rain.invalidate(); this.weather.rainChanged(); }
@@ -296,6 +303,8 @@ export class Renderer {
     this.terrain.animate(now);
     this.terrain.flush(this.terrainBudgetMs);
     if (v.running) {
+      this.clock.advance(dt);
+      this.season.setMonth(this.clock.monthOfYear);
       this.season.update(dt);
       this.light.update(dt, v.playing);
       this.weather.update(now, dt, vr, this.season.weights[3]!, v.playing);
