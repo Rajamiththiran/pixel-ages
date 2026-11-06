@@ -25,6 +25,15 @@ export const yearsPerSecondAt = (speed: number): number => speedRow(speed).years
 /** Months (ticks) per second of real time at this speed. */
 export const ticksPerSecondAt = (speed: number): number => speedRow(speed).yearsPerSecond * T.ticksPerYear;
 
+/** The next speed up (`dir` 1) or down (−1), staying at the ends. */
+export function stepSpeed(speed: number, dir: 1 | -1): Speed {
+  const i = SPEEDS.indexOf(speedRow(speed).speed);
+  return SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + dir))]!;
+}
+
+/** The speed a key picks: '1' '2' '4' '6' '8', else null. */
+export const speedForKey = (key: string): Speed | null => SPEEDS.find((v) => String(v) === key) ?? null;
+
 /** Tooltip text: "0.5 years per second", "1 year per second". */
 export function speedTitle(speed: number): string {
   const y = yearsPerSecondAt(speed);

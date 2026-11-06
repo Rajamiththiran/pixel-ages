@@ -5,14 +5,15 @@ export const CONFIG = {
   time: {
     ticksPerYear: 12,
     // Speeds (owner, 6 Nov 2026; docs/pixel-ages-speeds-plan.md). Slow speeds let seasons and
-    // climate drift be watched; fast ones skip centuries. The labels are names, not ratios:
-    // 8× is 16 times 1×. Months per second = yearsPerSecond × ticksPerYear.
+    // climate drift be watched; fast ones skip centuries. `speed` is the key that picks it (and
+    // the old ×-name: 8× is 16 times 1×, not 8); `label` is the button's name (owner: short and
+    // creative, set A of plan §7.2). Months per second = yearsPerSecond × ticksPerYear.
     speeds: [
-      { speed: 1, label: '1×', yearsPerSecond: 0.5 },  // 6 months a second
-      { speed: 2, label: '2×', yearsPerSecond: 1 },    // 12: the old 1×
-      { speed: 4, label: '4×', yearsPerSecond: 3 },    // 36
-      { speed: 6, label: '6×', yearsPerSecond: 5 },    // 60
-      { speed: 8, label: '8×', yearsPerSecond: 8 },    // 96: the old 8×
+      { speed: 1, label: 'Crawl', yearsPerSecond: 0.5 },  // 6 months a second
+      { speed: 2, label: 'Walk', yearsPerSecond: 1 },    // 12: the old 1×
+      { speed: 4, label: 'Trot', yearsPerSecond: 3 },    // 36
+      { speed: 6, label: 'Ride', yearsPerSecond: 5 },    // 60
+      { speed: 8, label: 'Fly', yearsPerSecond: 8 },    // 96: the old 8×
     ],
     defaultSpeed: 2,             // a run starts at 1 year a second, the same pace as before (owner's choice)
     maxFramesPerSecond: 30,

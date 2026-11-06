@@ -191,7 +191,8 @@
 :root[data-ui="tray"] .bottombar .sep { display: none; }
 :root[data-ui="tray"] .bb-play { width: var(--size-control); padding: 0; }
 :root[data-ui="tray"] .bb-speed { display: inline-flex; gap: var(--space-xs); padding: var(--space-xs); background: var(--tray-700); }
-:root[data-ui="tray"] .bb-speed button { box-shadow: var(--bevel-pressed); }
+/* Speeds plan Phase 2: five named speeds share the well, so they keep half the usual side padding. */
+:root[data-ui="tray"] .bb-speed button { box-shadow: var(--bevel-pressed); padding: 0 var(--space-s); }
 :root[data-ui="tray"] .bb-speed button.selected-speed { background: var(--brass); color: var(--on-brass); outline: 0; }
 :root[data-ui="tray"] .bottombar button.selected-speed { outline: 0; }
 :root[data-ui="tray"] .bottombar .yearbox, :root[data-ui="tray"].pixel-font .bottombar .yearbox {

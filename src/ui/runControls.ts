@@ -1,10 +1,10 @@
-// Bottom bar (§20.3): play/pause, 1×, 8×, step, year · season, real speed, timeline,
+// Bottom bar (§20.3): play/pause, the five speeds (speeds plan), step, year · season, real speed, timeline,
 // "Back to now". In setup mode the run controls are shown disabled.
 
 import { SEASON_NAMES } from '../shared/ids';
 import { CONFIG } from '../config';
 import type { Frame, Speed } from '../shared/protocol';
-import { speedTitle } from '../shared/speeds';
+import { SPEEDS, speedRow, speedTitle } from '../shared/speeds';
 import { h } from './layout';
 import { trayOn } from './theme';
 
@@ -39,9 +39,9 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
 
   // Diorama phase 5: Play is the bar's one brass control; 1× and 8× sit in a sunken well.
   const play = h('button', { class: trayOn ? 'primary bb-play' : undefined, text: '▶', title: 'Play / pause (Space)' });
-  // Speeds plan Phase 1: titles come from the speed table (1× is now half a year a second).
-  const x1 = h('button', { text: '1×', title: `${speedTitle(1)} (1)` });
-  const x8 = h('button', { text: '8×', title: `${speedTitle(8)} (8)` });
+  // Speeds plan Phase 2: one button per speed in the table, named by its label; the tooltip
+  // carries the real rate and the key.
+  const speedBtns = SPEEDS.map((v) => h('button', { text: speedRow(v).label, title: `${speedTitle(v)} (${v})`, 'aria-pressed': 'false' }));
   const step = h('button', { text: 'Step', title: 'Advance one month (.)' });
   const yearbox = h('span', { class: 'yearbox' });
   const speedLabel = h('span', { class: trayOn ? 'mode rate' : 'mode' });
@@ -55,8 +55,7 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
     else if (last?.playing) hd.pause();
     else hd.play();
   });
-  x1.addEventListener('click', () => hd.speed(1));
-  x8.addEventListener('click', () => hd.speed(8));
+  speedBtns.forEach((b, k) => b.addEventListener('click', () => hd.speed(SPEEDS[k]!)));
   step.addEventListener('click', () => hd.step());
   back.addEventListener('click', () => hd.backToNow());
   slider.addEventListener('input', () => {
@@ -73,8 +72,7 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
   const fill = h('div', { class: 'bb-fill' });
   root.append(
     play,
-    trayOn ? h('div', { class: 'bb-speed', role: 'group', 'aria-label': 'Speed' }, x1, x8) : x1,
-    ...(trayOn ? [] : [x8]),
+    h('div', { class: 'bb-speed', role: 'group', 'aria-label': 'Speed' }, ...speedBtns),
     step,
     h('div', { class: 'sep' }),
     yearbox,
@@ -95,12 +93,11 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
     setup = true;
     // ▶ stays live so the world can be started from here too; the rest waits for the run.
     play.disabled = false;
-    for (const b of [x1, x8, step]) b.disabled = true;
+    for (const b of [...speedBtns, step]) b.disabled = true;
     play.title = 'Start the world (same as Run ▶ in the Run tab)';
     play.textContent = trayOn ? 'Run ▶' : '▶';
     play.style.width = trayOn ? 'auto' : '';
-    x1.classList.remove('selected-speed');
-    x8.classList.remove('selected-speed');
+    for (const b of speedBtns) { b.classList.remove('selected-speed'); b.setAttribute('aria-pressed', 'false'); }
     slider.disabled = true;
     slider.max = '0';
     slider.value = '0';
@@ -113,7 +110,7 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
 
   function setRunMode(): void {
     setup = false;
-    for (const b of [play, x1, x8]) b.disabled = false;
+    for (const b of [play, ...speedBtns]) b.disabled = false;
     play.title = 'Play / pause (Space)';
     play.style.width = '';
     slider.disabled = false;
@@ -123,8 +120,10 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
   function update(f: Frame): void {
     last = f;
     setText(play, f.playing ? '❚❚' : '▶');
-    x1.classList.toggle('selected-speed', f.speed === 1);
-    x8.classList.toggle('selected-speed', f.speed === 8);
+    speedBtns.forEach((b, k) => {
+      const on = f.speed === SPEEDS[k];
+      if (b.classList.contains('selected-speed') !== on) { b.classList.toggle('selected-speed', on); b.setAttribute('aria-pressed', String(on)); }
+    });
     step.disabled = f.playing;
     if (!dragging) {
       setText(yearbox, yearLabel(f.year, f.month));

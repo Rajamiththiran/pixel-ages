@@ -11,7 +11,8 @@ import {
   GROUND_NAMES, PLANT_NAMES, RESOURCE_NAMES, WALL_NAMES, SPECIES_NAMES,
 } from './shared/ids';
 import type { FounderGroup, Intervention, LogEntry, MapData, PlannedEvent, RunSetup, YearStats } from './shared/types';
-import type { Frame, GroupView, HeatLayer } from './shared/protocol';
+import type { Frame, GroupView, HeatLayer, Speed } from './shared/protocol';
+import { DEFAULT_SPEED, speedForKey, stepSpeed } from './shared/speeds';
 import { ERA_NAMES } from './shared/discoveries';
 import { logCsv, statsCsv } from './shared/csv';
 import type { MapLine } from './render/overlays';
@@ -414,11 +415,20 @@ let trailsOn = false;
 let tool: InterveneTool | null = null;
 let compare: CompareApi | null = null;
 
+// Speeds plan Phase 2: the speed last asked for, until a frame shows it, so quick − / + presses
+// step on from it instead of from a frame that has not caught up yet.
+let askedSpeed: Speed | null = null;
+function setSpeed(v: Speed): void {
+  if (!session) return;
+  askedSpeed = v;
+  session.send({ type: 'speed', value: v });
+}
+
 const bottom = buildBottomBar(ui.bottom, {
   start: () => startRun(),
   play: () => session?.send({ type: 'play' }),
   pause: () => session?.send({ type: 'pause' }),
-  speed: (v) => session?.send({ type: 'speed', value: v }),
+  speed: (v) => setSpeed(v),
   step: () => session?.send({ type: 'step' }),
   viewYear: (y) => {
     if (!session) return;
@@ -715,12 +725,14 @@ function startRun(): void {
   story.clear();
   renderer.clearRun();
   renderer.fog.setKnown(null);
+  askedSpeed = null;
   session = new RunSession(runSetup0, {
     started: () => {},
     terrainChanged: (tiles) => (tiles === 'all' ? renderer.markAllTiles() : renderer.markTiles(tiles)),
     rainChanged: () => renderer.invalidateRain(),
     animalsChanged: (d) => { runAnimals = d; renderer.setAnimalDensities(d); },
     frame: (f) => {
+      if (f.speed === askedSpeed) askedSpeed = null;
       bottom.update(f);
       if (f.timelapse !== lastLapse) { lastLapse = f.timelapse; refreshPresent(); }
       // The world changes under a still mouse, so keep the hover tooltip live.
@@ -1172,8 +1184,10 @@ window.addEventListener('keydown', (e) => {
     if (!session || e.ctrlKey || e.metaKey || e.altKey) return;
     const f = session.lastFrame;
     if (e.key === ' ') { e.preventDefault(); session.send({ type: f?.playing ? 'pause' : 'play' }); }
-    else if (e.key === '1') session.send({ type: 'speed', value: 1 });
-    else if (e.key === '8') session.send({ type: 'speed', value: 8 });
+    // Speeds plan Phase 2: keys 1 2 4 6 8 pick a speed; − and + step one speed down or up.
+    else if (speedForKey(e.key) !== null) setSpeed(speedForKey(e.key)!);
+    else if (e.key === '-' || e.key === '_') setSpeed(stepSpeed(askedSpeed ?? f?.speed ?? DEFAULT_SPEED, -1));
+    else if (e.key === '+' || e.key === '=') setSpeed(stepSpeed(askedSpeed ?? f?.speed ?? DEFAULT_SPEED, 1));
     else if (e.key === '.') session.send({ type: 'step' });
     else if (e.key === 'Escape') {
       if (tool !== null) setTool(null);

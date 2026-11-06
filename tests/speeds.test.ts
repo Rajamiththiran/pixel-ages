@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { CONFIG } from '../src/config';
-import { DEFAULT_SPEED, SPEEDS, speedRow, speedTitle, ticksPerSecondAt, yearsPerSecondAt } from '../src/shared/speeds';
+import { DEFAULT_SPEED, SPEEDS, speedForKey, speedRow, speedTitle, stepSpeed, ticksPerSecondAt, yearsPerSecondAt } from '../src/shared/speeds';
 
 const SIM = import.meta.glob('../src/sim/**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
@@ -30,6 +30,25 @@ describe('speed table', () => {
   it('writes tooltips with the real rate', () => {
     expect(speedTitle(1)).toBe('0.5 years per second');
     expect(speedTitle(2)).toBe('1 year per second');
+  });
+});
+
+describe('buttons and keys (Phase 2)', () => {
+  it('names every speed shortly, so five buttons fit the bar', () => {
+    for (const v of SPEEDS) expect(speedRow(v).label.length).toBeLessThanOrEqual(5);
+    expect(new Set(SPEEDS.map((v) => speedRow(v).label)).size).toBe(SPEEDS.length);
+  });
+
+  it('keys 1 2 4 6 8 pick their speed; other keys pick none', () => {
+    for (const v of SPEEDS) expect(speedForKey(String(v))).toBe(v);
+    for (const k of ['0', '3', '5', '7', '9', 'a', ' ']) expect(speedForKey(k)).toBeNull();
+  });
+
+  it('− and + step one speed and stop at the ends', () => {
+    expect(stepSpeed(2, 1)).toBe(4);
+    expect(stepSpeed(6, -1)).toBe(4);
+    expect(stepSpeed(8, 1)).toBe(8);
+    expect(stepSpeed(1, -1)).toBe(1);
   });
 });
 
