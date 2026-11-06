@@ -4,6 +4,7 @@
 import { SEASON_NAMES } from '../shared/ids';
 import { CONFIG } from '../config';
 import type { Frame, Speed } from '../shared/protocol';
+import { speedTitle } from '../shared/speeds';
 import { h } from './layout';
 import { trayOn } from './theme';
 
@@ -38,8 +39,9 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
 
   // Diorama phase 5: Play is the bar's one brass control; 1× and 8× sit in a sunken well.
   const play = h('button', { class: trayOn ? 'primary bb-play' : undefined, text: '▶', title: 'Play / pause (Space)' });
-  const x1 = h('button', { text: '1×', title: '1 year per second (1)' });
-  const x8 = h('button', { text: '8×', title: '8 years per second (8)' });
+  // Speeds plan Phase 1: titles come from the speed table (1× is now half a year a second).
+  const x1 = h('button', { text: '1×', title: `${speedTitle(1)} (1)` });
+  const x8 = h('button', { text: '8×', title: `${speedTitle(8)} (8)` });
   const step = h('button', { text: 'Step', title: 'Advance one month (.)' });
   const yearbox = h('span', { class: 'yearbox' });
   const speedLabel = h('span', { class: trayOn ? 'mode rate' : 'mode' });
