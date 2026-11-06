@@ -8,12 +8,14 @@ export const CONFIG = {
     // climate drift be watched; fast ones skip centuries. `speed` is the key that picks it (and
     // the old ×-name: 8× is 16 times 1×, not 8); `label` is the button's name (owner: short and
     // creative, set A of plan §7.2). Months per second = yearsPerSecond × ticksPerYear.
+    // `seasonShow` (Phase 4, owner's choice §7.3): how much of the season shows while time runs at
+    // this speed, from 1 (the full year) to 0 (the held fast-forward look, render.f8.season.heldWeights).
     speeds: [
-      { speed: 1, label: 'Crawl', yearsPerSecond: 0.5 },  // 6 months a second
-      { speed: 2, label: 'Walk', yearsPerSecond: 1 },    // 12: the old 1×
-      { speed: 4, label: 'Trot', yearsPerSecond: 3 },    // 36
-      { speed: 6, label: 'Ride', yearsPerSecond: 5 },    // 60
-      { speed: 8, label: 'Fly', yearsPerSecond: 8 },    // 96: the old 8×
+      { speed: 1, label: 'Crawl', yearsPerSecond: 0.5, seasonShow: 1 },    // 6 months a second
+      { speed: 2, label: 'Walk', yearsPerSecond: 1, seasonShow: 1 },       // 12: the old 1×
+      { speed: 4, label: 'Trot', yearsPerSecond: 3, seasonShow: 0.5 },     // 36: softened
+      { speed: 6, label: 'Ride', yearsPerSecond: 5, seasonShow: 0 },       // 60: held
+      { speed: 8, label: 'Fly', yearsPerSecond: 8, seasonShow: 0 },        // 96: the old 8×; held
     ],
     defaultSpeed: 2,             // a run starts at 1 year a second, the same pace as before (owner's choice)
     maxFramesPerSecond: 30,
@@ -577,10 +579,12 @@ export const CONFIG = {
     maxPeopleSprites: 6000,
     maxAnimalSprites: 400, animalBlock: 4, animalsPerBlockMax: 2,
     villageWalkersPer: 10, villageWalkersMax: 40, villageWalkRadius: 3,
-    walkSpeedPx: 24, fastWalkMult: 4, walkFrameMs: 250, idleStepMs: 2000, personOffsetPx: 3,
-    // Item 2b: a walker goes at least walkSpeedPx, but fast enough to reach the work spot within
-    // arriveMs of screen time (a season at 1×; ÷ fastWalkMult at 8×), at most maxWalkMult × walkSpeedPx.
-    arriveMs: 250, maxWalkMult: 12,
+    walkSpeedPx: 24, walkFrameMs: 250, idleStepMs: 2000, personOffsetPx: 3,
+    // Item 2b and speeds plan Phase 4: a walker's normal pace is walkSpeedPx × (months per second ÷ 12)
+    // ^ walkPaceExp: Crawl ×0.63, Walk ×1, Trot ×2.1, Ride ×2.9, Fly ×4 (the old 8× pace). It goes at
+    // least that, but fast enough to reach the work spot within arriveMonths of screen time (a season:
+    // 500 ms at Crawl, 250 ms at Walk as before, 31 ms at Fly), at most maxWalkMult × its normal pace.
+    walkPaceExp: 2 / 3, arriveMonths: 3, maxWalkMult: 12,
     // Item 2b: routes round water and walls (render/paths.ts): A* gives up after maxNodes tiles; at
     // most cacheSize routes are kept.
     paths: { maxNodes: 4000, cacheSize: 20000 },
@@ -636,6 +640,20 @@ export const CONFIG = {
     pickRadiusPx: 3,             // §21.1: clicking within 3 px of a person selects them
     zoom: 2,                     // §18.8: Z toggles 2× zoom
     terrainBudgetMs: 6,          // max terrain redraw work per frame; the rest waits for the next frame
+    // Speeds plan Phase 5: gradual land and climate (drawing only; skipped at the speeds that hold
+    // the season look, and in a time-lapse).
+    gradual: {
+      // A tile the simulation changed (forest regrowing, a new field, spreading desert, greening
+      // ash) dissolves from its old look to its new one in fadeSteps Bayer-ordered steps (75%, 50%,
+      // 25% old, then new: each pixel changes once, no translucency) over fadeMs. At most
+      // fadeMaxTiles tiles fade at once; past that they change at once (early in a run ~375 tiles
+      // change a month while the painted world settles; ~20–40 by year 100, measured).
+      fadeMs: 500, fadeSteps: 4, fadeMaxTiles: 1500,
+      // The yearly rain change (climate drift, dry and wet years) slides from the old rain to the
+      // new over rainMonths of screen time, in rainSteps steps, redrawn at most every rainMinMs:
+      // drought cracks, puddles, clouds and the Rain view follow it tile by tile.
+      rainMonths: 12, rainSteps: 12, rainMinMs: 100,
+    },
     panStepPx: 24,               // arrow keys / WASD pan this many map pixels per press
     // Added in step 1 (numbers from §18.3 / §18.7 that were inside formulas):
     darkColorMult: 0.7,          // lineage dark variant D = RGB × 0.7 (§18.1)
@@ -808,6 +826,10 @@ export const CONFIG = {
         // Share of the yearly swing that shows (measured, tests/screenClock.test.ts): Crawl ~80%,
         // Walk ~63%, Trot ~30%, Ride ~18%, Fly ~12%.
         easeMs: 150,
+        // Speeds plan Phase 4: the held fast-forward look (seasons brief D: summer-normal, fields half
+        // green and half gold, snow on the peaks only, no lowland frost): weights of spring, summer,
+        // autumn and winter. A speed's seasonShow blends from this (0) to the turning year (1).
+        heldWeights: [0.5, 0.5, 0, 0],
         snowElevation: 6,        // winter snow lies on Mountain ground and on land at least this high
         // [colour, alpha] per class: grass, forest, fruit, farmland, desert, cold (snow line)
         spring: { grass: ['grassLight', 0.14], forest: ['grassLight', 0.10], fruit: ['flowerWhite', 0.10], farm: ['grassLight', 0.55], desert: ['grassLight', 0.06], cold: ['snow', 0.25] },

@@ -44,6 +44,8 @@ export class Weather {
   private t = 0;                               // seconds of drift
   private map: MapData;
   private base: Uint8Array | null = null;      // painted rain
+  /** Speeds plan Phase 5: the rain the screen draws (eased over the year); null = the map's rain. */
+  rainSource: ArrayLike<number> | null = null;
   // Particles: struct of arrays.
   private readonly px = new Float32Array(W.maxDrops);
   private readonly py = new Float32Array(W.maxDrops);
@@ -89,6 +91,7 @@ export class Weather {
   /** Rain now changed (or the land did): recompute per-cell rain and the cracks and puddles. */
   rainChanged(): void {
     const m = this.map;
+    const rain = this.rainSource ?? m.rain;
     const C = W.cellTiles;
     for (let cy = 0; cy < this.ch; cy++) {
       for (let cx = 0; cx < this.cw; cx++) {
@@ -96,7 +99,7 @@ export class Weather {
         for (let y = cy * C; y < Math.min(m.height, cy * C + C); y++) {
           for (let x = cx * C; x < Math.min(m.width, cx * C + C); x++) {
             const i = y * m.width + x;
-            sum += m.rain[i]!; n++;
+            sum += rain[i]!; n++;
             if (tintClass(m, i) === TintClass.Cold) cold++;
           }
         }
@@ -112,6 +115,7 @@ export class Weather {
     const m = this.map;
     const base = this.base;
     if (!base) return;
+    const rain = this.rainSource ?? m.rain;
     const d = this.groundImg.data;
     const imgW = this.ground.width;
     let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
@@ -120,7 +124,7 @@ export class Weather {
       const open = m.wall[i] === WallType.None && m.plantType[i] !== Plant.Forest
         && (m.ground[i] === Ground.Grassland || m.ground[i] === Ground.Desert);
       if (open && base[i]! > 0) {
-        const ratio = m.rain[i]! / base[i]!;
+        const ratio = rain[i]! / base[i]!;
         if (ratio < W.droughtBelow) st = 1;
         else if (ratio > W.wetAbove && m.ground[i] === Ground.Grassland) st = 2;
       }
