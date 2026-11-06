@@ -113,7 +113,9 @@ export function scenarioB(seed = 48213): RunSetup {
   run.name = 'Smart desert vs rich forest';
   run.founders = [
     { id: 1, name: 'Forest', colorIndex: 0, x: 40, y: 45, people: fourPeople(70) },
-    { id: 2, name: 'Desert', colorIndex: 1, x: 120, y: 48, people: fourPeople(140) },
+    // §26 says (120, 48), which is on the edge of the radius-3 lake round (120, 45), so the run could
+    // not start; one tile south is the oasis shore (DECISIONS 29.1).
+    { id: 2, name: 'Desert', colorIndex: 1, x: 120, y: 49, people: fourPeople(140) },
   ];
   return run;
 }
