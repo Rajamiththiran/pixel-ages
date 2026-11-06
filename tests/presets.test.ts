@@ -70,3 +70,12 @@ describe('v2 scenario files', () => {
     }
   });
 });
+
+describe('the tutorial\'s example', () => {
+  it('Scenario B can start: no setup errors, so "Load the example" then Run works (DECISIONS 29.1)', () => {
+    for (const run of [scenarioB(), decodeRun(file('scenario-b-smart-desert-vs-rich-forest.run.json')!)]) {
+      const areas = computeAreas(run.map.wall, run.map.width, run.map.height);
+      expect(validateRun(run.map, run.founders, run.events, areas.regionId).errors, run.name).toEqual([]);
+    }
+  });
+});
