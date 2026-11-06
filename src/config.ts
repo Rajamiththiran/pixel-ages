@@ -795,6 +795,14 @@ export const CONFIG = {
       // so colours without a token (the colour-blind lineages) use it too.
       shadeMul: [0.62, 0.58, 0.64], shadeAdd: [6, 6, 22], lineageShadeMix: 0.85,
     },
+    // Seasons and weather wave (docs/pixel-ages-seasons-plan.md). Render only. Each effect has an
+    // off switch here and an `?off=` name in the URL; with all of them off the look is today's.
+    seasons: {
+      // Phase 1a: every terrain pixel is stored as (ramp step, role) and its colour picked last,
+      // through a lookup table; the terrain image is that lookup's result. Needs the ramps.
+      // Off: `?off=matbuf` (the colours written straight, as before; for comparing only).
+      matbuf: { on: true },
+    },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,
     founderSpreadPx: 10,         // placed founders stand within ±10 px of their home tile

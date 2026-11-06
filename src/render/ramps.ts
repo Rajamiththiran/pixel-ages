@@ -197,6 +197,25 @@ export function rampFinal(out: RGB): void {
   put(colourOf(tagOf(out)), out);
 }
 
+/**
+ * rampFinal that also returns the pixel's tag (group × 8 + step): what the material buffer stores
+ * (seasons plan Phase 1a), so a colour can be picked later from (material, step).
+ */
+export function rampTag(out: RGB): number {
+  const t = tagOf(out);
+  put(colourOf(t), out);
+  return t;
+}
+
+/** The colour of a tag. */
+export const tagRgb = (tag: number): RGB => colourOf(tag);
+
+/** One more than the highest tag in use (tags = group × 8 + step). */
+export const tagCount = (): number => groups.length * 8;
+
+/** Is this tag a real step of a group (not a gap after a group's last step)? */
+export const tagValid = (tag: number): boolean => (tag >> 3) < groups.length && (tag & 7) < groups[tag >> 3]!.length;
+
 /** Every colour a Diorama terrain pixel may have (for the palette audit). */
 export function rampColours(): RGB[] {
   return groups.flat();

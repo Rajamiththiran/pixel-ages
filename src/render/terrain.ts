@@ -10,7 +10,10 @@ import { hash01 } from '../shared/hash';
 import { N8 } from '../shared/grid';
 import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
-import { Mat, rampFinal, rampRgb, rampShift, rampsOn } from './ramps';
+import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
+import {
+  Role, createMatBuf, dissolveMat, identityLut, matbufOn, readMatTile, resolveTile, sameMatLook, type MatBuf, type MatTile,
+} from './materials';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
 import { buildCrowns, canopyDistance, crownColourAt, inTreeShadow } from './crowns';
 import { occlusionOn, shadowsOn } from './shadows';
@@ -60,12 +63,14 @@ export interface TileExtras {
   look: Uint8Array | null;       // F8: worn soil, salt, ash stage, silt
   base: MapData | null;          // F8: the painted map, for stumps where forest was cut
   shadow?: Uint8ClampedArray | null; // Diorama phase 3: cast-shadow mask (alpha 255 = shadowed), same layout as the image
+  mat?: MatBuf | null;           // Seasons Phase 1a: each pixel's ramp step and role, same layout as the image
 }
 
 // What the pixel being drawn turned out to be, for shadows and occlusion (phase 3).
 let onCrown = false;
 let onPeak = false;
 let crownsReady = false;
+let onMark = false;            // a line, pit or ruin pixel of a mark (seasons Phase 1a role)
 
 // Per-tile scratch, reused so drawing allocates nothing.
 const nb = new Uint8Array(8);
@@ -139,6 +144,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
   crownsReady = nearForest && (shadowsOn || occlusionOn);
   if (crownsReady) buildCrowns(map, tx, ty);
   const occlude = occlusionOn && crownsReady && wall === WallType.None && plant !== Plant.Forest && plant !== Plant.Farmland;
+  const mat = ex.mat ?? null;
 
   for (let oy = 0; oy < TILE; oy++) {
     const py = ty * TILE + oy;
@@ -149,20 +155,24 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
       if (ditherOn) ditherPixel(px, py);
       onCrown = false;
       onPeak = false;
+      let role: Role;
 
       if (water && !corner) {
         if (river) riverPixel(map, tx, ty, px, py, time.riverStep, out);
         else waterPixel(map, ex.depth, px, py, wall === WallType.Sea, time.waterStep, out);
         if (hasEdge) applyFoam(edge, px, py, time.waterStep, out);
+        role = river ? Role.River : wall === WallType.Sea ? Role.Sea : Role.Lake;
       } else if (water) {
         // A rounded-off corner of a water tile: the bank.
         copy(cornerLand, out);
         applyWetEdge(0, out);
         if (ditherOn) applyTexture(px, py, out);
+        role = cornerLand === BANK ? Role.Bank : Role.Beach;
       } else if (corner) {
         // A land corner inside a bend: the water rounds it off.
         if (corners & RIVER_BEND) riverPixel(map, tx, ty, px, py, time.riverStep, out);
         else waterPixel(map, ex.depth, px, py, false, time.waterStep, out);
+        role = corners & RIVER_BEND ? Role.River : Role.Lake;
       } else if (wall === WallType.Mountain) {
         mountainWallPixel(isCrossing, px, py, out);
         if (kind === PeakKind.Wall) onPeak = mountainPeak(map, kind, px, py, out);
@@ -170,17 +180,24 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         if (hasEdge) applyWetEdge(edge, out);
         // Diorama phase 2: clustered ordered dither on land (the mockup leaves water untextured).
         if (ditherOn) applyTexture(px, py, out);
+        role = onPeak ? Role.Peak : Role.Wall;
       } else {
         landPixel(map, ground, plant, dens, kind, nearForest, stumps ? painted : -1, px, py, out);
+        role = landRole(ground, plant);
         if (resShare > 0 && hash01(px, py, SALT.resource + res) < resShare) copy(RESOURCE_COLOR[res]!, out);
         if (look !== 0) soilPixel(look, plant, px, py, out);
-        if (tileMarks !== 0) markPixel(map, ex.marks!, i, tileMarks, plant, look, ox, oy, px, py, out);
+        if (tileMarks !== 0) {
+          onMark = false;
+          markPixel(map, ex.marks!, i, tileMarks, plant, look, ox, oy, px, py, out);
+          if (onMark) role = Role.Mark;
+        }
         if (tileHazards & HazardMark.Fire) {
           const f = hash01(px, py, SALT.fire);
           if (f < R.marks.flameShare) copy(f < R.marks.flameShare / 2 ? RGBS.fireYellow : RGBS.fireOrange, out);
           else shade(out, R.marks.burnDark, DR.burnSteps);
+          role = Role.Fire;
         }
-        if (beachGround && hasLake && edgeDistance(ox, oy, nbLake) < F8.beachPx) copy(RGBS.sand, out);
+        if (beachGround && hasLake && edgeDistance(ox, oy, nbLake) < F8.beachPx) { copy(RGBS.sand, out); role = Role.Beach; }
         if (shaded) shadeHeight(map, px, py, out);
         if (hasEdge) applyWetEdge(edge, out);
         if (occlude && !onCrown) occludePixel(px, py, out);
@@ -191,8 +208,11 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
       // Diorama: no random grain (readme: texture is ordered dither, applyTexture above), and
       // every pixel ends on a ramp or accent colour.
       let g = 1;
-      if (rampsOn) rampFinal(out);
-      else g = 1 + R.grain * (2 * hash01(px, py, SALT.grain) - 1);
+      if (rampsOn) {
+        const tag = rampTag(out);
+        // Seasons Phase 1a: the material buffer keeps the step and role; the image is resolved from it.
+        if (mat) { const p = py * imgW + px; mat.tag[p] = tag; mat.role[p] = role; }
+      } else g = 1 + R.grain * (2 * hash01(px, py, SALT.grain) - 1);
       const o = (py * imgW + px) * 4;
       if (ex.shadow) {
         // Phase 3: trees and peaks cast down-right; the crowns and peaks themselves stand above it.
@@ -380,18 +400,18 @@ function markPixel(
     // A lone stretch still shows a short dash.
     return !any && inRow && ox >= mid - 1 && ox <= mid + 2;
   };
-  if (m & Mark.Canal && onLine(Mark.Canal, false, true)) copy(RGBS.waterLight, out);
+  if (m & Mark.Canal && onLine(Mark.Canal, false, true)) { copy(RGBS.waterLight, out); onMark = true; }
   if (m & Mark.Road) {
-    if (onLine(Mark.Road | Mark.Path, true, false)) mix(out, RGBS.stoneLight, R.marks.roadBlend, out);
-  } else if (m & Mark.Path && onLine(Mark.Path | Mark.Road, false, false)) mix(out, RGBS.sand, R.marks.pathBlend, out);
+    if (onLine(Mark.Road | Mark.Path, true, false)) { mix(out, RGBS.stoneLight, R.marks.roadBlend, out); onMark = true; }
+  } else if (m & Mark.Path && onLine(Mark.Path | Mark.Road, false, false)) { mix(out, RGBS.sand, R.marks.pathBlend, out); onMark = true; }
   if (m & Mark.Quarry) {
     const d2 = (ox - mid - 0.5) ** 2 + (oy - mid - 0.5) ** 2;
-    if (d2 <= R.marks.pitRadius2) copy(d2 <= 1 ? RGBS.ink : RGBS.mountainDark, out);
+    if (d2 <= R.marks.pitRadius2) { copy(d2 <= 1 ? RGBS.ink : RGBS.mountainDark, out); onMark = true; }
   }
   if (m & Mark.Ruin) {
     const ring = (ox === 1 || ox === TILE - 2) && oy >= 1 && oy <= TILE - 2
       || (oy === 1 || oy === TILE - 2) && ox >= 1 && ox <= TILE - 2;
-    if (ring && hash01(px, py, SALT.ruin) > R.marks.ruinGap) copy(RGBS.stone, out);
+    if (ring && hash01(px, py, SALT.ruin) > R.marks.ruinGap) { copy(RGBS.stone, out); onMark = true; }
   }
 }
 
@@ -478,6 +498,18 @@ function landPixel(
   if (nearForest) onCrown = crownsReady ? crownColourAt(px, py, out) : forestCrown(map, px, py, out);
 }
 
+/** A land pixel's role after landPixel: crowns and peaks stand above the ground (seasons Phase 1a). */
+function landRole(ground: number, plant: number): Role {
+  if (onCrown) return Role.Crown;
+  if (onPeak) return Role.Peak;
+  switch (plant) {
+    case Plant.Forest: return Role.Forest;
+    case Plant.FruitBushes: return Role.Fruit;
+    case Plant.Farmland: return Role.Farm;
+  }
+  return ground === Ground.Mountain ? Role.Mountain : ground === Ground.Desert ? Role.Desert : Role.Grass;
+}
+
 function mountainWallPixel(isCrossing: boolean, px: number, py: number, out: RGB): void {
   if (isCrossing) copy(speck(px, py, SALT.pass, R.mountainPassSpeck) ? RGBS.stone : RGBS.sand, out);
   else if (speck(px, py, SALT.wallInk, R.mountainWallInkSpeck)) copy(RGBS.ink, out);
@@ -490,8 +522,42 @@ function mountainWallPixel(isCrossing: boolean, px: number, py: number, out: RGB
 const GR = CONFIG.render.gradual;
 const TILE_BYTES_PX = TILE * TILE * 4;
 
-/** A tile changing look: its old and new pixels, when it began, and the step drawn. */
-interface TileFade { old: Uint8ClampedArray; neu: Uint8ClampedArray; start: number; step: number }
+/** A tile's look, copied out: its RGBA pixels, or its material entries (seasons Phase 1a). */
+type TileSnap = Uint8ClampedArray | MatTile;
+
+/** A tile changing look: its old and new look, when it began, and the step drawn. */
+interface TileFade { old: TileSnap; neu: TileSnap; start: number; step: number }
+
+/**
+ * How the layer copies, compares and dissolves a tile. Without the material buffer: the image's
+ * RGBA pixels (as before). With it: the buffer's entries, and `commit` resolves the tile's colours
+ * into the image, so the image is always the lookup's result.
+ */
+interface TileStore {
+  read(tx: number, ty: number, out?: TileSnap): TileSnap;
+  same(a: TileSnap, b: TileSnap): boolean;
+  dissolve(tx: number, ty: number, old: TileSnap, neu: TileSnap, step: number): void;
+  commit(tx: number, ty: number): void;
+}
+
+function rgbaStore(data: Uint8ClampedArray, imgW: number): TileStore {
+  return {
+    read: (tx, ty, out) => readTile(data, imgW, tx, ty, out as Uint8ClampedArray | undefined),
+    same: (a, b) => sameTile(a as Uint8ClampedArray, b as Uint8ClampedArray),
+    dissolve: (tx, ty, old, neu, step) => dissolveTile(data, imgW, tx, ty, old as Uint8ClampedArray, neu as Uint8ClampedArray, step),
+    commit: () => {},
+  };
+}
+
+function matStore(mat: MatBuf, px: Uint32Array): TileStore {
+  const lut = identityLut();
+  return {
+    read: (tx, ty, out) => readMatTile(mat, tx, ty, out as MatTile | undefined),
+    same: (a, b) => sameMatLook(lut, a as MatTile, b as MatTile),
+    dissolve: (tx, ty, old, neu, step) => { dissolveMat(mat, tx, ty, old as MatTile, neu as MatTile, step); resolveTile(mat, lut, px, tx, ty); },
+    commit: (tx, ty) => resolveTile(mat, lut, px, tx, ty),
+  };
+}
 
 /** Copies tile (tx, ty)'s pixels out of the terrain image. */
 export function readTile(data: Uint8ClampedArray, imgW: number, tx: number, ty: number, out: Uint8ClampedArray = new Uint8ClampedArray(TILE_BYTES_PX)): Uint8ClampedArray {
@@ -549,8 +615,12 @@ export class TerrainLayer {
   fadeOn = false;
   private fadeWanted: Uint8Array;
   private readonly fades = new Map<number, TileFade>();
+  /** Seasons Phase 1a: each pixel's ramp step and role; the image is resolved from it. Null with `?off=matbuf`. */
+  readonly mat: MatBuf | null = null;
+  private readonly store: TileStore;
 
-  constructor(private map: MapData) {
+  /** `useMat`: draw through the material buffer (the switch; tests compare both ways). */
+  constructor(private map: MapData, useMat = matbufOn) {
     this.canvas = document.createElement('canvas');
     this.canvas.width = map.width * TILE;
     this.canvas.height = map.height * TILE;
@@ -569,7 +639,11 @@ export class TerrainLayer {
       this.shadowCtx = this.shadowCanvas.getContext('2d')!;
       this.shadowImg = this.shadowCtx.createImageData(this.canvas.width, this.canvas.height);
     }
-    this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null, shadow: this.shadowImg?.data ?? null };
+    if (useMat && rampsOn) this.mat = createMatBuf(this.canvas.width, this.canvas.height);
+    this.store = this.mat
+      ? matStore(this.mat, new Uint32Array(this.img.data.buffer, this.img.data.byteOffset, this.img.data.length >> 2))
+      : rgbaStore(this.img.data, this.canvas.width);
+    this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null, shadow: this.shadowImg?.data ?? null, mat: this.mat };
     this.markAll();
   }
 
@@ -669,6 +743,7 @@ export class TerrainLayer {
     const w = this.map.width;
     const imgW = this.canvas.width;
     const data = this.img.data;
+    const store = this.store;
     let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
     const grow = (i: number): void => {
       const x = i % w;
@@ -685,7 +760,7 @@ export class TerrainLayer {
       const step = Math.min(GR.fadeSteps, Math.floor(((t0 - f.start) / GR.fadeMs) * GR.fadeSteps));
       if (step === f.step) continue;
       f.step = step;
-      dissolveTile(data, imgW, i % w, Math.floor(i / w), f.old, f.neu, step);
+      store.dissolve(i % w, Math.floor(i / w), f.old, f.neu, step);
       if (step >= GR.fadeSteps) this.fades.delete(i);
       grow(i);
     }
@@ -698,22 +773,22 @@ export class TerrainLayer {
       const tx = i % w, ty = (i - tx) / w;
       let fade = this.fades.get(i);
       // A tile the simulation changed keeps its old pixels to dissolve from (if not fading already).
-      const old = !fade && this.fadeWanted[i] === 1 && this.fades.size < GR.fadeMaxTiles ? readTile(data, imgW, tx, ty) : null;
+      const old = !fade && this.fadeWanted[i] === 1 && this.fades.size < GR.fadeMaxTiles ? store.read(tx, ty) : null;
       this.fadeWanted[i] = 0;
       drawTilePixels(this.map, i, data, imgW, this.time, this.extras);
       this.dirty[i] = 0;
       if (fade) {
         // Redrawn while fading (a neighbour changed, water moved): the newest look is the new one.
-        readTile(data, imgW, tx, ty, fade.neu);
-        dissolveTile(data, imgW, tx, ty, fade.old, fade.neu, fade.step);
+        store.read(tx, ty, fade.neu);
+        store.dissolve(tx, ty, fade.old, fade.neu, fade.step);
       } else if (old) {
-        const neu = readTile(data, imgW, tx, ty);
-        if (!sameTile(old, neu)) {
+        const neu = store.read(tx, ty);
+        if (!store.same(old, neu)) {
           fade = { old, neu, start: t0, step: 0 };
           this.fades.set(i, fade);
-          dissolveTile(data, imgW, tx, ty, old, neu, 0);
-        }
-      }
+          store.dissolve(tx, ty, old, neu, 0);
+        } else store.commit(tx, ty);
+      } else store.commit(tx, ty);
       grow(i);
     }
     this.dirtyList = k === this.dirtyList.length ? [] : this.dirtyList.slice(k);
