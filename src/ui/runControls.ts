@@ -1,10 +1,10 @@
-// Bottom bar (§20.3): play/pause, the five speeds (speeds plan), step, year · season, real speed, timeline,
+// Bottom bar (§20.3): play/pause, the six speeds (speeds plan, plus Drift), step, year · season, real speed, timeline,
 // "Back to now". In setup mode the run controls are shown disabled.
 
 import { SEASON_NAMES } from '../shared/ids';
 import { CONFIG } from '../config';
 import type { Frame, Speed } from '../shared/protocol';
-import { SPEEDS, speedRow, speedTitle } from '../shared/speeds';
+import { inMonths, SPEEDS, speedRow, speedTitle } from '../shared/speeds';
 import { h } from './layout';
 import { trayOn } from './theme';
 
@@ -131,7 +131,9 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
       slider.value = String(f.year);
       setFill();
     }
-    setText(speedLabel, f.playing ? `${f.yearsPerSecond.toFixed(1)} years/s` : 'Paused');
+    setText(speedLabel, !f.playing ? 'Paused'
+      : inMonths(speedRow(f.speed).yearsPerSecond) ? `${(f.yearsPerSecond * CONFIG.time.ticksPerYear).toFixed(1)} months/s`
+      : `${f.yearsPerSecond.toFixed(1)} years/s`);
     back.style.display = f.isPast ? '' : 'none';
   }
 

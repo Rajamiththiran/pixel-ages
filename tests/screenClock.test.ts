@@ -143,12 +143,20 @@ describe('seasons flow with the clock', () => {
     expect(pulse(play(2, 6, true).change)).toBeLessThan(pulse(play(2, 6, false).change));
   });
 
+  // Drift (2 months a second): frames come every 500 ms, so month steps would pulse hard (6.1);
+  // the clock makes it the evenest of all (1.01, measured).
+  it('at Drift the colour changes evenly too', () => {
+    expect(pulse(play(0, 12, true).change)).toBeLessThan(1.2);
+    expect(pulse(play(0, 12, false).change)).toBeGreaterThan(3);
+  });
+
   it('the slow speeds show most of the year; the fast ones blur instead of flashing', () => {
-    const share = (v: number): number => { const s = play(v, 6, true).spring; return Math.max(...s) - Math.min(...s); };
+    const share = (v: number): number => { const s = play(v, Math.max(6, 2 * Math.ceil(12 / ticksPerSecondAt(v))), true).spring; return Math.max(...s) - Math.min(...s); };
     const shares = SPEEDS.map(share);
-    expect(shares[0]).toBeGreaterThan(0.75);     // Crawl (~0.80)
-    expect(shares[1]).toBeGreaterThan(0.55);     // Walk (~0.63)
-    expect(shares[4]).toBeLessThan(0.2);         // Fly (~0.12): a gentle drift, not 8 flashes a second
+    expect(shares[0]).toBeGreaterThan(0.9);      // Drift (~0.93)
+    expect(shares[1]).toBeGreaterThan(0.75);     // Crawl (~0.80)
+    expect(shares[2]).toBeGreaterThan(0.55);     // Walk (~0.63)
+    expect(shares[5]).toBeLessThan(0.2);         // Fly (~0.12): a gentle drift, not 8 flashes a second
     for (let k = 1; k < shares.length; k++) expect(shares[k]).toBeLessThan(shares[k - 1]!);
   });
 });
