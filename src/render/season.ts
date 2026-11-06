@@ -133,6 +133,8 @@ export class SeasonLayer {
   private classesDirty = true;
   private map: MapData;
   enabled = false;
+  /** Seasons Phase 1b: false when the season is in the materials; the weights still ease (weather, sound). */
+  tint = true;
   // Stipple (phase 2): one mask per class, one 4×4 pattern per class, composed into `layer`.
   private layer: HTMLCanvasElement | null = null;
   private scratch: HTMLCanvasElement | null = null;
@@ -170,6 +172,7 @@ export class SeasonLayer {
 
   update(dtMs: number): void {
     easeWeights(this.now, this.target, dtMs);
+    if (!this.tint) return;
     if (seasonDitherOn) { this.updateStipple(); return; }
     let moved = this.classesDirty;
     for (let s = 0; s < 4; s++) if (Math.abs(this.now[s]! - this.drawn[s]!) > 0.004) moved = true;
@@ -270,7 +273,7 @@ export class SeasonLayer {
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
-    if (!this.enabled) return;
+    if (!this.enabled || !this.tint) return;
     if (seasonDitherOn) {
       if (this.layer) ctx.drawImage(this.layer, 0, 0);
       return;

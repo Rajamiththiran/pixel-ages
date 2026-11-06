@@ -12,8 +12,9 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  Role, createMatBuf, dissolveMat, identityLut, matbufOn, readMatTile, resolveTile, sameMatLook, type MatBuf, type MatTile,
+  LookState, Role, createLook, createMatBuf, dissolveMat, matbufOn, readMatTile, resolveRank, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
+import { MoistureField } from './moisture';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
 import { buildCrowns, canopyDistance, crownColourAt, inTreeShadow } from './crowns';
 import { occlusionOn, shadowsOn } from './shadows';
@@ -535,7 +536,7 @@ interface TileFade { old: TileSnap; neu: TileSnap; start: number; step: number }
  */
 interface TileStore {
   read(tx: number, ty: number, out?: TileSnap): TileSnap;
-  same(a: TileSnap, b: TileSnap): boolean;
+  same(tx: number, ty: number, a: TileSnap, b: TileSnap): boolean;
   dissolve(tx: number, ty: number, old: TileSnap, neu: TileSnap, step: number): void;
   commit(tx: number, ty: number): void;
 }
@@ -543,19 +544,18 @@ interface TileStore {
 function rgbaStore(data: Uint8ClampedArray, imgW: number): TileStore {
   return {
     read: (tx, ty, out) => readTile(data, imgW, tx, ty, out as Uint8ClampedArray | undefined),
-    same: (a, b) => sameTile(a as Uint8ClampedArray, b as Uint8ClampedArray),
+    same: (_tx, _ty, a, b) => sameTile(a as Uint8ClampedArray, b as Uint8ClampedArray),
     dissolve: (tx, ty, old, neu, step) => dissolveTile(data, imgW, tx, ty, old as Uint8ClampedArray, neu as Uint8ClampedArray, step),
     commit: () => {},
   };
 }
 
-function matStore(mat: MatBuf, px: Uint32Array): TileStore {
-  const lut = identityLut();
+function matStore(mat: MatBuf, look: SeasonLook, px: Uint32Array): TileStore {
   return {
     read: (tx, ty, out) => readMatTile(mat, tx, ty, out as MatTile | undefined),
-    same: (a, b) => sameMatLook(lut, a as MatTile, b as MatTile),
-    dissolve: (tx, ty, old, neu, step) => { dissolveMat(mat, tx, ty, old as MatTile, neu as MatTile, step); resolveTile(mat, lut, px, tx, ty); },
-    commit: (tx, ty) => resolveTile(mat, lut, px, tx, ty),
+    same: (tx, ty, a, b) => sameMatLook(mat, look, tx, ty, a as MatTile, b as MatTile),
+    dissolve: (tx, ty, old, neu, step) => { dissolveMat(mat, tx, ty, old as MatTile, neu as MatTile, step); resolveTile(mat, look, px, tx, ty); },
+    commit: (tx, ty) => resolveTile(mat, look, px, tx, ty),
   };
 }
 
@@ -618,6 +618,14 @@ export class TerrainLayer {
   /** Seasons Phase 1a: each pixel's ramp step and role; the image is resolved from it. Null with `?off=matbuf`. */
   readonly mat: MatBuf | null = null;
   private readonly store: TileStore;
+  // Phase 1b: the season each Bayer rank shows, the grass moisture, and what waits to be recoloured.
+  private readonly look: SeasonLook | null = null;
+  private readonly px: Uint32Array;
+  private readonly moisture: MoistureField | null = null;
+  private rain: ArrayLike<number> | null = null;
+  private moistureDirty = false;
+  private ranksDirty = 0;          // bit r: rank r shows a new state
+  private wholeImage = false;      // the next upload covers every tile
 
   /** `useMat`: draw through the material buffer (the switch; tests compare both ways). */
   constructor(private map: MapData, useMat = matbufOn) {
@@ -639,10 +647,13 @@ export class TerrainLayer {
       this.shadowCtx = this.shadowCanvas.getContext('2d')!;
       this.shadowImg = this.shadowCtx.createImageData(this.canvas.width, this.canvas.height);
     }
-    if (useMat && rampsOn) this.mat = createMatBuf(this.canvas.width, this.canvas.height);
-    this.store = this.mat
-      ? matStore(this.mat, new Uint32Array(this.img.data.buffer, this.img.data.byteOffset, this.img.data.length >> 2))
-      : rgbaStore(this.img.data, this.canvas.width);
+    this.px = new Uint32Array(this.img.data.buffer, this.img.data.byteOffset, this.img.data.length >> 2);
+    if (useMat && rampsOn) {
+      this.mat = createMatBuf(this.canvas.width, this.canvas.height);
+      this.look = createLook();
+      this.moisture = new MoistureField(map.width, map.height);
+    }
+    this.store = this.mat && this.look ? matStore(this.mat, this.look, this.px) : rgbaStore(this.img.data, this.canvas.width);
     this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null, shadow: this.shadowImg?.data ?? null, mat: this.mat };
     this.markAll();
   }
@@ -661,8 +672,33 @@ export class TerrainLayer {
   setMap(map: MapData): void {
     this.map = map;
     computeDepth(map, this.depth);
+    this.moisture?.landChanged();
+    this.moistureDirty = true;
     this.markAll();
   }
+
+  /**
+   * Phase 1b: the state each of the 16 Bayer ranks shows (materials.ts LookState). Ranks that
+   * change are recoloured on the next flush, without redrawing a tile.
+   */
+  setLook(states: ArrayLike<number>): void {
+    const look = this.look;
+    if (!look) return;
+    for (let r = 0; r < look.shown.length; r++) {
+      if (look.shown[r] === states[r]) continue;
+      look.shown[r] = states[r]!;
+      this.ranksDirty |= 1 << r;
+    }
+  }
+
+  /** Phase 1b: the rain per tile the screen shows (its contents may change later; call again then). */
+  setRain(rain: ArrayLike<number>): void {
+    this.rain = rain;
+    this.moistureDirty = true;
+  }
+
+  /** What each Bayer rank shows now (tests and the dev hooks). */
+  get shownStates(): readonly number[] { return this.look ? Array.from(this.look.shown) : []; }
 
   markDirty(i: number): void {
     if (this.dirty[i]) return;
@@ -677,6 +713,9 @@ export class TerrainLayer {
   mapChanged(tiles: Iterable<number>, fade = false): void {
     for (const i of tiles) this.markWithNeighbours(i, fade && this.fadeOn);
     this.depthDirty = true;
+    // Water may have come or gone, and grass near water is wetter.
+    this.moisture?.landChanged();
+    this.moistureDirty = true;
   }
 
   private markWithNeighbours(i: number, fade = false): void {
@@ -739,7 +778,6 @@ export class TerrainLayer {
       [this.depth, this.depthNext] = [this.depthNext, this.depth];
       this.extras.depth = this.depth;
     }
-    if (this.dirtyList.length === 0 && this.fades.size === 0) return;
     const w = this.map.width;
     const imgW = this.canvas.width;
     const data = this.img.data;
@@ -753,6 +791,21 @@ export class TerrainLayer {
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     };
+    // Phase 1b: grass moisture follows the rain (only while a season shows; painted and held ignore it),
+    // and ranks that show a new state are recoloured, one pixel in 16 per rank, without redrawing.
+    if (this.look && this.mat && this.moisture) {
+      if (this.moistureDirty && this.rain && this.look.shown.some((s) => s !== LookState.Painted && s !== LookState.Held)) {
+        this.moistureDirty = false;
+        // Colours only (no shadow changes): recolour in place, then the whole image goes up.
+        this.moisture.update(this.map, this.rain, this.mat, (i) => { store.commit(i % w, Math.floor(i / w)); this.wholeImage = true; });
+      }
+      if (this.ranksDirty !== 0) {
+        for (let r = 0; r < this.look.shown.length; r++) if (this.ranksDirty & (1 << r)) resolveRank(this.mat, this.look, this.px, r);
+        this.ranksDirty = 0;
+        this.wholeImage = true;
+      }
+    }
+    if (this.dirtyList.length === 0 && this.fades.size === 0 && maxX < 0 && !this.wholeImage) return;
     const t0 = performance.now();
 
     // Speeds plan Phase 5: fading tiles move on a step (75%, 50%, 25% old, then new).
@@ -783,7 +836,7 @@ export class TerrainLayer {
         store.dissolve(tx, ty, fade.old, fade.neu, fade.step);
       } else if (old) {
         const neu = store.read(tx, ty);
-        if (!store.same(old, neu)) {
+        if (!store.same(tx, ty, old, neu)) {
           fade = { old, neu, start: t0, step: 0 };
           this.fades.set(i, fade);
           store.dissolve(tx, ty, old, neu, 0);
@@ -792,11 +845,18 @@ export class TerrainLayer {
       grow(i);
     }
     this.dirtyList = k === this.dirtyList.length ? [] : this.dirtyList.slice(k);
+    const whole = this.wholeImage;
+    if (whole) {
+      this.wholeImage = false;
+      this.ctx.putImageData(this.img, 0, 0);
+    }
     if (maxX < 0) return;
-    this.ctx.putImageData(
-      this.img, 0, 0,
-      minX * TILE, minY * TILE, (maxX - minX + 1) * TILE, (maxY - minY + 1) * TILE,
-    );
+    if (!whole) {
+      this.ctx.putImageData(
+        this.img, 0, 0,
+        minX * TILE, minY * TILE, (maxX - minX + 1) * TILE, (maxY - minY + 1) * TILE,
+      );
+    }
     this.shadowCtx?.putImageData(
       this.shadowImg!, 0, 0,
       minX * TILE, minY * TILE, (maxX - minX + 1) * TILE, (maxY - minY + 1) * TILE,

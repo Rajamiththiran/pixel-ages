@@ -802,6 +802,26 @@ export const CONFIG = {
       // through a lookup table; the terrain image is that lookup's result. Needs the ramps.
       // Off: `?off=matbuf` (the colours written straight, as before; for comparing only).
       matbuf: { on: true },
+      // Phase 1b: each material has its own ramp per season (mockup A, ramps.ts SEASON_HEX); a pixel
+      // swaps to the next season's ramp at the same step, so the old season tint is not drawn.
+      // Off: `?off=seasonRamps` (the F8 tint and its stipple switch, as before).
+      seasonRamps: { on: true },
+      // When each season arrives, in screen-clock months of the year (0 = the first month of spring),
+      // and how long it takes to reach every pixel: spring, summer, autumn, winter. Until Phase 3's
+      // front, it comes as a 4×4 Bayer dissolve (each pixel changes once).
+      fronts: [{ start: 0, months: 1.5 }, { start: 3, months: 1 }, { start: 6, months: 1.5 }, { start: 9, months: 1.5 }],
+      // Switching to or from the held fast-forward look (and setup ↔ run) dissolves over this long.
+      modeFadeMs: 500,
+      // The season look moves on at most this often (each step re-uploads the whole terrain image; a
+      // front then arrives in a few batches, every pixel still changing once). Measured at Crawl, Phase 1b.
+      lookStepMs: 100,
+      // Grass moisture (dry, normal, lush ramps): a tile's wetness = rain ÷ 100 + waterBonus (fading
+      // out over waterReachTiles from water) + noiseAmp × (clustered noise − 0.5, cells noiseCellTiles
+      // wide); lush at lushAbove or more, dry at dryBelow or less; the edge is dithered over ditherWidth.
+      // Rain 60 (Scenario A) is mostly normal with lush shores; rain 25–35 (steppe, dry forest) is dry.
+      // ditherWidth: the mockup's 0.06 assumes a smooth noise field; painted rain changes tile by tile, so
+      // 0.12 makes an edge between two rains stipple over about 3 px instead of reading as a line.
+      moisture: { waterReachTiles: 3, waterBonus: 0.25, noiseAmp: 0.2, noiseCellTiles: 6, noiseSalt: 131, lushAbove: 0.68, dryBelow: 0.4, ditherWidth: 0.12 },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,
