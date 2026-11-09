@@ -45,6 +45,65 @@ export const NIGHT_HEX: readonly (readonly string[])[] = [
   ['#293373', '#313f81', '#3a4b8e'],
 ];
 
+/**
+ * Seasonal ramps (seasons plan Phase 1b), copied from the seasons mockup (docs/mockups/Seasons and
+ * Weather UI mockups-handoff/…/seasons-render.js, section A). Five steps each, darkest first.
+ * Built by the mockup's rule from one base colour (its step 2): step 0 = shadowOf(step 2), step 1
+ * halfway, step 4 a warm light (281, 235, 105) mixed in at 0.372, step 3 halfway (checked in
+ * tests/seasons.test.ts); the snow, water and ice ramps are the mockup's own lists. Summer-normal
+ * grass, summer evergreen, summer sand, stone, summer water, gold crops and bare deciduous wood are
+ * the system ramps above. Night colours come from night(c), as for every colour.
+ */
+export const SEASON_HEX = {
+  grassSpLush: ['#3b6341', '#488142', '#55a043', '#79ae4a', '#9ebc51'],
+  grassSpNormal: ['#435f3e', '#537c3f', '#63993f', '#85a847', '#a7b84f'],
+  grassSpDry: ['#555f43', '#6a7d44', '#7f9a46', '#9ca94d', '#b8b853'],
+  grassSuLush: ['#355c3f', '#41783f', '#4c9440', '#72a448', '#98b44f'],
+  grassSuDry: ['#675b45', '#817647', '#9c9249', '#b3a34f', '#cbb355'],
+  grassAuLush: ['#48563c', '#59703c', '#6a8a3c', '#8b9c44', '#abae4d'],
+  grassAuNormal: ['#55553e', '#6b6e3f', '#80883f', '#9c9a47', '#b9ad4f'],
+  grassAuDry: ['#6a5545', '#866f48', '#a2894a', '#b89b50', '#cead56'],
+  grassWiLush: ['#464f55', '#56675b', '#677e62', '#889263', '#a9a765'],
+  grassWiNormal: ['#52505a', '#666862', '#7a806a', '#98946a', '#b5a86a'],
+  grassWiDry: ['#5e545e', '#766e67', '#8e8770', '#a89a6f', '#c2ac6d'],
+  evergreenSp: ['#253f35', '#2c5032', '#326230', '#5d7b3b', '#889545'],
+  evergreenAu: ['#223735', '#274632', '#2d5530', '#59713b', '#858d45'],
+  evergreenWi: ['#203239', '#253e37', '#2a4b36', '#56693f', '#838749'],
+  deciduousSp: ['#46673c', '#57883c', '#68a83c', '#89b444', '#aac14d'],
+  deciduousSu: ['#2c4935', '#355f32', '#3e7430', '#678a3b', '#8fa045'],
+  deciduousAuGreen: ['#3f4d33', '#4e6331', '#5c7a2e', '#7f8f39', '#a2a444'],
+  deciduousAuYellow: ['#876536', '#ab8534', '#d0a432', '#deb13c', '#ebbe46'],
+  deciduousAuCopper: ['#7c3d31', '#9e4d2d', '#bf5e2a', '#d07836', '#e09241'],
+  fruitSp: ['#3e5e40', '#4c7b41', '#5a9842', '#7ea749', '#a1b751'],
+  fruitSu: ['#344e34', '#41693a', '#4f8a38', '#76a040', '#9cb04c'],   // the mockup's list (labelled "system"; no such token)
+  fruitAu: ['#534d39', '#676337', '#7c7a36', '#998f3f', '#b6a449'],
+  blossom: ['#956685', '#bd869a', '#e6a6ae', '#efb3a1', '#f9c094'],
+  berries: ['#78233b', '#982b3b', '#b8323a', '#ca5443', '#dc774b'],
+  cropSprout: ['#597145', '#709448', '#86b84a', '#a1c150', '#bdcb56'],
+  cropGreen: ['#415f3a', '#507d39', '#5f9a38', '#82a941', '#a4b84a'],
+  cropStubble: ['#816b5e', '#a38c67', '#c6ae70', '#d5b96f', '#e5c56d'],
+  sandSp: ['#8c7570', '#b29b7e', '#d8c08c', '#e4c885', '#f0d07f'],
+  sandAu: ['#8b706a', '#b09377', '#d6b684', '#e2c07f', '#efca7a'],
+  sandWi: ['#827176', '#a59486', '#c8b896', '#d7c18e', '#e6cb85'],
+  stoneWi: ['#504e70', '#64657e', '#787c8c', '#969185', '#b4a57f'],
+  snowDust: ['#7c8296', '#9aa0b2', '#b8bdca', '#d2d5dc', '#e6e8ea'],
+  snowFull: ['#9a92b2', '#b0aac4', '#c4c2d3', '#dcdee6', '#eef2f4'],   // the 3 snow tokens at steps 0, 2, 4
+  waterSpring: ['#22385e', '#33527a', '#4a7092', '#6c94a8', '#a8ccd0'],  // meltwater
+  waterWinter: ['#142a52', '#1b3562', '#244e7c', '#3c7496', '#6ea8c0'],
+  ice: ['#5a7292', '#6e8eaa', '#8cacc4', '#a8c6d6', '#c6dee6'],
+  iceRim: ['#8898b2', '#a6bacc', '#c6d8e4', '#e0ecf0', '#f4f8f8'],
+} as const satisfies Record<string, readonly string[]>;
+
+export type SeasonRampName = keyof typeof SEASON_HEX;
+
+/** Seasonal ramp `name` at `step`, as RGB. */
+const seasonRgb = new Map<string, RGB[]>();
+export function seasonRampRgb(name: SeasonRampName): readonly RGB[] {
+  let r = seasonRgb.get(name);
+  if (!r) { r = SEASON_HEX[name].map(hexRgb); seasonRgb.set(name, r); }
+  return r;
+}
+
 /** Lineage shades (colors.css --lin-N-shade) for the default lineage colours. */
 const LINEAGE_SHADE: Record<string, string> = {
   '#d94f4f': '#98384a', '#4f7fd9': '#3b57a9', '#e0b030': '#9d7634', '#9b59d0': '#6e3ea3', '#39b6a6': '#2c7a86',
@@ -196,6 +255,25 @@ export function rampSpan(a: RGB, b: RGB): number {
 export function rampFinal(out: RGB): void {
   put(colourOf(tagOf(out)), out);
 }
+
+/**
+ * rampFinal that also returns the pixel's tag (group × 8 + step): what the material buffer stores
+ * (seasons plan Phase 1a), so a colour can be picked later from (material, step).
+ */
+export function rampTag(out: RGB): number {
+  const t = tagOf(out);
+  put(colourOf(t), out);
+  return t;
+}
+
+/** The colour of a tag. */
+export const tagRgb = (tag: number): RGB => colourOf(tag);
+
+/** One more than the highest tag in use (tags = group × 8 + step). */
+export const tagCount = (): number => groups.length * 8;
+
+/** Is this tag a real step of a group (not a gap after a group's last step)? */
+export const tagValid = (tag: number): boolean => (tag >> 3) < groups.length && (tag & 7) < groups[tag >> 3]!.length;
 
 /** Every colour a Diorama terrain pixel may have (for the palette audit). */
 export function rampColours(): RGB[] {

@@ -35,6 +35,8 @@ export class Traffic {
   private movers: Mover[] = [];
   private map: MapData | null = null;
   marks: Uint8Array | null = null;
+  /** Seasons Phase 2c: is this water tile frozen now? Boats keep off it (null: never). */
+  frozen: ((tile: number) => boolean) | null = null;
 
   update(map: MapData, groups: readonly TrafficGroup[]): void {
     this.map = map;
@@ -102,7 +104,7 @@ export class Traffic {
       if (nx < 0 || ny < 0 || nx >= m.width || ny >= m.height) continue;
       if (Math.max(Math.abs(nx - mv.homeX), Math.abs(ny - mv.homeY)) > mv.range) continue;
       const j = ny * w + nx;
-      if (cart ? !this.onRoad(j) : !isWater(m, j)) continue;
+      if (cart ? !this.onRoad(j) : !isWater(m, j) || this.frozen?.(j)) continue;
       options.push([j, dx, dy]);
     }
     if (options.length === 0) { mv.next = mv.tile; return; }
@@ -143,7 +145,11 @@ export class Traffic {
   }
 
   collect(push: (img: HTMLCanvasElement, x: number, y: number) => void): void {
-    for (const mv of this.movers) push(getSprite(mv.kind, {}, mv.left), mv.x, mv.y);
+    for (const mv of this.movers) {
+      // Seasons Phase 2c: a boat whose water froze is hauled out until the thaw.
+      if (mv.kind !== 'cart' && this.frozen?.(mv.tile)) continue;
+      push(getSprite(mv.kind, {}, mv.left), mv.x, mv.y);
+    }
   }
 
   clear(): void {

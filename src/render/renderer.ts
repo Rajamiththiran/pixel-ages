@@ -21,6 +21,9 @@ import { MarketLayer } from './markets';
 import { Camera } from './camera';
 import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
+import { SeasonDriver } from './seasonLook';
+import { fieldsOn, iceOn, roofsOn, seasonRampsOn } from './materials';
+import { FieldState } from './fields';
 import { ScreenClock } from './screenClock';
 import { RainEase } from './rainEase';
 import { DayNight, NightPass, nightLevel, nightOn } from './light';
@@ -92,6 +95,11 @@ export class Renderer {
   readonly traffic = new Traffic();
   readonly battles = new Battles();
   readonly season: SeasonLayer;
+  /** Seasons Phase 1b: which season each Bayer rank of the terrain shows. */
+  private readonly seasonDriver = new SeasonDriver();
+  private seasonJump = false;
+  /** Seasons Phase 2b: the harvest the screen shows, moved on by the simulation's farmers. */
+  private readonly fields: FieldState | null;
   /** The fractional month on screen (speeds plan Phase 3). */
   readonly clock = new ScreenClock();
   /** Speeds plan Phase 5: the rain the screen draws, sliding over the year (run mode only). */
@@ -146,6 +154,12 @@ export class Renderer {
     this.territoryFill = new TerritoryOverlay(view.map.width, view.map.height);
     this.fog = new FogOverlay(view.map.width, view.map.height);
     this.season = new SeasonLayer(view.map);
+    this.season.tint = !seasonRampsOn;   // Phase 1b: the season is in the materials, not a tint on top
+    this.terrain.setRain(view.map.rain);
+    this.fields = fieldsOn ? new FieldState(view.map.width, view.map.height) : null;
+    if (this.fields) this.terrain.fields = this.fields.cut;
+    // Seasons Phase 2c: boats keep off frozen water.
+    if (iceOn) this.traffic.frozen = (i) => this.terrain.frozenTile(i);
     this.weather = new Weather(view.map);
     this.effects = new Effects(view.map);
     this.trample = new TrampleLayer(view.map.width, view.map.height);
@@ -169,6 +183,7 @@ export class Renderer {
       this.rainEase.set(map.rain, this.clock.t, true);
       this.weather.rainSource = this.rainEase.shown;
     }
+    this.terrain.setRain(this.rainEase?.shown ?? map.rain);
     this.rain.invalidate();
     this.rebuildAnimals();
   }
@@ -203,7 +218,9 @@ export class Renderer {
     this.weather.setMap(this.view.map, base ? base.rain : null);
     this.effects.clear();
     this.trample.clear();
+    this.fields?.reset();
     this.terrain.setMap(this.view.map);
+    this.terrain.setRain(this.rainEase?.shown ?? this.view.map.rain);
     this.season.tilesChanged();
   }
 
@@ -221,7 +238,27 @@ export class Renderer {
   setTime(year: number, month: number, monthsPerSecond: number, jump: boolean, seasonShow = 1): void {
     this.season.show = seasonShow;
     this.clock.sync(year * CONFIG.time.ticksPerYear + month, monthsPerSecond, jump);
-    if (jump) this.season.setMonth(this.clock.monthOfYear, true);
+    if (jump) {
+      this.season.setMonth(this.clock.monthOfYear, true);
+      this.seasonJump = true;
+      if (this.fields) this.terrain.redrawTiles(this.fields.reset());
+    }
+  }
+
+  /** Seasons Phase 2c: a planned Harsh winters event runs this year (deeper, lower snow). */
+  set harshWinter(on: boolean) { this.seasonDriver.harsh = on; }
+
+  /** Seasons Phase 2c: does snow lie at map pixel (x, y)? (A building there wears it.) */
+  private readonly snowOnRoof = (x: number, y: number): boolean => this.terrain.snowAt(Math.floor(x), Math.floor(y));
+
+  /**
+   * Seasons Phase 2b: a frame's people move the harvest on (Farm workers cut their fields in
+   * autumn). Only while the year shows (`active`): the held look has no harvest to show.
+   */
+  updateFields(people: Float32Array, year: number, month: number, active: boolean): void {
+    if (!this.fields || !active) return;
+    const changed = this.fields.update(this.view.map, year * CONFIG.time.ticksPerYear + month, people);
+    if (changed.length > 0) this.terrain.redrawTiles(changed);
   }
 
   /**
@@ -233,8 +270,9 @@ export class Renderer {
       const snap = jump || !this.gradualOn;
       this.rainEase.set(this.view.map.rain, this.clock.t, snap);
       this.weather.rainSource = this.rainEase.shown;
+      this.terrain.setRain(this.rainEase.shown);
       if (!snap) return;   // the slide redraws as it goes (drawFrame)
-    }
+    } else this.terrain.setRain(this.view.map.rain);
     this.rain.invalidate();
     this.weather.rainChanged();
   }
@@ -336,10 +374,9 @@ export class Renderer {
     const pad = 3 * TILE;
     this.cullX0 = vr.x - pad; this.cullY0 = vr.y - pad; this.cullX1 = vr.x + vr.w + pad; this.cullY1 = vr.y + vr.h + pad * 2;
     this.terrain.animate(now);
-    this.terrain.flush(this.terrainBudgetMs);
     if (v.running) {
       this.clock.advance(dt);
-      if (this.rainEase?.update(this.clock.t, now)) { this.rain.invalidate(); this.weather.rainChanged(); }
+      if (this.rainEase?.update(this.clock.t, now)) { this.rain.invalidate(); this.weather.rainChanged(); this.terrain.setRain(this.rainEase.shown); }
       this.season.setMonth(this.clock.monthOfYear);
       this.season.update(dt);
       this.light.update(dt, v.playing);
@@ -347,6 +384,13 @@ export class Renderer {
       this.effects.update(now, dt, vr, CONFIG.render.f8.weather.windPxPerS);
       this.people.setNight(this.light.darkness, this.camps.fireGroup);
     }
+    // Seasons Phase 1b: the season each rank shows (painted in setup, held at the fast speeds).
+    if (seasonRampsOn) {
+      this.terrain.setLook(this.seasonDriver.update(now, this.clock.monthOfYear, this.season.show, v.running, this.seasonJump));
+      this.terrain.setCover(this.seasonDriver.snowLine, this.seasonDriver.iceLine);
+      this.seasonJump = false;
+    }
+    this.terrain.flush(this.terrainBudgetMs);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = false;
@@ -375,7 +419,7 @@ export class Renderer {
       const night = this.light.darkness > 0.45;
       this.people.animate(now, dt);
       this.people.collect(now, this.push);
-      this.buildings.collect(this.push, night);
+      this.buildings.collect(this.push, night, roofsOn ? this.snowOnRoof : null);
       this.camps.collect(now, this.push);
       this.life.animate(now, dt);
       this.life.collect(now, this.push);

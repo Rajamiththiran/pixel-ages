@@ -795,6 +795,125 @@ export const CONFIG = {
       // so colours without a token (the colour-blind lineages) use it too.
       shadeMul: [0.62, 0.58, 0.64], shadeAdd: [6, 6, 22], lineageShadeMix: 0.85,
     },
+    // Seasons and weather wave (docs/pixel-ages-seasons-plan.md). Render only. Each effect has an
+    // off switch here and an `?off=` name in the URL; with all of them off the look is today's.
+    seasons: {
+      // Phase 1a: every terrain pixel is stored as (ramp step, role) and its colour picked last,
+      // through a lookup table; the terrain image is that lookup's result. Needs the ramps.
+      // Off: `?off=matbuf` (the colours written straight, as before; for comparing only).
+      matbuf: { on: true },
+      // Phase 1b: each material has its own ramp per season (mockup A, ramps.ts SEASON_HEX); a pixel
+      // swaps to the next season's ramp at the same step, so the old season tint is not drawn.
+      // Off: `?off=seasonRamps` (the F8 tint and its stipple switch, as before).
+      seasonRamps: { on: true },
+      // When each season arrives, in screen-clock months of the year (0 = the first month of spring),
+      // and how long it takes to reach every pixel: spring, summer, autumn, winter. Until Phase 3's
+      // front, it comes as a 4×4 Bayer dissolve (each pixel changes once).
+      fronts: [{ start: 0, months: 1.5 }, { start: 3, months: 1 }, { start: 6, months: 1.5 }, { start: 9, months: 1.5 }],
+      // Switching to or from the held fast-forward look (and setup ↔ run) dissolves over this long.
+      modeFadeMs: 500,
+      // The season look moves on at most this often (each step re-uploads the whole terrain image; a
+      // front then arrives in a few batches, every pixel still changing once). Measured at Crawl, Phase 1b;
+      // 200 from Phase 2b: a step recolours the whole map once a tree turns at its centre's rank (~6% of a
+      // late-game frame at 100), and a front at Crawl lasts ~0.25 s anyway.
+      lookStepMs: 200,
+      // Grass moisture (dry, normal, lush ramps): a tile's wetness = rain ÷ 100 + waterBonus (fading
+      // out over waterReachTiles from water) + noiseAmp × (clustered noise − 0.5, cells noiseCellTiles
+      // wide); lush at lushAbove or more, dry at dryBelow or less; the edge is dithered over ditherWidth.
+      // Rain 60 (Scenario A) is mostly normal with lush shores; rain 25–35 (steppe, dry forest) is dry.
+      // ditherWidth: the mockup's 0.06 assumes a smooth noise field; painted rain changes tile by tile, so
+      // 0.12 makes an edge between two rains stipple over about 3 px instead of reading as a line.
+      moisture: { waterReachTiles: 3, waterBonus: 0.25, noiseAmp: 0.2, noiseCellTiles: 6, noiseSalt: 131, lushAbove: 0.68, dryBelow: 0.4, ditherWidth: 0.12 },
+      // Phase 2a: trees and bushes (mockup B; numbers from its tree drawing). Each crown is evergreen
+      // or deciduous and turns as a whole. Off: `?off=trees` (every crown evergreen, bushes plain, as Phase 1b).
+      trees: {
+        on: true,
+        // Evergreen share: evergreenBase, plus up to evergreenHigh more as the crown's tile rises from
+        // evergreenFromElevation to evergreenFullElevation (mockup: 12% + 85% on high ground). Mountain ground counts as full.
+        evergreenBase: 0.12, evergreenHigh: 0.85, evergreenFromElevation: 3, evergreenFullElevation: 6,
+        autumnYellow: 0.4, autumnCopper: 0.35,   // deciduous crowns in autumn; the rest stay green
+        // Bare winter crowns: a trunk from the centre down and `branches` branches fanning upward,
+        // branchSpreadRad apart (± branchJitterRad / 2), reaching the radius + branchReachPx, sampled every branchStepPx.
+        // The mockup's tree (radius 3–4: 5 branches reaching r + 0.6) scaled to the game's crowns (radius
+        // 1.6–2.6): with 5 branches the wood filled ~70% of a crown, so a bare tree looked full; 3 that stop
+        // half a pixel inside leave ~40% wood, the ground showing between, as in the mockup.
+        branches: 3, branchSpreadRad: 0.7, branchJitterRad: 0.4, branchReachPx: -0.5, branchStepPx: 0.7,
+        // Snow on crowns (only where winter snow lies; until Phase 2c: mountain ground and land at
+        // f8.season.snowElevation or higher): this share of an evergreen's lit upper pixels (lit side:
+        // (dx + dy) / r at most snowLitBelow), and this share of a bare tree's branch pixels.
+        snowCapShare: 0.6, snowLitBelow: -0.3, branchSnowShare: 0.55,
+        // Fruit bushes: blossom in spring on this share × density of their pixels, bare twigs in winter
+        // on this share × density; the berries are the fruit specks (render.fruitSpeck), shown in summer and autumn.
+        blossomShare: 0.15, twigShare: 0.25,   // blossom 0.3 made a pink carpet (seen in the browser, Garden)
+        salt: 141,
+      },
+      // Phase 2b: fields and the harvest (mockup B; shares from its plotStage). Off: `?off=fields`
+      // (one crop stage per season on the old rows, as Phase 1b).
+      fields: {
+        on: true,
+        cellTiles: 3,            // farmland tiles in one 3 × 3 block share a stage, so fields read as plots, not a tile grid
+        // A block's stage by season, from one hash per block (the mockup's shares): spring sprouts below
+        // springSprouts (else bare furrows), summer gold below summerGold (else green), autumn gold below
+        // autumnGold (else stubble), winter stubble below winterStubble (else bare).
+        springSprouts: 0.55, summerGold: 0.3, autumnGold: 0.4, winterStubble: 0.4,
+        sproutShare: 0.8,        // ridge pixels in even columns that carry a sprout (mockup)
+        // The harvest (render only, from the simulation's farmers): each autumn month a farmland tile
+        // with a Farm worker on it or next to it is cut this much further (1 = done), reset each spring;
+        // the cut edge wanders ± raggedPx per row; sheaves stand in the cut part, one per sheafEveryPx.
+        cutPerMonth: 0.4, raggedPx: 1.5, sheafEveryPx: [7, 6],
+        salt: 151,
+      },
+      // Phase 2c: snow by height (mockup B; arrival from its arrW). Each land pixel has a fixed place in
+      // the order snow reaches it: heightWeight × (1 − height) + latitudeWeight × (how far south) +
+      // noiseWeight × clustered noise (cells noiseCellPx and noiseCellPx / 3 wide), as a share of the land
+      // (0 first … 1 last; mountain ground counts as the highest). Over winter the snow line rises from
+      // startMonth to fullMonth (screen-clock months of the year) up to `cover` of the land, or harshCover
+      // while a planned Harsh winters event runs (owner decision S5: the winter's progress plus that event).
+      // Light dusting covers the next dustShare beyond the line; the edge is dithered over edgeShare.
+      // It melts with the spring that reaches each pixel. Off: `?off=snow`.
+      snow: {
+        on: true,
+        heightWeight: 0.5, latitudeWeight: 0.22, noiseWeight: 0.28, noiseCellPx: 96, noiseSalt: 161,
+        startMonth: 9, fullMonth: 11.5, cover: 0.55, harshCover: 0.9,
+        dustShare: 0.05, edgeShare: 0.03,
+      },
+      // Phase 2c: ice (mockup B). Over winter the ice grows from the shore inward, from startMonth to
+      // fullMonth: on lakes to lakeRimPx (between the two, by clustered noise), on rivers to riverRimPx;
+      // a still water body of at most pondMaxTiles tiles freezes right through; the sea stays open
+      // (owner decision S6). The ice front is drawn as a 1-px darker line. Boats stay off frozen water.
+      // It melts with the spring that reaches each pixel. Off: `?off=ice`.
+      ice: {
+        on: true,
+        startMonth: 9.5, fullMonth: 12,
+        lakeRimPx: [8, 18], riverRimPx: [2, 4.5], pondMaxTiles: 16, noiseCellPx: 12, noiseSalt: 171,
+      },
+      // Phase 2c: snow on buildings in winter where the snow lies (mockup: the roof's upper rows white,
+      // lit side brightest, a checker on the row below). In each column of a building sprite the top
+      // pixels, capShare of the building's drawn height, take it; windows and flames stay. 0.45 covers a
+      // hut's roof and a longhouse's five roof rows (0.3 left most hut roofs bare, seen in the browser).
+      // Off: `?off=roofs`.
+      roofs: { on: true, capShare: 0.45 },
+      // Phase 2d: ground (mockup B: "dry summer grass where the ground is high and far from water, leaf
+      // litter at the forest edge, and spring flowers in clusters"). Off: `?off=groundDetail`.
+      ground: {
+        on: true,
+        // Dry grass: a tile's wetness drops by dryPerHeight at the highest elevation (editor.maxElevation),
+        // in proportion below it, so high ground takes the dry ramp sooner (moisture: dryBelow). Far from
+        // water and low rain already dry it (Phase 1b).
+        dryPerHeight: 0.2,
+        // Spring flowers (mockup): in value-noise clusters (cells flowerCellPx wide, where the noise is
+        // above flowerAbove) flowerShare of open grass pixels flower, flowerWhite of them white, the rest
+        // yellow. The all-year grass flowers (detail.flowerChance) show in spring only.
+        flowerCellPx: 9, flowerAbove: 0.66, flowerShare: 0.13, flowerWhite: 0.08,
+        // Autumn leaf litter (mockup): on grass next to a forest litterEdge × clustered noise (cells
+        // litterCellPx, weights litterNoiseWeights) of the pixels, on the forest floor litterFloor; both
+        // × the wood's deciduous share (seasons.trees: none on mountain ground). Of the litter, litterGold
+        // is the autumn-yellow ramp's step 3, litterYellow its step 2, the rest copper step 2 (the mockup's split).
+        litterEdge: 0.14, litterFloor: 0.22, litterCellPx: [12, 4], litterNoiseWeights: [0.6, 0.4],
+        litterGold: 0.23, litterYellow: 0.23,
+        salt: 181,
+      },
+    },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,
     founderSpreadPx: 10,         // placed founders stand within ±10 px of their home tile

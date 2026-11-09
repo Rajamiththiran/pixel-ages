@@ -191,8 +191,8 @@ export function applyWetEdge(d: number, out: RGB): void {
 
 // ---------- grass ----------
 
-/** Grass blades (and a few flowers) on top of whatever colour `out` already holds. */
-export function applyGrassDetail(px: number, py: number, chance: number, flowers: boolean, out: RGB): void {
+/** Grass blades (and a few flowers) on top of whatever colour `out` already holds. True where it drew a flower. */
+export function applyGrassDetail(px: number, py: number, chance: number, flowers: boolean, out: RGB): boolean {
   const c = D.tuftCell;
   const cx = Math.floor(px / c);
   const cy = Math.floor(py / c);
@@ -200,20 +200,21 @@ export function applyGrassDetail(px: number, py: number, chance: number, flowers
     // Blade fits inside its cell: x in 0..c-2 (room for the shadow), y in 1..c-1 (room for the tip).
     const bx = cx * c + Math.floor(hash01(cx, cy, SALT.tuft + 1) * (c - 1));
     const by = cy * c + 1 + Math.floor(hash01(cx, cy, SALT.tuft + 2) * (c - 1));
-    if (px === bx && py === by) { shade(out, D.tuftLight, DR.tuftLightSteps); return; }
-    if (px === bx && py === by - 1) { shade(out, D.tuftTip, DR.tuftTipSteps); return; }
-    if (px === bx + 1 && py === by) { shade(out, D.tuftShadow, DR.tuftShadowSteps); return; }
+    if (px === bx && py === by) { shade(out, D.tuftLight, DR.tuftLightSteps); return false; }
+    if (px === bx && py === by - 1) { shade(out, D.tuftTip, DR.tuftTipSteps); return false; }
+    if (px === bx + 1 && py === by) { shade(out, D.tuftShadow, DR.tuftShadowSteps); return false; }
   }
-  if (!flowers) return;
+  if (!flowers) return false;
   const f = D.flowerCell;
   const fx = Math.floor(px / f);
   const fy = Math.floor(py / f);
-  if (hash01(fx, fy, SALT.flower) >= D.flowerChance) return;
+  if (hash01(fx, fy, SALT.flower) >= D.flowerChance) return false;
   const ox = fx * f + Math.floor(hash01(fx, fy, SALT.flower + 1) * f);
   const oy = fy * f + Math.floor(hash01(fx, fy, SALT.flower + 2) * f);
-  if (px !== ox || py !== oy) return;
+  if (px !== ox || py !== oy) return false;
   const k = Math.floor(hash01(fx, fy, SALT.flower + 3) * 3);
   copy(k === 0 ? RGBS.fireYellow : k === 1 ? RGBS.flowerWhite : RGBS.fruit, out);
+  return true;
 }
 
 // ---------- forest ----------
