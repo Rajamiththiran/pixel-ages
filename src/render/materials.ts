@@ -13,6 +13,7 @@ import {
   Mat, rampTag, rampsOn, seasonRampRgb, styleOff, tagCount, tagRgb, tagValid, type SeasonRampName,
 } from './ramps';
 import { RGBS, type RGB } from './palette';
+import { FIELD_CLASSES, Stage, stageOf } from './fields';
 
 const TILE = CONFIG.map.tilePx;
 const TILE_PX = TILE * TILE;
@@ -63,8 +64,33 @@ export const Role = {
   FloorBare: 26,   // the floor of a mostly deciduous wood: in winter, with the canopy gone, the grass's winter ramp a step darker (mockup)
 } as const;
 export type Role = (typeof Role)[keyof typeof Role];
+
+/** Phase 2b switch: fields go through their stages, and the farmers' harvest shows. */
+export const fieldsOn: boolean = seasonRampsOn && SC.fields.on && !styleOff('fields');
+
+/**
+ * Phase 2b: where a field pixel sits in the rows (mockup fieldPixel): a furrow row, or a ridge row
+ * pixel that sprouts in spring (even columns), stands as stubble (odd columns), or neither.
+ */
+export const FieldPos = { Furrow: 0, Sprout: 1, Stubble: 2, Ridge: 3 } as const;
+const FIELD_POS = 4;
+/** Field roles follow the others: per field class × position × cut (harvested), then a sheaf per class. */
+export const FIELD_ROLE_BASE = 27;
+const FIELD_ROLES = FIELD_CLASSES * FIELD_POS * 2;
+/** The role of a field pixel. */
+export const fieldRole = (cls: number, pos: number, cut: boolean): number => FIELD_ROLE_BASE + (cls * FIELD_POS + pos) * 2 + (cut ? 1 : 0);
+/** The role of a sheaf pixel in a harvested field of class `cls`. */
+export const sheafRole = (cls: number): number => FIELD_ROLE_BASE + FIELD_ROLES + cls;
 /** How many roles there are (tables are indexed by role). */
-export const ROLES = 27;
+export const ROLES = FIELD_ROLE_BASE + FIELD_ROLES + FIELD_CLASSES;
+
+/** A field role's parts, or null for any other role. */
+export function fieldRoleParts(role: number): { cls: number; pos: number; cut: boolean; sheaf: boolean } | null {
+  if (role < FIELD_ROLE_BASE || role >= ROLES) return null;
+  const k = role - FIELD_ROLE_BASE;
+  if (k >= FIELD_ROLES) return { cls: k - FIELD_ROLES, pos: FieldPos.Furrow, cut: true, sheaf: true };
+  return { cls: Math.floor(k / (FIELD_POS * 2)), pos: (k >> 1) % FIELD_POS, cut: (k & 1) === 1, sheaf: false };
+}
 
 /** Is this role a deciduous crown? */
 export const isDeciduous = (role: number): boolean => role >= Role.DecGreen && role <= Role.DecCopper;
@@ -146,7 +172,8 @@ const AUTUMN: Readonly<Record<number, Ramp>> = {
 /** The role a variant falls back to for its plain colours (a bush's twig is a bush leaf in summer). */
 const baseRole = (role: number): number =>
   role === Role.FruitTwig || role === Role.FruitBlossom || role === Role.FruitSpeck ? Role.Fruit
-    : role === Role.CrownSnow ? Role.Crown : role === Role.BranchSnow ? Role.Branch : role === Role.FloorBare ? Role.Forest : role;
+    : role === Role.CrownSnow ? Role.Crown : role === Role.BranchSnow ? Role.Branch : role === Role.FloorBare ? Role.Forest
+      : role >= FIELD_ROLE_BASE ? Role.Farm : role;
 
 /**
  * The ramp a pixel of group `g` with `role` takes in `season` (0 spring … 3 winter) and moisture
@@ -175,6 +202,20 @@ function rampColour(r: Ramp, step: number): RGB {
   return c[Math.max(0, Math.min(c.length - 1, step))]!;
 }
 
+/**
+ * A field pixel's colour at a stage (mockup fieldPixel). Fields are drawn as the gold stage (the
+ * system crop ramp: furrows at steps 0–1, ridges at 3–4), so gold is the pixel's own colour; green
+ * takes the same step of the green crop ramp; bare furrows are soil (wood 1, ridges wood 2–3), with
+ * sprouts on the sprouting ridge pixels and stubble on the stubble ones.
+ */
+function stageColour(stage: Stage, pos: number, step: number): RGB {
+  if (stage === Stage.Gold) return tagRgb(Mat.Crop * 8 + step);
+  if (stage === Stage.Green) return rampColour('cropGreen', pos === FieldPos.Furrow ? Math.max(1, step) : step);
+  if (stage === Stage.Sprouts && pos === FieldPos.Sprout) return rampColour('cropSprout', step >= 4 ? 4 : 3);
+  if (stage === Stage.Stubble && pos === FieldPos.Stubble) return rampColour('cropStubble', step >= 4 ? 4 : 3);
+  return tagRgb(Mat.Wood * 8 + (pos === FieldPos.Furrow ? 1 : step >= 4 ? 2 : 3));
+}
+
 /** "Show the pixel's `alt` entry": a bare deciduous crown in winter (a table value no colour has: colours are opaque). */
 export const ALT = 1;
 
@@ -200,6 +241,14 @@ export function lookColour(state: LookState, cls: number, role: number, tag: num
     if (season === 0) return seasonRampRgb('blossom')[3]!;
     if (winter) return tagRgb(Mat.Wood * 8 + 1);
     return tagRgb(tag);   // the berries: the fruit colour, berries step 2
+  }
+  // Phase 2b: fields through their stages; a harvested part is stubble in autumn, its sheaves gold.
+  const field = fieldRoleParts(role);
+  if (field && g === Mat.Crop) {
+    if (held) return tagRgb(tag);
+    const stage = field.sheaf ? (season === 2 ? Stage.Gold : stageOf(field.cls, season))
+      : field.cut && season === 2 ? Stage.Stubble : stageOf(field.cls, season);
+    return stageColour(stage, field.pos, step);
   }
   if (role === Role.FloorBare && g === Mat.Forest && winter) return rampColour(GRASS[3]![c]!, Math.min(4, step + 1));
   if (role === Role.FruitTwig && g === Mat.Grass && winter) return tagRgb(Mat.Wood * 8 + (step >= 2 ? 2 : 1));
@@ -279,10 +328,19 @@ export function resolveTile(buf: MatBuf, look: Look, px: Uint32Array, tx: number
  * map: a tree's pixels share its centre's rank, so a rank is no longer a 4 × 4 lattice.
  */
 export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, mask: number): void {
-  const { tag, rank } = buf, n = buf.w * buf.h;
+  const { tag, role, rank, moist, alt, altRole } = buf, n = buf.w * buf.h, span = look.span;
+  // The three moisture tables each rank shows, picked once (a late-game map changes ranks often:
+  // a function call per pixel here was 9% of a frame, measured).
+  const byRank: Uint32Array[] = [];
+  for (let r = 0; r < RANKS; r++) for (let c = 0; c < CLASSES; c++) byRank.push(look.tables[look.shown[r]! * CLASSES + c]!);
   for (let p = 0; p < n; p++) {
-    if (((mask >> rank[p]!) & 1) === 0 || tag[p] === NO_TAG) continue;
-    px[p] = colourAt(buf, look, p);
+    const r = rank[p]!;
+    if (((mask >> r) & 1) === 0) continue;
+    const g = tag[p]!;
+    if (g === NO_TAG) continue;
+    const t = byRank[r * CLASSES + moist[p]!]!;
+    const c = t[role[p]! * span + g]!;
+    px[p] = c !== ALT ? c : alt[p] === NO_TAG ? 0 : t[altRole[p]! * span + alt[p]!]!;
   }
 }
 

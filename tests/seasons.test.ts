@@ -17,6 +17,9 @@ import { allTilesMap, scenarioA, scenarioF, scenarioH } from './fixtures';
 import { Mat, RAMP_HEX, SEASON_HEX, hexRgb, rampColours, rampTag, shadowOf, tagCount, tagRgb, tagValid, type SeasonRampName } from '../src/render/ramps';
 import { ALT, LookState, Moist, ROLES, bayerRank, isCrown, isDeciduous, lookColour } from '../src/render/materials';
 import { buildCrowns, crownPixelAt } from '../src/render/crowns';
+import { FieldState, Stage, fieldClass, rowCut, stageOf } from '../src/render/fields';
+import { FieldPos, fieldRoleParts } from '../src/render/materials';
+import { Action } from '../src/shared/ids';
 import { crownKind, evergreenChance } from '../src/render/terrain';
 import { MoistureField, tileWetness } from '../src/render/moisture';
 import { SeasonDriver, frontAt, parsePin } from '../src/render/seasonLook';
@@ -461,6 +464,18 @@ describe('seasons Phase 1b: grass moisture follows the rain', () => {
     expect(flips).toBeGreaterThan(rows);
   });
 
+  it('land changes recheck the moisture only when water came or went', () => {
+    const m = createMap(10, 6);
+    m.ground[3 * 10 + 4] = Ground.Water;
+    const buf = createMatBuf(10 * TILE, 6 * TILE);
+    const f = new MoistureField(10, 6);
+    f.update(m, m.rain, buf, () => {});
+    m.plantType[12] = Plant.Forest;
+    expect(f.tilesChanged(m, [12])).toBe(false);          // a new wood: wetness is the same
+    m.ground[3 * 10 + 4] = Ground.Grassland;
+    expect(f.tilesChanged(m, [12, 3 * 10 + 4])).toBe(true); // the pond dried: nearness to water changes
+  });
+
   it('only tiles whose classes changed are reported', () => {
     const m = createMap(20, 10);
     m.rain.fill(20);
@@ -706,5 +721,157 @@ describe('seasons Phase 2a: fruit bushes', () => {
     const held = new Set(drawIn(plantMap(Plant.FruitBushes, 0), LookState.Held).hex);
     expect(held.has(PALETTE.fruit)).toBe(true);
     expect([...inRamp('blossom')].some((h) => held.has(h))).toBe(false);
+  });
+});
+
+// ---------- Phase 2b: fields and the harvest ----------
+
+const FC = CONFIG.render.seasons.fields;
+
+/** A farmland map drawn on the new rows with harvest `cut` per tile, resolved in `state`. */
+function fieldsIn(m: MapData, cut: Uint8Array, state: number): { mat: MatBuf; hex: string[] } {
+  const mat = createMatBuf(m.width * TILE, m.height * TILE);
+  const depth = new Uint8Array(m.width * m.height);
+  computeDepth(m, depth);
+  const imgW = m.width * TILE, data = new Uint8ClampedArray(imgW * m.height * TILE * 4);
+  for (let i = 0; i < m.width * m.height; i++) {
+    drawTilePixels(m, i, data, imgW, { waterStep: 0, riverStep: 0 }, { depth, crossing: null, ...none, mat, fields: cut });
+  }
+  const look = createLook();
+  look.shown.fill(state);
+  const px = new Uint32Array(mat.w * mat.h);
+  for (let ty = 0; ty < m.height; ty++) for (let tx = 0; tx < m.width; tx++) resolveTile(mat, look, px, tx, ty);
+  return { mat, hex: Array.from(px, (v) => '#' + [v & 255, (v >> 8) & 255, (v >> 16) & 255].map((c) => c.toString(16).padStart(2, '0')).join('')) };
+}
+
+/** The colours each stage may show (mockup fieldPixel). */
+function stageColours(stage: number): Set<string> {
+  const wood = RAMP_HEX[Mat.Wood]!.slice(1, 4);
+  switch (stage) {
+    case Stage.Gold: return new Set(RAMP_HEX[Mat.Crop]!);
+    case Stage.Green: return inRamp('cropGreen');
+    case Stage.Sprouts: return new Set([...wood, ...SEASON_HEX.cropSprout]);
+    case Stage.Stubble: return new Set([...wood, ...SEASON_HEX.cropStubble]);
+    default: return new Set(wood);
+  }
+}
+
+describe('seasons Phase 2b: fields through the year', () => {
+  it('a block of tiles shares one stage, and the stages come in the mockup shares', () => {
+    for (let ty = 0; ty < 30; ty += 3) for (let tx = 0; tx < 30; tx += 3) {
+      const c = fieldClass(tx, ty);
+      for (let dy = 0; dy < FC.cellTiles; dy++) for (let dx = 0; dx < FC.cellTiles; dx++) expect(fieldClass(tx + dx, ty + dy)).toBe(c);
+    }
+    const n = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]];
+    let blocks = 0;
+    for (let by = 0; by < 120; by++) for (let bx = 0; bx < 120; bx++) {
+      blocks++;
+      const c = fieldClass(bx * FC.cellTiles, by * FC.cellTiles);
+      for (let s = 0; s < 4; s++) n[s]![stageOf(c, s)]!++;
+    }
+    expect(n[0]![Stage.Sprouts]! / blocks).toBeCloseTo(FC.springSprouts, 1);
+    expect(n[1]![Stage.Gold]! / blocks).toBeCloseTo(FC.summerGold, 1);
+    expect(n[2]![Stage.Gold]! / blocks).toBeCloseTo(FC.autumnGold, 1);
+    expect(n[3]![Stage.Stubble]! / blocks).toBeCloseTo(FC.winterStubble, 1);
+    expect(n[1]![Stage.Bare]! + n[1]![Stage.Sprouts]! + n[1]![Stage.Stubble]!).toBe(0);   // summer is green or gold
+  });
+
+  it('fields lie on the mockup rows: a ridge every other row, sprouts on even columns, stubble on odd', () => {
+    const m = plantMap(Plant.Farmland, 0);
+    const { mat } = fieldsIn(m, new Uint8Array(m.width * m.height), LookState.Summer);
+    for (let y = 0; y < mat.h; y++) for (let x = 0; x < mat.w; x++) {
+      const f = fieldRoleParts(mat.role[y * mat.w + x]!);
+      expect(f).not.toBeNull();
+      if (f!.sheaf) continue;
+      if ((y & 1) === 0) expect(f!.pos).toBe(FieldPos.Furrow);
+      else expect((x & 1) === 1 ? f!.pos === FieldPos.Stubble : f!.pos === FieldPos.Sprout || f!.pos === FieldPos.Ridge).toBe(true);
+    }
+  });
+
+  it('every field tile shows the colours of its stage in each season, sprouts and stubble only where they grow', () => {
+    const m = plantMap(Plant.Farmland, 0, 18, 12);
+    for (let season = 0; season < 4; season++) {
+      const { mat, hex } = fieldsIn(m, new Uint8Array(m.width * m.height), LookState.Spring + season);
+      for (let p = 0; p < hex.length; p++) {
+        const x = p % mat.w, y = Math.floor(p / mat.w);
+        const stage = stageOf(fieldClass(Math.floor(x / TILE), Math.floor(y / TILE)), season);
+        expect(stageColours(stage).has(hex[p]!), `season ${season} stage ${stage} ${hex[p]}`).toBe(true);
+        const pos = fieldRoleParts(mat.role[p]!)!.pos;
+        if (inRamp('cropSprout').has(hex[p]!)) expect(pos).toBe(FieldPos.Sprout);
+        if (inRamp('cropStubble').has(hex[p]!)) expect(pos).toBe(FieldPos.Stubble);
+      }
+    }
+  });
+
+  it('the held look and setup show the fields gold', () => {
+    const m = plantMap(Plant.Farmland, 0);
+    for (const state of [LookState.Held, LookState.Painted]) {
+      const crop = new Set(RAMP_HEX[Mat.Crop]!);
+      expect(fieldsIn(m, new Uint8Array(m.width * m.height), state).hex.every((h) => crop.has(h))).toBe(true);
+    }
+  });
+});
+
+describe('seasons Phase 2b: the harvest follows the farmers', () => {
+  /** One person as the frame sends them: [id, workX, workY, colour, flags, mother, look, action, group]. */
+  const person = (x: number, y: number, action: number): number[] => [1, x + 0.5, y + 0.5, 0, 2, 0, 0, action, 1];
+
+  it('each autumn month a farmed field (and its farmland neighbours) is cut further; spring starts again', () => {
+    const m = plantMap(Plant.Farmland, 0, 10, 6);
+    m.plantType[0] = Plant.Grass;
+    const f = new FieldState(10, 6);
+    const farmer = new Float32Array([...person(1, 1, Action.Farm), ...person(8, 4, Action.Gather)]);
+    const autumn = 6;
+    expect(f.update(m, 100 * 12 + 5, farmer)).toEqual([]);             // summer: nothing
+    let last = 0;
+    for (let k = 0; k < 3; k++) {
+      const changed = f.update(m, 100 * 12 + autumn + k, farmer);
+      expect(f.cut[1 * 10 + 1]!).toBeGreaterThan(last);                  // the farmer's field, further each month
+      expect(changed).toContain(1 * 10 + 1);
+      expect(f.cut[0]).toBe(0);                                          // grass is never cut
+      expect(f.cut[4 * 10 + 8]).toBe(0);                                 // a gatherer cuts nothing
+      last = f.cut[1 * 10 + 1]!;
+    }
+    expect(f.cut[2 * 10 + 2]).toBe(last);                                // the plot round the farmer too
+    expect(last).toBe(255);                                              // done within the autumn
+    expect(f.update(m, 101 * 12, farmer)).toContain(1 * 10 + 1);         // spring: the year's harvest is over
+    expect(f.cut[1 * 10 + 1]).toBe(0);
+  });
+
+  it('the cut edge only moves forward, row by row', () => {
+    for (let ly = 0; ly < TILE; ly++) {
+      let prev = 0;
+      for (let c = 0; c <= 255; c += 5) {
+        const n = rowCut(c, 3, 4, ly, TILE);
+        expect(n).toBeGreaterThanOrEqual(prev);
+        prev = n;
+      }
+      expect(rowCut(0, 3, 4, ly, TILE)).toBe(0);
+      expect(rowCut(255, 3, 4, ly, TILE)).toBe(TILE);
+    }
+  });
+
+  it('in autumn the cut part is stubble with sheaves standing in gold; by winter the field takes its winter stage', () => {
+    const m = plantMap(Plant.Farmland, 0, 18, 12);
+    const half = new Uint8Array(m.width * m.height).fill(128), done = new Uint8Array(m.width * m.height).fill(255);
+    const { mat, hex } = fieldsIn(m, half, LookState.Autumn);
+    let cut = 0, uncut = 0;
+    for (let p = 0; p < hex.length; p++) {
+      const f = fieldRoleParts(mat.role[p]!)!;
+      if (f.sheaf) continue;
+      if (f.cut) { cut++; expect(stageColours(Stage.Stubble).has(hex[p]!)).toBe(true); }
+      else uncut++;
+    }
+    expect(cut).toBeGreaterThan(0.3 * hex.length);
+    expect(uncut).toBeGreaterThan(0.3 * hex.length);
+    const full = fieldsIn(m, done, LookState.Autumn);
+    const sheaves = full.hex.filter((_h, p) => fieldRoleParts(full.mat.role[p]!)!.sheaf);
+    expect(sheaves.length).toBeGreaterThan(50);
+    expect(sheaves.every((h) => RAMP_HEX[Mat.Crop]!.includes(h))).toBe(true);
+    const winter = fieldsIn(m, done, LookState.Winter);
+    for (let p = 0; p < winter.hex.length; p++) {
+      const x = p % winter.mat.w, y = Math.floor(p / winter.mat.w);
+      expect(stageColours(stageOf(fieldClass(Math.floor(x / TILE), Math.floor(y / TILE)), 3)).has(winter.hex[p]!)).toBe(true);
+    }
   });
 });

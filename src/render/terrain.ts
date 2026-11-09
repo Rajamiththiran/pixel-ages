@@ -12,9 +12,10 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  LookState, NO_TAG, Role, bayerRank, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
+  FieldPos, LookState, NO_TAG, Role, bayerRank, fieldRole, sheafRole, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
 import { MoistureField } from './moisture';
+import { fieldClass, rowCut } from './fields';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
 import { buildCrowns, canopyDistance, crownColourAt, crownPixelAt, inTreeShadow, type CrownPixel } from './crowns';
 import { occlusionOn, shadowsOn } from './shadows';
@@ -65,6 +66,7 @@ export interface TileExtras {
   base: MapData | null;          // F8: the painted map, for stumps where forest was cut
   shadow?: Uint8ClampedArray | null; // Diorama phase 3: cast-shadow mask (alpha 255 = shadowed), same layout as the image
   mat?: MatBuf | null;           // Seasons Phase 1a: each pixel's ramp step and role, same layout as the image
+  fields?: Uint8Array | null;    // Seasons Phase 2b: harvest per tile (0–255); given, farmland is drawn on the mockup's rows
 }
 
 // What the pixel being drawn turned out to be, for shadows and occlusion (phase 3).
@@ -149,23 +151,27 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
   const mat = ex.mat ?? null;
   // Seasons Phase 2a: a wood of mostly deciduous trees (low ground) has a bright floor in winter.
   const bareWood = treesOn && ground !== Ground.Mountain && evergreenChance(map.elevation[i]!) < 0.5;
+  // Seasons Phase 2b: a field's class and harvest (−1: the old rows).
+  fieldCut = ex.fields && plant === Plant.Farmland ? ex.fields[i]! : -1;
+  if (fieldCut >= 0) fieldCls = fieldClass(tx, ty);
 
   /**
    * One land pixel into `out`; returns its role. Seasons Phase 2a draws it a second time without
    * crowns (`crowns` false): the ground a bare deciduous crown shows in winter.
    */
-  const land = (ox: number, oy: number, px: number, py: number, edge: number, crowns: boolean): Role => {
+  const land = (ox: number, oy: number, px: number, py: number, edge: number, crowns: boolean): number => {
     onCrown = false;
     onPeak = false;
     onFruitSpeck = false;
     landPixel(map, ground, plant, dens, kind, crowns && nearForest, stumps ? painted : -1, px, py, out);
-    let role = landRole(ground, plant);
+    let role: number = landRole(ground, plant);
     if (treesOn) {
       onTree = onCrown && crownsReady && crownPixelAt(px, py, cp);
       if (onTree) role = crownRole(map, cp, px, py);
       else if (role === Role.Fruit) role = fruitRole(px, py, dens);
       else if (role === Role.Forest && bareWood) role = Role.FloorBare;
     }
+    if (role === Role.Farm && fieldCut >= 0) role = fieldHere;
     if (resShare > 0 && hash01(px, py, SALT.resource + res) < resShare) copy(RESOURCE_COLOR[res]!, out);
     if (look !== 0) soilPixel(look, plant, px, py, out);
     if (tileMarks !== 0) {
@@ -198,7 +204,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
       onCrown = false;
       onPeak = false;
       onTree = false;
-      let role: Role;
+      let role: number;   // a Role, or a field role (materials.ts fieldRole)
 
       if (water && !corner) {
         if (river) riverPixel(map, tx, ty, px, py, time.riverStep, out);
@@ -305,6 +311,50 @@ function crownRole(map: MapData, c: CrownPixel, px: number, py: number): Role {
   if (kind === Role.Crown && crownCold && c.dy < 0 && (c.dx + c.dy) / c.r <= TRS.snowLitBelow
     && hash01(px, py, TRS.salt + 12) < TRS.snowCapShare) return Role.CrownSnow;
   return kind;
+}
+
+// ---------- seasons Phase 2b: fields and the harvest ----------
+
+const FC = CONFIG.render.seasons.fields;
+let fieldCut = -1;         // the tile's harvest (0–255), −1 when farmland is drawn on the old rows
+let fieldCls = 0;          // the tile's field class (fields.ts)
+let fieldHere: number = Role.Farm;   // the role farmPixel gave the pixel
+
+/** A sheaf's crop step at (px, py) in this tile's cut part (mockup: a 4-pixel stook), 0 for none. */
+function sheafStep(px: number, py: number, tx: number, ty: number): number {
+  const [ex, ey] = FC.sheafEveryPx;
+  const at = (ax: number, ay: number): boolean => {
+    const lx = ax - tx * TILE, ly = ay - ty * TILE;
+    if (ax % ex! !== 3 || ay % ey! !== 3 || lx < 0 || lx > TILE - 2 || ly < 1 || ly > TILE - 2) return false;
+    return lx + 1 < rowCut(fieldCut, tx, ty, ly, TILE);   // the whole stook stands in stubble
+  };
+  if (at(px, py + 1)) return 4;
+  if (at(px, py)) return 3;
+  if (at(px - 1, py)) return 2;
+  if (at(px, py - 1)) return 1;
+  return 0;
+}
+
+/**
+ * Seasons Phase 2b: a farmland pixel on the mockup's rows (a ridge every other row), drawn in the
+ * gold stage's colours (the system crop ramp); its role says where it sits and whether it is
+ * harvested, and each season's stage is picked from that (materials.ts).
+ */
+function farmPixel(px: number, py: number, out: RGB): void {
+  const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
+  const lx = px - tx * TILE, ly = py - ty * TILE;
+  const s = sheafStep(px, py, tx, ty);
+  if (s > 0) { copy(rampRgb(Mat.Crop, s), out); fieldHere = sheafRole(fieldCls); return; }
+  const cut = lx < rowCut(fieldCut, tx, ty, ly, TILE);
+  let pos: number;
+  if ((py & 1) === 0) {
+    copy(rampRgb(Mat.Crop, hash01(px, py, FC.salt + 2) < 0.1 ? 0 : 1), out);
+    pos = FieldPos.Furrow;
+  } else {
+    copy(rampRgb(Mat.Crop, hash01(px, py, FC.salt + 3) < 0.3 ? 4 : 3), out);
+    pos = (px & 1) === 1 ? FieldPos.Stubble : hash01(px, py, FC.salt + 4) < FC.sproutShare ? FieldPos.Sprout : FieldPos.Ridge;
+  }
+  fieldHere = fieldRole(fieldCls, pos, cut);
 }
 
 /** The role of a fruit-bush pixel: its fruit, a twig bare in winter, a blossom in spring, or a leaf. */
@@ -575,7 +625,9 @@ function landPixel(
       break;
     case Plant.Farmland:
       // Crop rows; the season's colour (green → gold → stubble → bare) is the season tint (F8).
-      if (rampsOn) copy(CROP_ROWS[Math.min(2, py % R.farmSoilRowEvery)]!, out);
+      // Seasons Phase 2b: the mockup's rows, drawn gold; the stage comes from the pixel's role.
+      if (fieldCut >= 0) farmPixel(px, py, out);
+      else if (rampsOn) copy(CROP_ROWS[Math.min(2, py % R.farmSoilRowEvery)]!, out);
       else copy(py % R.farmSoilRowEvery === 0 ? RGBS.wood : RGBS.grass, out);
       break;
   }
@@ -625,23 +677,31 @@ interface TileStore {
   same(tx: number, ty: number, a: TileSnap, b: TileSnap): boolean;
   dissolve(tx: number, ty: number, old: TileSnap, neu: TileSnap, step: number): void;
   commit(tx: number, ty: number): void;
+  /** A snapshot no longer needed: kept for the next read (a late-game map snapshots many tiles a month). */
+  release(s: TileSnap): void;
 }
 
+const POOL_MAX = 4096;
+
 function rgbaStore(data: Uint8ClampedArray, imgW: number): TileStore {
+  const pool: Uint8ClampedArray[] = [];
   return {
-    read: (tx, ty, out) => readTile(data, imgW, tx, ty, out as Uint8ClampedArray | undefined),
+    read: (tx, ty, out) => readTile(data, imgW, tx, ty, (out ?? pool.pop()) as Uint8ClampedArray | undefined),
     same: (_tx, _ty, a, b) => sameTile(a as Uint8ClampedArray, b as Uint8ClampedArray),
     dissolve: (tx, ty, old, neu, step) => dissolveTile(data, imgW, tx, ty, old as Uint8ClampedArray, neu as Uint8ClampedArray, step),
     commit: () => {},
+    release: (s) => { if (pool.length < POOL_MAX) pool.push(s as Uint8ClampedArray); },
   };
 }
 
 function matStore(mat: MatBuf, look: SeasonLook, px: Uint32Array): TileStore {
+  const pool: MatTile[] = [];
   return {
-    read: (tx, ty, out) => readMatTile(mat, tx, ty, out as MatTile | undefined),
+    read: (tx, ty, out) => readMatTile(mat, tx, ty, (out ?? pool.pop()) as MatTile | undefined),
     same: (tx, ty, a, b) => sameMatLook(mat, look, tx, ty, a as MatTile, b as MatTile),
     dissolve: (tx, ty, old, neu, step) => { dissolveMat(mat, tx, ty, old as MatTile, neu as MatTile, step); resolveTile(mat, look, px, tx, ty); },
     commit: (tx, ty) => resolveTile(mat, look, px, tx, ty),
+    release: (s) => { if (pool.length < POOL_MAX) pool.push(s as MatTile); },
   };
 }
 
@@ -745,6 +805,12 @@ export class TerrainLayer {
   }
 
   set crossing(c: Uint8Array | null) { this.extras.crossing = c; }
+
+  /** Seasons Phase 2b: the harvest per tile (FieldState.cut); given, farmland is drawn on the mockup's rows. */
+  set fields(cut: Uint8Array | null) { this.extras.fields = cut; this.markAll(); }
+
+  /** Tiles whose look changed but not their map data (a field cut further): redrawn, nothing else. */
+  redrawTiles(tiles: readonly number[]): void { for (const i of tiles) this.markDirty(i); }
   get crossing(): Uint8Array | null { return this.extras.crossing; }
 
   /** Run-mode layers (all null in setup). */
@@ -797,11 +863,11 @@ export class TerrainLayer {
    * bends, height shading, overhanging tree crowns and mountain peaks all reach one tile across.
    */
   mapChanged(tiles: Iterable<number>, fade = false): void {
-    for (const i of tiles) this.markWithNeighbours(i, fade && this.fadeOn);
+    const list = Array.isArray(tiles) ? tiles as number[] : [...tiles];
+    for (const i of list) this.markWithNeighbours(i, fade && this.fadeOn);
     this.depthDirty = true;
-    // Water may have come or gone, and grass near water is wetter.
-    this.moisture?.landChanged();
-    this.moistureDirty = true;
+    // Grass near water is wetter: only water coming or going changes the moisture.
+    if (this.moisture?.tilesChanged(this.map, list)) this.moistureDirty = true;
   }
 
   private markWithNeighbours(i: number, fade = false): void {
@@ -900,7 +966,7 @@ export class TerrainLayer {
       if (step === f.step) continue;
       f.step = step;
       store.dissolve(i % w, Math.floor(i / w), f.old, f.neu, step);
-      if (step >= GR.fadeSteps) this.fades.delete(i);
+      if (step >= GR.fadeSteps) { this.fades.delete(i); store.release(f.old); store.release(f.neu); }
       grow(i);
     }
 
@@ -926,7 +992,7 @@ export class TerrainLayer {
           fade = { old, neu, start: t0, step: 0 };
           this.fades.set(i, fade);
           store.dissolve(tx, ty, old, neu, 0);
-        } else store.commit(tx, ty);
+        } else { store.commit(tx, ty); store.release(old); store.release(neu); }
       } else store.commit(tx, ty);
       grow(i);
     }

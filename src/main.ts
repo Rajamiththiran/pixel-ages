@@ -749,6 +749,8 @@ function startRun(): void {
       setBanner(f.timelapse ? `Time-lapse — ${yearLabel(f.year, f.month)} of ${f.liveYear.toLocaleString('en-US')}`
         : f.isPast ? `Viewing the past — ${yearLabel(f.year, f.month)}` : null);
       renderer.people.update(f.people, walkerPace(f), performance.now(), f.groups);
+      // Seasons Phase 2b: the farmers move the harvest on while the year shows.
+      renderer.updateFields(f.people, f.year, f.month, seasonShow(f) >= 1 && !f.timelapse);
       renderer.setGroups(f.groups, f.relations, walkerSprite);
       view.runGroups = f.groups.map((g) => ({
         name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup,

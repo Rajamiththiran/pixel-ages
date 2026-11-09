@@ -8,6 +8,7 @@ import { CONFIG } from '../config';
 import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
 import { crownColour, crownIn, type Crown } from './terrainDetail';
+import { treesOn } from './materials';
 import type { RGB } from './palette';
 
 const TILE = CONFIG.map.tilePx;
@@ -89,26 +90,47 @@ export function buildCrowns(map: MapData, tx: number, ty: number): void {
  */
 function layBranches(): void {
   branch.fill(0);
+  if (!treesOn) return;
   for (let n = 0; n < crownCount; n++) {
     const x = cxs[n]!, y = cys[n]!, r = crs[n]!;
-    const own = (bx: number, by: number): number => {
-      const k = index(bx, by);
-      return k >= 0 && bestY[k] === y && bestX[k] === x ? k : -1;
-    };
     for (let t = 0; t <= Math.floor(r); t++) {
-      const k = own(x, y + t);
+      const k = own(x, y, x, y + t);
       if (k >= 0) branch[k] = 1;
     }
-    const len = r + TR.branchReachPx;
-    for (let j = 0; j < TR.branches; j++) {
-      // Render only: Math.cos and Math.sin are fine here (rule 4 is for the simulation).
-      const ang = -Math.PI / 2 + (j - (TR.branches - 1) / 2) * TR.branchSpreadRad + (hash01(x, y, TR.salt + j) - 0.5) * TR.branchJitterRad;
-      for (let s = 1; s <= len; s += TR.branchStepPx) {
-        const k = own(Math.round(x + Math.cos(ang) * s), Math.round(y + Math.sin(ang) * s));
-        if (k >= 0) branch[k] = s > len - 1 ? 3 : Math.cos(ang) < 0 ? 2 : 1;
-      }
+    const b = branchesOf(x, y, r);
+    for (let q = 0; q < b.length; q += 3) {
+      const k = own(x, y, x + b[q]!, y + b[q + 1]!);
+      if (k >= 0) branch[k] = b[q + 2]!;
     }
   }
+}
+
+// A crown is laid out again for every tile its window reaches: its branches are worked out once.
+const branchCache = new Map<number, Int8Array>();
+
+/** A crown's branch pixels: (dx, dy, wood step) triples, in drawing order. */
+function branchesOf(x: number, y: number, r: number): Int8Array {
+  const key = y * 65536 + x;
+  let b = branchCache.get(key);
+  if (b) return b;
+  const out: number[] = [];
+  const len = r + TR.branchReachPx;
+  for (let j = 0; j < TR.branches; j++) {
+    // Render only: Math.cos and Math.sin are fine here (rule 4 is for the simulation).
+    const ang = -Math.PI / 2 + (j - (TR.branches - 1) / 2) * TR.branchSpreadRad + (hash01(x, y, TR.salt + j) - 0.5) * TR.branchJitterRad;
+    for (let s = 1; s <= len; s += TR.branchStepPx) {
+      out.push(Math.round(Math.cos(ang) * s), Math.round(Math.sin(ang) * s), s > len - 1 ? 3 : Math.cos(ang) < 0 ? 2 : 1);
+    }
+  }
+  b = Int8Array.from(out);
+  branchCache.set(key, b);
+  return b;
+}
+
+/** The window index of (bx, by) if crown (x, y) is the one drawn there, else −1. */
+function own(x: number, y: number, bx: number, by: number): number {
+  const k = index(bx, by);
+  return k >= 0 && bestY[k] === y && bestX[k] === x ? k : -1;
 }
 
 /** The crown over a pixel of the built tile (seasons Phase 2a). */

@@ -22,7 +22,8 @@ import { Camera } from './camera';
 import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
 import { SeasonDriver } from './seasonLook';
-import { seasonRampsOn } from './materials';
+import { fieldsOn, seasonRampsOn } from './materials';
+import { FieldState } from './fields';
 import { ScreenClock } from './screenClock';
 import { RainEase } from './rainEase';
 import { DayNight, NightPass, nightLevel, nightOn } from './light';
@@ -97,6 +98,8 @@ export class Renderer {
   /** Seasons Phase 1b: which season each Bayer rank of the terrain shows. */
   private readonly seasonDriver = new SeasonDriver();
   private seasonJump = false;
+  /** Seasons Phase 2b: the harvest the screen shows, moved on by the simulation's farmers. */
+  private readonly fields: FieldState | null;
   /** The fractional month on screen (speeds plan Phase 3). */
   readonly clock = new ScreenClock();
   /** Speeds plan Phase 5: the rain the screen draws, sliding over the year (run mode only). */
@@ -153,6 +156,8 @@ export class Renderer {
     this.season = new SeasonLayer(view.map);
     this.season.tint = !seasonRampsOn;   // Phase 1b: the season is in the materials, not a tint on top
     this.terrain.setRain(view.map.rain);
+    this.fields = fieldsOn ? new FieldState(view.map.width, view.map.height) : null;
+    if (this.fields) this.terrain.fields = this.fields.cut;
     this.weather = new Weather(view.map);
     this.effects = new Effects(view.map);
     this.trample = new TrampleLayer(view.map.width, view.map.height);
@@ -211,6 +216,7 @@ export class Renderer {
     this.weather.setMap(this.view.map, base ? base.rain : null);
     this.effects.clear();
     this.trample.clear();
+    this.fields?.reset();
     this.terrain.setMap(this.view.map);
     this.terrain.setRain(this.rainEase?.shown ?? this.view.map.rain);
     this.season.tilesChanged();
@@ -230,7 +236,21 @@ export class Renderer {
   setTime(year: number, month: number, monthsPerSecond: number, jump: boolean, seasonShow = 1): void {
     this.season.show = seasonShow;
     this.clock.sync(year * CONFIG.time.ticksPerYear + month, monthsPerSecond, jump);
-    if (jump) { this.season.setMonth(this.clock.monthOfYear, true); this.seasonJump = true; }
+    if (jump) {
+      this.season.setMonth(this.clock.monthOfYear, true);
+      this.seasonJump = true;
+      if (this.fields) this.terrain.redrawTiles(this.fields.reset());
+    }
+  }
+
+  /**
+   * Seasons Phase 2b: a frame's people move the harvest on (Farm workers cut their fields in
+   * autumn). Only while the year shows (`active`): the held look has no harvest to show.
+   */
+  updateFields(people: Float32Array, year: number, month: number, active: boolean): void {
+    if (!this.fields || !active) return;
+    const changed = this.fields.update(this.view.map, year * CONFIG.time.ticksPerYear + month, people);
+    if (changed.length > 0) this.terrain.redrawTiles(changed);
   }
 
   /**

@@ -63,6 +63,7 @@ export class MoistureField {
   readonly wet: Float32Array;
   private readonly noise: Float32Array;
   private readonly dist: Uint8Array;
+  private readonly water: Uint8Array;   // which tiles were water when nearness was worked out
   // The class a tile's pixels all share (−1 when they mix), for the last wetness the pixels were set from.
   private readonly uniform: Int8Array;
   private distReady = false;
@@ -73,6 +74,7 @@ export class MoistureField {
     this.wet = new Float32Array(n);
     this.noise = new Float32Array(n);
     this.dist = new Uint8Array(n);
+    this.water = new Uint8Array(n);
     this.uniform = new Int8Array(n).fill(Moist.Normal);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) this.noise[y * w + x] = cellNoise(x + 0.5, y + 0.5, MO.noiseCellTiles, MO.noiseSalt);
   }
@@ -81,11 +83,28 @@ export class MoistureField {
   landChanged(): void { this.distReady = false; }
 
   /**
+   * Tiles changed: true when water came or went on any of them (only then does nearness to water,
+   * and so wetness, change). A late-game map changes plants and marks every month, rarely water:
+   * redoing the whole field each time was 12.5% of a frame (measured).
+   */
+  tilesChanged(map: MapData, tiles: readonly number[]): boolean {
+    if (!this.distReady) return true;
+    for (const i of tiles) {
+      if ((isWaterTile(map, i) ? 1 : 0) !== this.water[i]) { this.distReady = false; return true; }
+    }
+    return false;
+  }
+
+  /**
    * New wetness from `rain` (per tile, 0–100). Writes the pixel classes of every tile whose classes
    * may have changed into `buf.moist` and calls `changed` for each tile that did change.
    */
   update(map: MapData, rain: ArrayLike<number>, buf: MatBuf, changed: (i: number) => void): void {
-    if (!this.distReady) { waterDistance(map, this.dist); this.distReady = true; }
+    if (!this.distReady) {
+      waterDistance(map, this.dist);
+      for (let i = 0; i < this.dist.length; i++) this.water[i] = this.dist[i] === 0 ? 1 : 0;
+      this.distReady = true;
+    }
     const { w, h } = this;
     // Most calls follow land changes that leave the water where it was: nothing to recheck then.
     let moved = !this.ready;

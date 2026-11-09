@@ -813,8 +813,10 @@ export const CONFIG = {
       // Switching to or from the held fast-forward look (and setup ↔ run) dissolves over this long.
       modeFadeMs: 500,
       // The season look moves on at most this often (each step re-uploads the whole terrain image; a
-      // front then arrives in a few batches, every pixel still changing once). Measured at Crawl, Phase 1b.
-      lookStepMs: 100,
+      // front then arrives in a few batches, every pixel still changing once). Measured at Crawl, Phase 1b;
+      // 200 from Phase 2b: a step recolours the whole map once a tree turns at its centre's rank (~6% of a
+      // late-game frame at 100), and a front at Crawl lasts ~0.25 s anyway.
+      lookStepMs: 200,
       // Grass moisture (dry, normal, lush ramps): a tile's wetness = rain ÷ 100 + waterBonus (fading
       // out over waterReachTiles from water) + noiseAmp × (clustered noise − 0.5, cells noiseCellTiles
       // wide); lush at lushAbove or more, dry at dryBelow or less; the edge is dithered over ditherWidth.
@@ -844,6 +846,22 @@ export const CONFIG = {
         // on this share × density; the berries are the fruit specks (render.fruitSpeck), shown in summer and autumn.
         blossomShare: 0.15, twigShare: 0.25,   // blossom 0.3 made a pink carpet (seen in the browser, Garden)
         salt: 141,
+      },
+      // Phase 2b: fields and the harvest (mockup B; shares from its plotStage). Off: `?off=fields`
+      // (one crop stage per season on the old rows, as Phase 1b).
+      fields: {
+        on: true,
+        cellTiles: 3,            // farmland tiles in one 3 × 3 block share a stage, so fields read as plots, not a tile grid
+        // A block's stage by season, from one hash per block (the mockup's shares): spring sprouts below
+        // springSprouts (else bare furrows), summer gold below summerGold (else green), autumn gold below
+        // autumnGold (else stubble), winter stubble below winterStubble (else bare).
+        springSprouts: 0.55, summerGold: 0.3, autumnGold: 0.4, winterStubble: 0.4,
+        sproutShare: 0.8,        // ridge pixels in even columns that carry a sprout (mockup)
+        // The harvest (render only, from the simulation's farmers): each autumn month a farmland tile
+        // with a Farm worker on it or next to it is cut this much further (1 = done), reset each spring;
+        // the cut edge wanders ± raggedPx per row; sheaves stand in the cut part, one per sheafEveryPx.
+        cutPerMonth: 0.4, raggedPx: 1.5, sheafEveryPx: [7, 6],
+        salt: 151,
       },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
