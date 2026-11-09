@@ -8,14 +8,16 @@ import { CONFIG } from '../config';
 import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
 import { bayer } from './dither';
-import { Moist, type MatBuf } from './materials';
+import { Moist, groundOn, type MatBuf } from './materials';
 import { isWaterTile } from './terrainDetail';
 
 const TILE = CONFIG.map.tilePx;
 const MO = CONFIG.render.seasons.moisture;
+// Phase 2d: high ground is drier (mockup: "dry summer grass where the ground is high and far from water").
+const DRY_PER_LEVEL = groundOn ? CONFIG.render.seasons.ground.dryPerHeight / CONFIG.editor.maxElevation : 0;
 
-/** Smooth value noise 0–1 on a lattice `cell` tiles apart (one octave; render only, so floats are fine). */
-function cellNoise(x: number, y: number, cell: number, salt: number): number {
+/** Smooth value noise 0–1 on a lattice `cell` units apart (one octave; render only, so floats are fine). */
+export function cellNoise(x: number, y: number, cell: number, salt: number): number {
   const fx = x / cell, fy = y / cell;
   const x0 = Math.floor(fx), y0 = Math.floor(fy);
   const ax = fx - x0, ay = fy - y0;
@@ -49,10 +51,10 @@ export function waterDistance(map: MapData, out: Uint8Array): void {
   }
 }
 
-/** A tile's wetness: rain ÷ 100, more near water, plus clustered noise. */
-export function tileWetness(rain: number, waterDist: number, noise: number): number {
+/** A tile's wetness: rain ÷ 100, more near water, plus clustered noise; Phase 2d: less on high ground. */
+export function tileWetness(rain: number, waterDist: number, noise: number, elevation = 0): number {
   const near = Math.max(0, 1 - waterDist / (MO.waterReachTiles + 1));
-  return rain / 100 + MO.waterBonus * near + MO.noiseAmp * (noise - 0.5);
+  return rain / 100 + MO.waterBonus * near + MO.noiseAmp * (noise - 0.5) - DRY_PER_LEVEL * elevation;
 }
 
 /** The class of a wetness value. */
@@ -109,7 +111,7 @@ export class MoistureField {
     // Most calls follow land changes that leave the water where it was: nothing to recheck then.
     let moved = !this.ready;
     for (let i = 0; i < w * h; i++) {
-      const v = tileWetness(rain[i]!, this.dist[i]!, this.noise[i]!);
+      const v = tileWetness(rain[i]!, this.dist[i]!, this.noise[i]!, map.elevation[i]!);
       if (v !== this.wet[i]) { this.wet[i] = v; moved = true; }
     }
     if (!moved) return;

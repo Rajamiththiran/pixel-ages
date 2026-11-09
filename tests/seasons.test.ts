@@ -18,7 +18,7 @@ import { Mat, RAMP_HEX, SEASON_HEX, hexRgb, rampColours, rampTag, shadowOf, tagC
 import { ALT, LookState, Moist, ROLES, bayerRank, isCrown, isDeciduous, lookColour } from '../src/render/materials';
 import { buildCrowns, crownPixelAt } from '../src/render/crowns';
 import { FieldState, Stage, fieldClass, rowCut, stageOf } from '../src/render/fields';
-import { FieldPos, fieldRoleParts, isWaterRole } from '../src/render/materials';
+import { FieldPos, GroundRole, fieldRoleParts, isGroundRole, isWaterRole } from '../src/render/materials';
 import { NEVER, WinterField } from '../src/render/winter';
 import { coverLines } from '../src/render/seasonLook';
 import { WallType } from '../src/shared/ids';
@@ -27,7 +27,7 @@ import { crownKind, evergreenChance } from '../src/render/terrain';
 import { MoistureField, tileWetness } from '../src/render/moisture';
 import { SeasonDriver, frontAt, parsePin } from '../src/render/seasonLook';
 import { nightOf } from '../src/render/light';
-import { GROUP_COLORS, PALETTE, usePalette } from '../src/render/palette';
+import { GROUP_COLORS, PALETTE, usePalette, type RGB } from '../src/render/palette';
 
 const TILE = CONFIG.map.tilePx;
 const STEPS = [[0, 0], [1, 3], [3, 5], [7, 2]] as const;   // water and river animation steps
@@ -245,7 +245,8 @@ describe('seasons Phase 1a: each pixel knows what it is', () => {
     const r = rolesOf(mat, 2, 20);
     expect([...r].some(isCrown)).toBe(true);
     expect(r.has(Role.Forest) || r.has(Role.FloorBare)).toBe(true);
-    only(2, 20, [Role.Crown, Role.CrownSnow, Role.DecGreen, Role.DecYellow, Role.DecCopper, Role.Forest, Role.FloorBare]);
+    only(2, 20, [Role.Crown, Role.CrownSnow, Role.DecGreen, Role.DecYellow, Role.DecCopper, Role.Forest, Role.FloorBare,
+      GroundRole.LitterGold, GroundRole.LitterYellow, GroundRole.LitterCopper]);   // Phase 2d: leaves on the floor
   });
 
   it('marks, fire and beaches override the ground under them', () => {
@@ -310,7 +311,9 @@ describe('seasons Phase 1b: each material takes the ramp of its season', () => {
 
   it('painted is the colour of today for every role and tag', () => {
     for (let role = 0; role < ROLES; role++) {
-      for (let tag = 0; tag < tagCount(); tag++) if (tagValid(tag)) expect(lookColour(LookState.Painted, 1, role, tag)).toBe(tagRgb(tag));
+      // Phase 2d: a cluster flower is new, so setup shows the ground under it (its alt).
+      const want = (tag: number): RGB | typeof ALT => (role === GroundRole.Bloom ? ALT : tagRgb(tag));
+      for (let tag = 0; tag < tagCount(); tag++) if (tagValid(tag)) expect(lookColour(LookState.Painted, 1, role, tag)).toBe(want(tag));
     }
   });
 
@@ -371,8 +374,10 @@ describe('seasons Phase 1b: each material takes the ramp of its season', () => {
           for (let tag = 0; tag < tagCount(); tag++) {
             if (!tagValid(tag)) continue;
             const c = rgbOf(lookColour(state as LookState, cls, role, tag));
-            // A bare deciduous crown shows its alt entry (a branch or the ground under it).
-            expect(c === 'alt' ? isDeciduous(role) && state === LookState.Winter : ok.has(c), `state ${state} role ${role} tag ${tag}`).toBe(true);
+            // A bare deciduous crown shows its alt entry (a branch or the ground under it); so does a
+            // flower or leaf litter out of its season (Phase 2d).
+            const alt = (isDeciduous(role) && state === LookState.Winter) || isGroundRole(role);
+            expect(c === 'alt' ? alt : ok.has(c), `state ${state} role ${role} tag ${tag}`).toBe(true);
           }
         }
       }
@@ -1065,5 +1070,107 @@ describe('seasons Phase 2c: ice', () => {
     l.setCover(0, 0); l.flush();
     expect(l.frozenTile(5 * 20 + 4)).toBe(false);
     expect(l.snowAt(18 * TILE + 3, 6 * TILE + 3)).toBe(false);
+  });
+});
+
+// ---------- Phase 2d: ground ----------
+
+const GD = CONFIG.render.seasons.ground;
+
+describe('seasons Phase 2d: the ground through the year', () => {
+  const flowers = new Set<string>([PALETTE.flowerWhite, PALETTE.fireYellow, PALETTE.fruit]);
+  const litter = new Set<string>([SEASON_HEX.deciduousAuYellow[3]!, SEASON_HEX.deciduousAuYellow[2]!, SEASON_HEX.deciduousAuCopper[2]!]);
+  const count = (hex: string[], set: Set<string>, where: (p: number) => boolean = () => true): number =>
+    hex.reduce((n, h, p) => n + (set.has(h) && where(p) ? 1 : 0), 0);
+
+  it('spring flowers grow in clusters on open grass, in the mockup share, and only in spring', () => {
+    const m = plantMap(Plant.None, 0, 32, 24);
+    const spring = drawIn(m, LookState.Spring);
+    const blooms = spring.mat.role.reduce((n, r) => n + (r === GroundRole.Bloom ? 1 : 0), 0) / spring.mat.role.length;
+    expect(blooms).toBeGreaterThan(0.01);
+    expect(blooms).toBeLessThan(GD.flowerShare / 2);
+    expect(count(spring.hex, new Set([PALETTE.flowerWhite]))).toBeGreaterThan(count(spring.hex, new Set([PALETTE.fireYellow])));
+    // Clusters: the counts per 8 × 8 block vary far more than scattered flowers would (variance ÷
+    // mean about 1 for a random scatter), and many blocks have none.
+    const per: number[] = [];
+    for (let by = 0; by < spring.mat.h; by += 8) {
+      for (let bx = 0; bx < spring.mat.w; bx += 8) {
+        let n = 0;
+        for (let y = by; y < by + 8; y++) for (let x = bx; x < bx + 8; x++) if (spring.mat.role[y * spring.mat.w + x] === GroundRole.Bloom) n++;
+        per.push(n);
+      }
+    }
+    const mean = per.reduce((t, n) => t + n, 0) / per.length;
+    const variance = per.reduce((t, n) => t + (n - mean) ** 2, 0) / per.length;
+    expect(variance / mean).toBeGreaterThan(2);
+    expect(per.filter((n) => n === 0).length / per.length).toBeGreaterThan(0.4);
+    for (const state of [LookState.Summer, LookState.Autumn, LookState.Winter, LookState.Held]) {
+      expect(count(drawIn(m, state).hex, flowers), `state ${state}`).toBe(0);
+    }
+  });
+
+  it('setup keeps today\'s look: the old grass flowers, none of the new clusters', () => {
+    const m = plantMap(Plant.None, 0, 32, 24);
+    const { mat, hex } = drawIn(m, LookState.Painted);
+    let old = 0;
+    for (let p = 0; p < hex.length; p++) {
+      if (mat.role[p] === GroundRole.Bloom) expect(flowers.has(hex[p]!)).toBe(false);
+      if (mat.role[p] === GroundRole.Flower) { old++; expect(flowers.has(hex[p]!)).toBe(true); }
+    }
+    expect(old).toBeGreaterThan(0);
+  });
+
+  it('the all-year grass flowers flower in spring only; the rest of the year the grass under them shows', () => {
+    const m = plantMap(Plant.None, 0, 32, 24);
+    const spring = drawIn(m, LookState.Spring), summer = drawIn(m, LookState.Summer);
+    const grass = new Set<string>([...RAMP_HEX[Mat.Grass]!]);
+    let n = 0;
+    for (let p = 0; p < spring.hex.length; p++) {
+      if (spring.mat.role[p] !== GroundRole.Flower) continue;
+      n++;
+      expect(flowers.has(spring.hex[p]!)).toBe(true);
+      expect(spring.mat.altRole[p]).toBe(Role.Grass);
+      expect(grass.has(summer.hex[p]!)).toBe(true);
+    }
+    expect(n).toBeGreaterThan(0);
+  });
+
+  it('autumn leaf litter lies on the forest floor and the grass next to it, not further out; none in summer', () => {
+    // Forest in columns 0–5, open grass from column 6.
+    const m = createMap(16, 8);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 6; x++) { m.plantType[y * 16 + x] = Plant.Forest; m.plantDensity[y * 16 + x] = 255; }
+    const autumn = drawIn(m, LookState.Autumn), summer = drawIn(m, LookState.Summer);
+    const col = (p: number): number => Math.floor((p % autumn.mat.w) / TILE);
+    const isLitter = (p: number): boolean => autumn.mat.role[p]! >= GroundRole.LitterGold && autumn.mat.role[p]! <= GroundRole.LitterCopper;
+    const floor = count(autumn.hex, litter, (p) => isLitter(p) && col(p) < 6);
+    const edge = count(autumn.hex, litter, (p) => isLitter(p) && col(p) === 6);
+    expect(floor).toBeGreaterThan(50);
+    expect(edge).toBeGreaterThan(10);
+    expect(autumn.mat.role.some((r, p) => col(p) >= 8 && r >= GroundRole.LitterGold && r <= GroundRole.LitterCopper)).toBe(false);
+    for (let p = 0; p < summer.hex.length; p++) if (isLitter(p)) expect(litter.has(summer.hex[p]!)).toBe(false);
+  });
+
+  it('a high, evergreen wood drops almost no leaves', () => {
+    const share = (elev: number): number => {
+      const { mat } = drawIn(plantMap(Plant.Forest, elev), LookState.Autumn);
+      return mat.role.reduce((n, r) => n + (r >= GroundRole.LitterGold && r <= GroundRole.LitterCopper ? 1 : 0), 0) / mat.role.length;
+    };
+    expect(share(0)).toBeGreaterThan(0.05);
+    expect(share(9)).toBeLessThan(share(0) / 10);
+  });
+
+  it('high ground is drier: the dry grass ramp comes sooner as the land rises', () => {
+    const cap = CONFIG.render.seasons.moisture.waterReachTiles + 1;
+    expect(tileWetness(50, cap, 0.5, CONFIG.editor.maxElevation)).toBeCloseTo(tileWetness(50, cap, 0.5, 0) - GD.dryPerHeight);
+    const dryShare = (elev: number): number => {
+      const m = createMap(24, 16);
+      m.rain.fill(50);
+      m.elevation.fill(elev);
+      const buf = createMatBuf(24 * TILE, 16 * TILE);
+      new MoistureField(24, 16).update(m, m.rain, buf, () => {});
+      return buf.moist.reduce((n, c) => n + (c === Moist.Dry ? 1 : 0), 0) / buf.moist.length;
+    };
+    expect(dryShare(0)).toBeLessThan(0.1);
+    expect(dryShare(CONFIG.editor.maxElevation)).toBeGreaterThan(0.8);
   });
 });

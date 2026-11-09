@@ -69,6 +69,9 @@ export type Role = (typeof Role)[keyof typeof Role];
 /** Phase 2b switch: fields go through their stages, and the farmers' harvest shows. */
 export const fieldsOn: boolean = seasonRampsOn && SC.fields.on && !styleOff('fields');
 
+/** Phase 2d switch: dry grass on high ground, spring flowers, autumn leaf litter. */
+export const groundOn: boolean = seasonRampsOn && SC.ground.on && !styleOff('groundDetail');
+
 /** Phase 2c switches: snow by height, ice on water, snow on roofs. */
 export const snowOn: boolean = seasonRampsOn && SC.snow.on && !styleOff('snow');
 export const iceOn: boolean = seasonRampsOn && SC.ice.on && !styleOff('ice');
@@ -87,12 +90,27 @@ const FIELD_ROLES = FIELD_CLASSES * FIELD_POS * 2;
 export const fieldRole = (cls: number, pos: number, cut: boolean): number => FIELD_ROLE_BASE + (cls * FIELD_POS + pos) * 2 + (cut ? 1 : 0);
 /** The role of a sheaf pixel in a harvested field of class `cls`. */
 export const sheafRole = (cls: number): number => FIELD_ROLE_BASE + FIELD_ROLES + cls;
+const FIELD_END = FIELD_ROLE_BASE + FIELD_ROLES + FIELD_CLASSES;
+
+/**
+ * Phase 2d: details on the ground that show in one season only, after the field roles. Each keeps the
+ * ground under it in its `alt` entry, which shows out of season. A grass flower drawn all year until
+ * now (its tag the flower; spring only), a spring flower of the mockup's clusters (its tag the flower;
+ * setup keeps today's ground), and autumn leaf litter (its tag the ground): gold, yellow or copper.
+ */
+export const GroundRole = {
+  Flower: FIELD_END, Bloom: FIELD_END + 1, LitterGold: FIELD_END + 2, LitterYellow: FIELD_END + 3, LitterCopper: FIELD_END + 4,
+} as const;
+const GROUND_ROLES = 5;
+/** Is this role a Phase 2d ground detail? */
+export const isGroundRole = (role: number): boolean => role >= FIELD_END && role < FIELD_END + GROUND_ROLES;
+
 /** How many roles there are (tables are indexed by role). */
-export const ROLES = FIELD_ROLE_BASE + FIELD_ROLES + FIELD_CLASSES;
+export const ROLES = FIELD_END + GROUND_ROLES;
 
 /** A field role's parts, or null for any other role. */
 export function fieldRoleParts(role: number): { cls: number; pos: number; cut: boolean; sheaf: boolean } | null {
-  if (role < FIELD_ROLE_BASE || role >= ROLES) return null;
+  if (role < FIELD_ROLE_BASE || role >= FIELD_END) return null;
   const k = role - FIELD_ROLE_BASE;
   if (k >= FIELD_ROLES) return { cls: k - FIELD_ROLES, pos: FieldPos.Furrow, cut: true, sheaf: true };
   return { cls: Math.floor(k / (FIELD_POS * 2)), pos: (k >> 1) % FIELD_POS, cut: (k & 1) === 1, sheaf: false };
@@ -180,7 +198,7 @@ const baseRole = (role: number): number =>
   role === Role.FruitTwig || role === Role.FruitBlossom || role === Role.FruitSpeck ? Role.Fruit
     : role === Role.CrownSnow ? Role.Crown : role === Role.BranchSnow ? Role.Branch : role === Role.FloorBare ? Role.Forest
       : role === Role.Pond ? Role.Lake
-      : role >= FIELD_ROLE_BASE ? Role.Farm : role;
+      : role >= FIELD_ROLE_BASE && role < FIELD_END ? Role.Farm : isGroundRole(role) ? Role.Grass : role;
 
 /**
  * The ramp a pixel of group `g` with `role` takes in `season` (0 spring … 3 winter) and moisture
@@ -234,6 +252,7 @@ let fruitTag = -1;
  */
 export function lookColour(state: LookState, cls: number, role: number, tag: number): RGB | typeof ALT {
   const g = tag >> 3, step = tag & 7;
+  if (isGroundRole(role)) return groundColour(state, role, tag);
   if (state === LookState.Painted) return tagRgb(tag);
   const held = state === LookState.Held;
   // The held fast-forward look (seasons brief D): summer, normal moisture, gold fields.
@@ -262,6 +281,19 @@ export function lookColour(state: LookState, cls: number, role: number, tag: num
   // The crop furrow (step 0) is soil all year; Phase 2b gives the fields their stages.
   if (r === null || (g === Mat.Crop && step === 0)) return tagRgb(tag);
   return rampColour(r, step);
+}
+
+/**
+ * Phase 2d: a ground detail in its season (flowers in spring, litter in autumn), else ALT: the ground
+ * under it, which takes the season as any ground does. Setup shows today's look (a cluster flower is
+ * new, so its ground); the held look has neither (mockup: no details when fast).
+ */
+function groundColour(state: LookState, role: number, tag: number): RGB | typeof ALT {
+  const flower = role === GroundRole.Flower || role === GroundRole.Bloom;
+  if (state === LookState.Painted) return role === GroundRole.Bloom ? ALT : tagRgb(tag);
+  if (state !== (flower ? LookState.Spring : LookState.Autumn)) return ALT;
+  if (flower) return tagRgb(tag);
+  return seasonRampRgb(role === GroundRole.LitterCopper ? 'deciduousAuCopper' : 'deciduousAuYellow')[role === GroundRole.LitterGold ? 3 : 2]!;
 }
 
 let tables: Uint32Array[] | null = null;

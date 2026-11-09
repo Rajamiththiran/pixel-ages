@@ -893,6 +893,26 @@ export const CONFIG = {
       // hut's roof and a longhouse's five roof rows (0.3 left most hut roofs bare, seen in the browser).
       // Off: `?off=roofs`.
       roofs: { on: true, capShare: 0.45 },
+      // Phase 2d: ground (mockup B: "dry summer grass where the ground is high and far from water, leaf
+      // litter at the forest edge, and spring flowers in clusters"). Off: `?off=groundDetail`.
+      ground: {
+        on: true,
+        // Dry grass: a tile's wetness drops by dryPerHeight at the highest elevation (editor.maxElevation),
+        // in proportion below it, so high ground takes the dry ramp sooner (moisture: dryBelow). Far from
+        // water and low rain already dry it (Phase 1b).
+        dryPerHeight: 0.2,
+        // Spring flowers (mockup): in value-noise clusters (cells flowerCellPx wide, where the noise is
+        // above flowerAbove) flowerShare of open grass pixels flower, flowerWhite of them white, the rest
+        // yellow. The all-year grass flowers (detail.flowerChance) show in spring only.
+        flowerCellPx: 9, flowerAbove: 0.66, flowerShare: 0.13, flowerWhite: 0.08,
+        // Autumn leaf litter (mockup): on grass next to a forest litterEdge × clustered noise (cells
+        // litterCellPx, weights litterNoiseWeights) of the pixels, on the forest floor litterFloor; both
+        // × the wood's deciduous share (seasons.trees: none on mountain ground). Of the litter, litterGold
+        // is the autumn-yellow ramp's step 3, litterYellow its step 2, the rest copper step 2 (the mockup's split).
+        litterEdge: 0.14, litterFloor: 0.22, litterCellPx: [12, 4], litterNoiseWeights: [0.6, 0.4],
+        litterGold: 0.23, litterYellow: 0.23,
+        salt: 181,
+      },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,

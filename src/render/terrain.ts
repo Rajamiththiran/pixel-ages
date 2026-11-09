@@ -12,9 +12,9 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  FieldPos, LookState, NO_TAG, Role, bayerRank, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterRanks, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
+  FieldPos, GroundRole, LookState, NO_TAG, Role, groundOn, bayerRank, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterRanks, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
-import { MoistureField } from './moisture';
+import { MoistureField, cellNoise } from './moisture';
 import { WinterField } from './winter';
 import { fieldClass, rowCut } from './fields';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
@@ -156,6 +156,9 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
   // Seasons Phase 2b: a field's class and harvest (−1: the old rows).
   fieldCut = ex.fields && plant === Plant.Farmland ? ex.fields[i]! : -1;
   if (fieldCut >= 0) fieldCls = fieldClass(tx, ty);
+  // Seasons Phase 2d: flowers and leaf litter on the ground (the litter by the wood's deciduous share).
+  const details = groundOn && mat !== null;
+  const leafShare = details && nearForest && ground !== Ground.Mountain ? Math.max(0, 1 - evergreenChance(map.elevation[i]!)) : 0;
 
   /**
    * One land pixel into `out`; returns its role. Seasons Phase 2a draws it a second time without
@@ -165,6 +168,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
     onCrown = false;
     onPeak = false;
     onFruitSpeck = false;
+    onFlower = false;
     landPixel(map, ground, plant, dens, kind, crowns && nearForest, stumps ? painted : -1, px, py, out);
     let role: number = landRole(ground, plant);
     if (treesOn) {
@@ -250,6 +254,22 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
           mat.tag[p] = tag; mat.role[p] = role;
           mat.rank[p] = tree ? bayerRank(cp.x, cp.y) : bayerRank(px, py);
           mat.alt[p] = NO_TAG;
+          // Seasons Phase 2d: a flower or leaf litter, which keeps the ground under it in alt.
+          if (details && (role === Role.Grass || role === Role.Forest || role === Role.FloorBare)) {
+            if (onFlower && role === Role.Grass && isFlowerTag(tag)) {
+              copy(out, flowerRgb);
+              noFlowers = true;
+              const under = land(ox, oy, px, py, edge, true);
+              noFlowers = false;
+              mat.role[p] = GroundRole.Flower; mat.alt[p] = rampTag(out); mat.altRole[p] = under;
+              copy(flowerRgb, out);
+            } else {
+              const bloom = role === Role.Grass ? bloomTag(px, py) : -1;
+              const litter = bloom < 0 && leafShare > 0 ? litterRole(px, py, role === Role.Grass, leafShare) : -1;
+              if (bloom >= 0) { mat.tag[p] = bloom; mat.role[p] = GroundRole.Bloom; mat.alt[p] = tag; mat.altRole[p] = role; }
+              else if (litter >= 0) { mat.role[p] = litter; mat.alt[p] = tag; mat.altRole[p] = role; }
+            }
+          }
         }
       } else g = 1 + R.grain * (2 * hash01(px, py, SALT.grain) - 1);
       const o = (py * imgW + px) * 4;
@@ -269,7 +289,10 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
           mat.alt[p] = Mat.Wood * 8 + cp.branch;
           mat.altRole[p] = hash01(px, py, TRS.salt + 13) < TRS.branchSnowShare ? Role.BranchSnow : Role.Branch;
         } else {
+          // Phase 2d: no flowers here (they would need an alt of their own; a bare tree is winter's anyway).
+          noFlowers = details;
           const under = land(ox, oy, px, py, edge, false);
+          noFlowers = false;
           mat.alt[p] = rampTag(out);
           mat.altRole[p] = under;
         }
@@ -358,6 +381,44 @@ function farmPixel(px: number, py: number, out: RGB): void {
     pos = (px & 1) === 1 ? FieldPos.Stubble : hash01(px, py, FC.salt + 4) < FC.sproutShare ? FieldPos.Sprout : FieldPos.Ridge;
   }
   fieldHere = fieldRole(fieldCls, pos, cut);
+}
+
+// ---------- seasons Phase 2d: ground ----------
+
+const GDC = CONFIG.render.seasons.ground;
+let onFlower = false;      // landPixel drew one of the all-year grass flowers
+let noFlowers = false;     // draw the ground without those flowers (the ground under one, or under a bare crown)
+const flowerRgb: RGB = [0, 0, 0];
+let flowerTags: number[] | null = null;   // white, yellow, fruit (accents)
+
+function flowerTag(k: number): number {
+  flowerTags ??= [RGBS.flowerWhite, RGBS.fireYellow, RGBS.fruit].map((c) => rampTag([...c] as RGB));
+  return flowerTags[k]!;
+}
+
+const isFlowerTag = (tag: number): boolean => tag === flowerTag(0) || tag === flowerTag(1) || tag === flowerTag(2);
+
+/** A spring flower's tag at open grass pixel (px, py), or −1 (mockup: flowerShare of the pixels in value-noise clusters). */
+function bloomTag(px: number, py: number): number {
+  const h = hash01(px, py, GDC.salt);
+  if (h >= GDC.flowerShare || cellNoise(px, py, GDC.flowerCellPx, GDC.salt + 1) <= GDC.flowerAbove) return -1;
+  return flowerTag(h < GDC.flowerWhite ? 0 : 1);
+}
+
+/**
+ * The leaf-litter role at (px, py), or −1: on grass next to a forest (`edge`) in clustered patches,
+ * on the forest floor more evenly (mockup), both × the wood's deciduous share. Its own hash, so a
+ * pixel rarely carries a spring flower too (the mockup's one hash makes them share pixels).
+ */
+function litterRole(px: number, py: number, edge: boolean, share: number): number {
+  const [c0, c1] = GDC.litterCellPx, [w0, w1] = GDC.litterNoiseWeights;
+  const h = hash01(px, py, GDC.salt + 2);
+  const limit = share * (edge ? GDC.litterEdge : GDC.litterFloor);
+  if (h >= limit) return -1;
+  const lim = edge ? limit * (w0! * cellNoise(px, py, c0!, GDC.salt + 3) + w1! * cellNoise(px, py, c1!, GDC.salt + 4)) : limit;
+  if (h >= lim) return -1;
+  const u = h / lim;
+  return u < GDC.litterGold ? GroundRole.LitterGold : u < GDC.litterGold + GDC.litterYellow ? GroundRole.LitterYellow : GroundRole.LitterCopper;
 }
 
 /** The role of a fruit-bush pixel: its fruit, a twig bare in winter, a blossom in spring, or a leaf. */
@@ -606,7 +667,7 @@ function landPixel(
       break;
     default:
       copy(RGBS.grass, out);
-      if (plant === Plant.None) applyGrassDetail(px, py, D.tuftBase, true, out);
+      if (plant === Plant.None) onFlower = applyGrassDetail(px, py, D.tuftBase, !noFlowers, out);
   }
 
   switch (plant) {
@@ -615,7 +676,7 @@ function landPixel(
       copy(out, tmp);
       grad(tmp, RGBS.grassLight, desert ? dens * R.desertGrassMaxBlend : dens, out);
       const chance = (ground === Ground.Grassland ? D.tuftBase : 0) + D.tuftGrassBonus * dens;
-      applyGrassDetail(px, py, chance, ground === Ground.Grassland, out);
+      onFlower = applyGrassDetail(px, py, chance, ground === Ground.Grassland && !noFlowers, out);
       break;
     }
     case Plant.Forest:
