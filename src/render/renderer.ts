@@ -22,7 +22,7 @@ import { Camera } from './camera';
 import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
 import { SeasonDriver } from './seasonLook';
-import { fieldsOn, seasonRampsOn } from './materials';
+import { fieldsOn, iceOn, roofsOn, seasonRampsOn } from './materials';
 import { FieldState } from './fields';
 import { ScreenClock } from './screenClock';
 import { RainEase } from './rainEase';
@@ -158,6 +158,8 @@ export class Renderer {
     this.terrain.setRain(view.map.rain);
     this.fields = fieldsOn ? new FieldState(view.map.width, view.map.height) : null;
     if (this.fields) this.terrain.fields = this.fields.cut;
+    // Seasons Phase 2c: boats keep off frozen water.
+    if (iceOn) this.traffic.frozen = (i) => this.terrain.frozenTile(i);
     this.weather = new Weather(view.map);
     this.effects = new Effects(view.map);
     this.trample = new TrampleLayer(view.map.width, view.map.height);
@@ -242,6 +244,12 @@ export class Renderer {
       if (this.fields) this.terrain.redrawTiles(this.fields.reset());
     }
   }
+
+  /** Seasons Phase 2c: a planned Harsh winters event runs this year (deeper, lower snow). */
+  set harshWinter(on: boolean) { this.seasonDriver.harsh = on; }
+
+  /** Seasons Phase 2c: does snow lie at map pixel (x, y)? (A building there wears it.) */
+  private readonly snowOnRoof = (x: number, y: number): boolean => this.terrain.snowAt(Math.floor(x), Math.floor(y));
 
   /**
    * Seasons Phase 2b: a frame's people move the harvest on (Farm workers cut their fields in
@@ -379,6 +387,7 @@ export class Renderer {
     // Seasons Phase 1b: the season each rank shows (painted in setup, held at the fast speeds).
     if (seasonRampsOn) {
       this.terrain.setLook(this.seasonDriver.update(now, this.clock.monthOfYear, this.season.show, v.running, this.seasonJump));
+      this.terrain.setCover(this.seasonDriver.snowLine, this.seasonDriver.iceLine);
       this.seasonJump = false;
     }
     this.terrain.flush(this.terrainBudgetMs);
@@ -410,7 +419,7 @@ export class Renderer {
       const night = this.light.darkness > 0.45;
       this.people.animate(now, dt);
       this.people.collect(now, this.push);
-      this.buildings.collect(this.push, night);
+      this.buildings.collect(this.push, night, roofsOn ? this.snowOnRoof : null);
       this.camps.collect(now, this.push);
       this.life.animate(now, dt);
       this.life.collect(now, this.push);

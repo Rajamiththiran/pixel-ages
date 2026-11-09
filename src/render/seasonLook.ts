@@ -47,6 +47,38 @@ export function parsePin(q: string | null): Int8Array | null {
 const pinFromUrl = (): Int8Array | null =>
   import.meta.env.DEV && typeof location !== 'undefined' ? parsePin(new URLSearchParams(location.search).get('pin')) : null;
 
+// ---------- Phase 2c: how far winter has come ----------
+
+/**
+ * How far winter has come at month `m` (0–12): 0 before `start`, rising to 1 at `full`, and 1 until
+ * the spring front has passed (the snow and ice melt as spring reaches each pixel); 0 the rest of the year.
+ */
+export function winterProgress(m: number, start: number, full: number): number {
+  const since = (((m - start) % MONTHS) + MONTHS) % MONTHS;               // months since winter's start
+  const until = MONTHS - start + SC.fronts[0]!.start + SC.fronts[0]!.months; // …until spring has reached every pixel
+  if (since > until) return 0;
+  return Math.min(1, since / (full - start));
+}
+
+/** The snow and ice lines (0–255) at month `m`; a harsh winter lays more snow (owner decision S5). */
+export function coverLines(m: number, harsh: boolean): [number, number] {
+  const SN = SC.snow, IC = SC.ice;
+  const snow = winterProgress(m, SN.startMonth, SN.fullMonth) * (harsh ? SN.harshCover : SN.cover);
+  return [Math.round(snow * 255), Math.round(winterProgress(m, IC.startMonth, IC.fullMonth) * 255)];
+}
+
+/** Dev pin's lines (`&snow=0.6&ice=1`, shares of the land and of the ice's reach); a pinned winter defaults to 0.6 and 1. */
+export function parsePinLines(snow: string | null, ice: string | null): [number, number] {
+  const share = (v: string | null, d: number): number => Math.round(Math.min(1, Math.max(0, v === null ? d : Number(v) || 0)) * 255);
+  return [share(snow, 0.6), share(ice, 1)];
+}
+
+const pinLinesFromUrl = (): [number, number] => {
+  if (!import.meta.env.DEV || typeof location === 'undefined') return [0, 0];
+  const q = new URLSearchParams(location.search);
+  return parsePinLines(q.get('snow'), q.get('ice'));
+};
+
 type Mode = 'painted' | 'held' | 'year' | 'pin';
 
 /**
@@ -62,8 +94,13 @@ export class SeasonDriver {
   private mode: Mode | null = null;
   private blendStart = -1;
   private lastStep = -1;
+  /** Phase 2c: the snow and ice lines shown now (0–255), stepped with the ranks. */
+  snowLine = 0;
+  iceLine = 0;
+  /** Phase 2c: a planned Harsh winters event runs this year. */
+  harsh = false;
 
-  constructor(private readonly pin: Int8Array | null = pinFromUrl()) {}
+  constructor(private readonly pin: Int8Array | null = pinFromUrl(), private readonly pinLines: [number, number] = pinLinesFromUrl()) {}
 
   /**
    * `month`: the screen clock's month of the year. `show` (the speed's seasonShow): below 1 the
@@ -95,10 +132,13 @@ export class SeasonDriver {
     // few batches a front look the same (each pixel still changes once). A jump shows at once.
     const next = this.next;
     for (let r = 0; r < RANKS; r++) next[r] = r < level ? t[r]! : this.old[r]!;
-    let same = true;
+    const [snow, ice] = mode === 'pin' ? this.pinLines : mode === 'year' ? coverLines(month, this.harsh) : [0, 0];
+    let same = snow === this.snowLine && ice === this.iceLine;
     for (let r = 0; r < RANKS; r++) if (next[r] !== this.shown[r]) { same = false; break; }
     if (!same && (jump || this.lastStep < 0 || nowMs - this.lastStep >= SC.lookStepMs)) {
       this.shown.set(next);
+      this.snowLine = snow;
+      this.iceLine = ice;
       this.lastStep = nowMs;
     }
     return this.shown;

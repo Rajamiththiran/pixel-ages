@@ -2,6 +2,8 @@
 // canvas and cached by key, so the draw loop only calls drawImage.
 
 import { SPRITES, type SpriteDef } from './spriteData';
+import { CONFIG } from '../config';
+import { SEASON_HEX } from './ramps';
 import { GROUP_COLORS, SKIN_COLORS, HAIR_COLORS, ELDER_HAIR, darken, worldHex } from './palette';
 
 /** Colours for the per-sprite legend characters (§19.1). */
@@ -55,7 +57,30 @@ const packRgba = (hex: string): number => {
   return ((255 << 24) | ((v & 255) << 16) | (v & 0xff00) | ((v >> 16) & 255)) >>> 0;
 };
 
-function render(def: SpriteDef, vars: SpriteVars, flip: boolean, night: boolean): HTMLCanvasElement {
+/**
+ * Seasons Phase 2c: snow on a building (mockup B, roofs). In each column the top pixels, capShare of
+ * the building's drawn height, turn white: the lit (left) half snow-4, the right half snow-3, the lowest cap row a
+ * checker of snow-1 over the roof. Windows, doors and flames (K, f, F) stay. Null: no snow here.
+ */
+function snowColour(def: SpriteDef, x: number, y: number, px: number): string | null {
+  // The share of the building as drawn (its empty rows above and below do not count).
+  let first = 0, last = def.h - 1;
+  while (first < last && !/[^.]/.test(def.rows[first]!)) first++;
+  while (last > first && !/[^.]/.test(def.rows[last]!)) last--;
+  const cap = Math.max(1, Math.round((last - first + 1) * CONFIG.render.seasons.roofs.capShare));
+  let top = 0;
+  while (top < def.h && def.rows[top]![x] === '.') top++;
+  const k = y - top;
+  if (k < 0 || k >= cap) return null;
+  for (let yy = top; yy < y; yy++) if (def.rows[yy]![x] === '.') return null;   // a gap: below it is a wall, not the roof
+  const ch = def.rows[y]![x]!;
+  if (ch === 'K' || ch === 'f' || ch === 'F') return null;
+  const snow = SEASON_HEX.snowFull;
+  if (k === cap - 1 && cap > 1) return ((px + y) & 1) === 1 ? snow[1] : null;
+  return px < def.w / 2 ? snow[4] : snow[3];
+}
+
+function render(def: SpriteDef, vars: SpriteVars, flip: boolean, night: boolean, snow = false): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = def.w;
   c.height = def.h;
@@ -66,9 +91,10 @@ function render(def: SpriteDef, vars: SpriteVars, flip: boolean, night: boolean)
     for (let x = 0; x < def.w; x++) {
       // F8 night variant of a building: dark windows and doors glow with firelight.
       const ch = night && row[x] === 'K' ? 'f' : row[x]!;
-      const col = charColor(ch, vars);
+      let col = charColor(ch, vars);
       if (!col) continue;
       const px = flip ? def.w - 1 - x : x;
+      if (snow) col = snowColour(def, x, y, px) ?? col;
       ctx.fillStyle = col;
       ctx.fillRect(px, y, 1, 1);
       data[y * def.w + px] = packRgba(col);
@@ -80,13 +106,14 @@ function render(def: SpriteDef, vars: SpriteVars, flip: boolean, night: boolean)
 
 const cache = new Map<string, HTMLCanvasElement>();
 
-export function getSprite(name: string, vars: SpriteVars = {}, flip = false, night = false): HTMLCanvasElement {
-  const key = `${name}|${vars.C ?? ''}|${vars.S ?? ''}|${vars.H ?? ''}|${vars.L ?? ''}|${flip ? 1 : 0}|${night ? 1 : 0}`;
+/** A sprite; `snow` (seasons Phase 2c): with snow on its top (buildings in winter). */
+export function getSprite(name: string, vars: SpriteVars = {}, flip = false, night = false, snow = false): HTMLCanvasElement {
+  const key = `${name}|${vars.C ?? ''}|${vars.S ?? ''}|${vars.H ?? ''}|${vars.L ?? ''}|${flip ? 1 : 0}|${night ? 1 : 0}|${snow ? 1 : 0}`;
   let c = cache.get(key);
   if (!c) {
     const def = SPRITES[name];
     if (!def) throw new Error(`Unknown sprite ${name}`);
-    c = render(def, vars, flip, night);
+    c = render(def, vars, flip, night, snow);
     cache.set(key, c);
   }
   return c;

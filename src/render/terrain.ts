@@ -12,9 +12,10 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  FieldPos, LookState, NO_TAG, Role, bayerRank, fieldRole, sheafRole, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
+  FieldPos, LookState, NO_TAG, Role, bayerRank, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterRanks, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
 import { MoistureField } from './moisture';
+import { WinterField } from './winter';
 import { fieldClass, rowCut } from './fields';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
 import { buildCrowns, canopyDistance, crownColourAt, crownPixelAt, inTreeShadow, type CrownPixel } from './crowns';
@@ -67,6 +68,7 @@ export interface TileExtras {
   shadow?: Uint8ClampedArray | null; // Diorama phase 3: cast-shadow mask (alpha 255 = shadowed), same layout as the image
   mat?: MatBuf | null;           // Seasons Phase 1a: each pixel's ramp step and role, same layout as the image
   fields?: Uint8Array | null;    // Seasons Phase 2b: harvest per tile (0–255); given, farmland is drawn on the mockup's rows
+  ponds?: Uint8Array | null;     // Seasons Phase 2c: still water small enough to freeze through (per tile, 1)
 }
 
 // What the pixel being drawn turned out to be, for shadows and occlusion (phase 3).
@@ -210,7 +212,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         if (river) riverPixel(map, tx, ty, px, py, time.riverStep, out);
         else waterPixel(map, ex.depth, px, py, wall === WallType.Sea, time.waterStep, out);
         if (hasEdge) applyFoam(edge, px, py, time.waterStep, out);
-        role = river ? Role.River : wall === WallType.Sea ? Role.Sea : Role.Lake;
+        role = river ? Role.River : wall === WallType.Sea ? Role.Sea : ex.ponds && ex.ponds[i] === 1 ? Role.Pond : Role.Lake;
       } else if (water) {
         // A rounded-off corner of a water tile: the bank.
         copy(cornerLand, out);
@@ -265,12 +267,11 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         const p = py * imgW + px;
         if (cp.branch > 0) {
           mat.alt[p] = Mat.Wood * 8 + cp.branch;
-          mat.altRole[p] = crownCold && hash01(px, py, TRS.salt + 13) < TRS.branchSnowShare ? Role.BranchSnow : Role.Branch;
+          mat.altRole[p] = hash01(px, py, TRS.salt + 13) < TRS.branchSnowShare ? Role.BranchSnow : Role.Branch;
         } else {
-          const cold = crownCold, under = land(ox, oy, px, py, edge, false);
+          const under = land(ox, oy, px, py, edge, false);
           mat.alt[p] = rampTag(out);
           mat.altRole[p] = under;
-          crownCold = cold;
         }
       }
     }
@@ -280,10 +281,8 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
 // ---------- seasons Phase 2a: trees and bushes ----------
 
 const TRS = CONFIG.render.seasons.trees;
-const SNOW_ELEVATION = CONFIG.render.f8.season.snowElevation;
 const cp: CrownPixel = { x: 0, y: 0, r: 0, dx: 0, dy: 0, branch: 0 };
 let onTree = false;        // the pixel being drawn is a laid-out crown (cp holds it)
-let crownCold = false;     // its tree stands where winter snow lies
 let onFruitSpeck = false;  // landPixel drew a fruit speck
 
 /** The chance that a crown on land of this height is evergreen (mountain ground: Infinity). */
@@ -299,16 +298,17 @@ export function crownKind(x: number, y: number, elevation: number): Role {
   return h < TRS.autumnYellow ? Role.DecYellow : h < TRS.autumnYellow + TRS.autumnCopper ? Role.DecCopper : Role.DecGreen;
 }
 
-/** The role of a crown pixel, and whether its tree stands where snow lies (`crownCold`). */
+/**
+ * The role of a crown pixel. An evergreen's lit upper pixels are its snow cap: white in winter
+ * where the snow lies (Phase 2c: the snow cover decides, not the crown).
+ */
 function crownRole(map: MapData, c: CrownPixel, px: number, py: number): Role {
   const tx = Math.min(map.width - 1, Math.max(0, Math.floor(c.x / TILE)));
   const ty = Math.min(map.height - 1, Math.max(0, Math.floor(c.y / TILE)));
   const ti = ty * map.width + tx;
   const mountain = map.ground[ti] === Ground.Mountain;
-  // Until Phase 2c's snow line: winter snow lies on mountain ground and high land (the F8 rule).
-  crownCold = mountain || map.elevation[ti]! >= SNOW_ELEVATION;
   const kind = crownKind(c.x, c.y, mountain ? Infinity : map.elevation[ti]!);
-  if (kind === Role.Crown && crownCold && c.dy < 0 && (c.dx + c.dy) / c.r <= TRS.snowLitBelow
+  if (kind === Role.Crown && c.dy < 0 && (c.dx + c.dy) / c.r <= TRS.snowLitBelow
     && hash01(px, py, TRS.salt + 12) < TRS.snowCapShare) return Role.CrownSnow;
   return kind;
 }
@@ -316,6 +316,9 @@ function crownRole(map: MapData, c: CrownPixel, px: number, py: number): Role {
 // ---------- seasons Phase 2b: fields and the harvest ----------
 
 const FC = CONFIG.render.seasons.fields;
+// Phase 2c: how far past the snow line a moved line can change a pixel (dusting, dithered edge), 0–255.
+const SNOW_EDGE = CONFIG.render.seasons.snow.edgeShare * 255;
+const SNOW_DUST = CONFIG.render.seasons.snow.dustShare * 255;
 let fieldCut = -1;         // the tile's harvest (0–255), −1 when farmland is drawn on the old rows
 let fieldCls = 0;          // the tile's field class (fields.ts)
 let fieldHere: number = Role.Farm;   // the role farmPixel gave the pixel
@@ -768,6 +771,12 @@ export class TerrainLayer {
   private readonly look: SeasonLook | null = null;
   private readonly px: Uint32Array;
   private readonly moisture: MoistureField | null = null;
+  // Phase 2c: the orders snow and ice reach each pixel, and whether a moved line waits to be drawn.
+  private readonly winter: WinterField | null = null;
+  private coverDirty = false;
+  private coverFull = false;       // the orders themselves changed: every pixel showing winter is recoloured
+  private drawnSnow = 0;           // the lines the image shows
+  private drawnIce = 0;
   private rain: ArrayLike<number> | null = null;
   private moistureDirty = false;
   private ranksDirty = 0;          // bit r: rank r shows a new state
@@ -798,9 +807,11 @@ export class TerrainLayer {
       this.mat = createMatBuf(this.canvas.width, this.canvas.height);
       this.look = createLook();
       this.moisture = new MoistureField(map.width, map.height);
+      if (snowOn || iceOn) this.winter = new WinterField(map.width, map.height);
     }
     this.store = this.mat && this.look ? matStore(this.mat, this.look, this.px) : rgbaStore(this.img.data, this.canvas.width);
     this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null, shadow: this.shadowImg?.data ?? null, mat: this.mat };
+    this.winterNow();
     this.markAll();
   }
 
@@ -826,7 +837,26 @@ export class TerrainLayer {
     computeDepth(map, this.depth);
     this.moisture?.landChanged();
     this.moistureDirty = true;
+    this.winterNow();
     this.markAll();
+  }
+
+  /**
+   * Phase 2c: works out the snow and ice orders now (a new map, or water came or went: ~100 ms, so
+   * not on ordinary land changes). Tiles that became or stopped being a pond are redrawn (their
+   * role); nothing else is, so tiles fading keep fading.
+   */
+  private winterNow(): void {
+    const w = this.winter, look = this.look;
+    if (!w || !look) return;
+    const before = w.ponds.slice();
+    w.invalidate();
+    w.ensure(this.map);
+    look.cold = snowOn ? w.cold : null;
+    look.ice = iceOn ? w.ice : null;
+    this.extras.ponds = iceOn ? w.ponds : null;
+    this.coverFull = true;
+    for (let i = 0; i < before.length; i++) if (before[i] !== w.ponds[i]) this.markDirty(i);
   }
 
   /**
@@ -844,6 +874,32 @@ export class TerrainLayer {
   }
 
   /** Phase 1b: the rain per tile the screen shows (its contents may change later; call again then). */
+  /**
+   * Phase 2c: the snow and ice lines winter has reached (0–255; seasonLook.ts). Pixels showing
+   * winter are recoloured on the next flush when either moves.
+   */
+  setCover(snowLine: number, iceLine: number): void {
+    const look = this.look;
+    if (!look || !this.winter) return;
+    const s = snowOn ? snowLine : 0, i = iceOn ? iceLine : 0;
+    if (s === look.snowLine && i === look.iceLine) return;
+    look.snowLine = s; look.iceLine = i;
+    this.coverDirty = true;
+  }
+
+  /** Phase 2c: is map pixel (px, py) under snow now? (A building there wears it on its roof.) */
+  snowAt(px: number, py: number): boolean {
+    if (!this.mat || !this.look || px < 0 || py < 0 || px >= this.mat.w || py >= this.mat.h) return false;
+    return snowAt(this.mat, this.look, py * this.mat.w + px, px, py);
+  }
+
+  /** Phase 2c: is the centre of tile i frozen now? (Boats keep off it.) */
+  frozenTile(i: number): boolean {
+    if (!this.mat || !this.look) return false;
+    const w = this.map.width, px = (i % w) * TILE + TILE / 2, py = Math.floor(i / w) * TILE + TILE / 2;
+    return iceAt(this.mat, this.look, py * this.mat.w + px);
+  }
+
   setRain(rain: ArrayLike<number>): void {
     this.rain = rain;
     this.moistureDirty = true;
@@ -868,6 +924,8 @@ export class TerrainLayer {
     this.depthDirty = true;
     // Grass near water is wetter: only water coming or going changes the moisture.
     if (this.moisture?.tilesChanged(this.map, list)) this.moistureDirty = true;
+    // Water came or went: the snow and ice orders (and which water is a pond) are worked out again.
+    if (this.winter?.tilesChanged(this.map, list)) this.winterNow();
   }
 
   private markWithNeighbours(i: number, fade = false): void {
@@ -954,6 +1012,31 @@ export class TerrainLayer {
       if (this.ranksDirty !== 0) {
         resolveRanks(this.mat, this.look, this.px, this.ranksDirty);
         this.ranksDirty = 0;
+        this.wholeImage = true;
+      }
+      const L = this.look, wf = this.winter;
+      if (this.coverFull) {
+        // New orders: every pixel showing winter.
+        this.coverFull = false;
+        this.coverDirty = false;
+        const mask = winterRanks(L);
+        if (mask !== 0) { resolveRanks(this.mat, L, this.px, mask); this.wholeImage = true; }
+        this.drawnSnow = L.snowLine; this.drawnIce = L.iceLine;
+      } else if (this.coverDirty && wf) {
+        // A moved line: only the pixels it crossed (and the dusting and dithered edge beyond it; the
+        // ice front's neighbours) can change. A whole-map recolour each step was ~20% of a late-game frame.
+        this.coverDirty = false;
+        if (L.snowLine !== this.drawnSnow) {
+          const lo = Math.max(0, Math.floor(Math.min(this.drawnSnow, L.snowLine) - SNOW_EDGE - 1));
+          const hi = Math.min(254, Math.ceil(Math.max(this.drawnSnow, L.snowLine) + SNOW_DUST + SNOW_EDGE + 1));
+          resolveBand(this.mat, L, this.px, wf.coldList, wf.coldStart[lo]!, wf.coldStart[hi + 1]!, false);
+        }
+        if (L.iceLine !== this.drawnIce) {
+          const lo = Math.max(0, Math.min(this.drawnIce, L.iceLine) - 1);
+          const hi = Math.min(254, Math.max(this.drawnIce, L.iceLine));
+          resolveBand(this.mat, L, this.px, wf.iceList, wf.iceStart[lo]!, wf.iceStart[hi + 1]!, true);
+        }
+        this.drawnSnow = L.snowLine; this.drawnIce = L.iceLine;
         this.wholeImage = true;
       }
     }

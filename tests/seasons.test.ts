@@ -18,7 +18,10 @@ import { Mat, RAMP_HEX, SEASON_HEX, hexRgb, rampColours, rampTag, shadowOf, tagC
 import { ALT, LookState, Moist, ROLES, bayerRank, isCrown, isDeciduous, lookColour } from '../src/render/materials';
 import { buildCrowns, crownPixelAt } from '../src/render/crowns';
 import { FieldState, Stage, fieldClass, rowCut, stageOf } from '../src/render/fields';
-import { FieldPos, fieldRoleParts } from '../src/render/materials';
+import { FieldPos, fieldRoleParts, isWaterRole } from '../src/render/materials';
+import { NEVER, WinterField } from '../src/render/winter';
+import { coverLines } from '../src/render/seasonLook';
+import { WallType } from '../src/shared/ids';
 import { Action } from '../src/shared/ids';
 import { crownKind, evergreenChance } from '../src/render/terrain';
 import { MoistureField, tileWetness } from '../src/render/moisture';
@@ -694,14 +697,6 @@ describe('seasons Phase 2a: evergreen and deciduous trees', () => {
     expect(floorShare(9)).toBeLessThan(0.1);
   });
 
-  it('snow lies on crowns only where winter snow lies (high or mountain ground), and only in winter', () => {
-    const snow = inRamp('snowFull');
-    const count = (elev: number, state: number): number => drawIn(plantMap(Plant.Forest, elev), state).hex.filter((h) => snow.has(h)).length;
-    const high = CONFIG.render.f8.season.snowElevation + 1;
-    expect(count(high, LookState.Winter)).toBeGreaterThan(50);
-    expect(count(high, LookState.Autumn)).toBe(0);
-    expect(count(0, LookState.Winter)).toBe(0);
-  });
 });
 
 describe('seasons Phase 2a: fruit bushes', () => {
@@ -873,5 +868,202 @@ describe('seasons Phase 2b: the harvest follows the farmers', () => {
       const x = p % winter.mat.w, y = Math.floor(p / winter.mat.w);
       expect(stageColours(stageOf(fieldClass(Math.floor(x / TILE), Math.floor(y / TILE)), 3)).has(winter.hex[p]!)).toBe(true);
     }
+  });
+});
+
+// ---------- Phase 2c: snow by height, roofs and ice ----------
+
+const SNW = CONFIG.render.seasons.snow;
+const ICE = CONFIG.render.seasons.ice;
+
+/** Draws `m` with its winter field and resolves it with every rank in `state` and these lines (0–255). */
+function winterIn(m: MapData, state: number, snowLine: number, iceLine: number, ex: Partial<TileExtras> = {}): { mat: MatBuf; hex: string[]; field: WinterField } {
+  const field = new WinterField(m.width, m.height);
+  field.ensure(m);
+  const mat = createMatBuf(m.width * TILE, m.height * TILE);
+  const depth = new Uint8Array(m.width * m.height);
+  computeDepth(m, depth);
+  const imgW = m.width * TILE, data = new Uint8ClampedArray(imgW * m.height * TILE * 4);
+  for (let i = 0; i < m.width * m.height; i++) {
+    drawTilePixels(m, i, data, imgW, { waterStep: 0, riverStep: 0 }, { depth, crossing: null, ...none, mat, ponds: field.ponds, ...ex });
+  }
+  const look = createLook();
+  look.shown.fill(state);
+  look.cold = field.cold; look.ice = field.ice; look.snowLine = snowLine; look.iceLine = iceLine;
+  const px = new Uint32Array(mat.w * mat.h);
+  for (let ty = 0; ty < m.height; ty++) for (let tx = 0; tx < m.width; tx++) resolveTile(mat, look, px, tx, ty);
+  return { mat, field, hex: Array.from(px, (v) => '#' + [v & 255, (v >> 8) & 255, (v >> 16) & 255].map((c) => c.toString(16).padStart(2, '0')).join('')) };
+}
+
+const snowColours = new Set<string>([...SEASON_HEX.snowFull, ...SEASON_HEX.snowDust]);
+const iceColours = new Set<string>([...SEASON_HEX.ice, ...SEASON_HEX.iceRim]);
+
+/** A 20 × 12 grass map with a hill in the east (height up to 9) and, if asked, water. */
+function hillMap(water: 'none' | 'pond' | 'lake' | 'sea' = 'none'): MapData {
+  const m = createMap(20, 12);
+  for (let y = 0; y < 12; y++) for (let x = 0; x < 20; x++) m.elevation[y * 20 + x] = Math.max(0, Math.min(9, x - 10));
+  const wet = (x0: number, y0: number, x1: number, y1: number, sea = false): void => {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = y * 20 + x; m.ground[i] = Ground.Water; if (sea) m.wall[i] = WallType.Sea; }
+  };
+  if (water === 'pond') wet(3, 4, 5, 6);
+  if (water === 'lake') wet(1, 1, 8, 10);
+  if (water === 'sea') wet(0, 0, 4, 11, true);
+  return m;
+}
+
+describe('seasons Phase 2c: where snow lies first', () => {
+  it('high ground and the north snow first; the order spreads evenly over the land; water never snows', () => {
+    const f = new WinterField(20, 12);
+    const m = hillMap('pond');
+    f.ensure(m);
+    const meanCold = (x0: number, x1: number, y0: number, y1: number): number => {
+      let s = 0, n = 0;
+      for (let y = y0 * TILE; y < y1 * TILE; y++) for (let x = x0 * TILE; x < x1 * TILE; x++) { const v = f.cold[y * f.pw + x]!; if (v !== NEVER) { s += v; n++; } }
+      return s / n;
+    };
+    expect(meanCold(16, 20, 0, 12)).toBeLessThan(meanCold(8, 12, 0, 12));   // the hill before the plain
+    const flat = new WinterField(20, 12); flat.ensure(createMap(20, 12));
+    let north = 0, south = 0;
+    for (let x = 0; x < flat.pw; x++) { north += flat.cold[2 * flat.pw + x]!; south += flat.cold[(flat.ph - 3) * flat.pw + x]!; }
+    expect(north).toBeLessThan(south);
+    // Water never snows; land shares are even (a line at 30% covers about 30% of the land).
+    let land = 0, below = 0;
+    for (let p = 0; p < f.cold.length; p++) {
+      const water = m.ground[Math.floor(Math.floor(p / f.pw) / TILE) * 20 + Math.floor((p % f.pw) / TILE)] === Ground.Water;
+      if (water) { expect(f.cold[p]).toBe(NEVER); continue; }
+      land++;
+      if (f.cold[p]! < 0.3 * 255) below++;
+    }
+    expect(below / land).toBeCloseTo(0.3, 1);
+  });
+
+  it('the snow line rises through the winter, deeper in a harsh one, and is gone once spring has passed', () => {
+    let last = -1;
+    for (let m = SNW.startMonth; m < 12; m += 0.1) { const [s] = coverLines(m, false); expect(s).toBeGreaterThanOrEqual(last); last = s; }
+    expect(last).toBe(Math.round(SNW.cover * 255));
+    expect(coverLines(0.5, false)[0]).toBe(last);                    // still lying where spring has not come
+    expect(coverLines(5, false)).toEqual([0, 0]);                    // summer
+    expect(coverLines(11.9, true)[0]).toBe(Math.round(SNW.harshCover * 255));
+    let ice = -1;
+    for (let m = ICE.startMonth; m < 12; m += 0.1) { const [, i] = coverLines(m, false); expect(i).toBeGreaterThanOrEqual(ice); ice = i; }
+  });
+});
+
+describe('seasons Phase 2c: snow on the land', () => {
+  it('in winter the snow covers the land below the line, a dusting just past it; never outside winter', () => {
+    const m = hillMap();
+    const covered = (state: number, line: number): number => winterIn(m, state, line, 0).hex.filter((h) => snowColours.has(h)).length / (m.width * m.height * 64);
+    expect(covered(LookState.Winter, 0)).toBe(0);
+    const third = covered(LookState.Winter, Math.round(0.33 * 255));
+    expect(third).toBeGreaterThan(0.25);
+    expect(third).toBeLessThan(0.5);
+    expect(covered(LookState.Winter, 255)).toBeGreaterThan(0.9);
+    expect(covered(LookState.Autumn, 255)).toBe(0);
+    expect(covered(LookState.Held, 255)).toBe(0);
+  });
+
+  it('paths and roads stay dusted under deep snow; field ridges show through', () => {
+    const t = allTilesMap();
+    const { mat, hex } = winterIn(t.m, LookState.Winter, 255, 0, { marks: t.marks, hazards: t.hazards, look: t.look, base: t.base });
+    const full = inRamp('snowFull'), dust = inRamp('snowDust');
+    let marks = 0;
+    for (let p = 0; p < hex.length; p++) {
+      if (mat.role[p] === Role.Mark) { marks++; expect(full.has(hex[p]!) && !dust.has(hex[p]!)).toBe(false); }
+    }
+    expect(marks).toBeGreaterThan(20);
+    const f = winterIn(plantMap(Plant.Farmland, 0), LookState.Winter, 255, 0, { fields: new Uint8Array(12 * 8) });
+    let furrows = 0, ridges = 0;
+    for (let p = 0; p < f.hex.length; p++) {
+      const part = fieldRoleParts(f.mat.role[p]!);
+      if (!part || part.sheaf) continue;
+      if (part.pos === FieldPos.Furrow) { furrows++; expect(full.has(f.hex[p]!)).toBe(true); }
+      else { ridges++; expect(snowColours.has(f.hex[p]!)).toBe(false); }
+    }
+    expect(furrows).toBeGreaterThan(100);
+    expect(ridges).toBeGreaterThan(100);
+  });
+
+  it('an evergreen wears its snow cap only where the snow lies; a bare tree its snow on the branches', () => {
+    const m = plantMap(Plant.Forest, 0, 20, 10);
+    for (let y = 0; y < 10; y++) for (let x = 10; x < 20; x++) m.elevation[y * 20 + x] = 9;   // the east is high: it snows first
+    const { mat, hex, field } = winterIn(m, LookState.Winter, Math.round(0.3 * 255), 0);
+    let capSnow = 0, capBare = 0, branchSnow = 0;
+    for (let p = 0; p < hex.length; p++) {
+      const covered = field.cold[p]! < 0.3 * 255 - SNW.edgeShare * 255;
+      const uncovered = field.cold[p]! > 0.3 * 255 + (SNW.dustShare + SNW.edgeShare) * 255;
+      const white = SEASON_HEX.snowFull.includes(hex[p] as never);
+      if (mat.role[p] === Role.CrownSnow) { if (covered) { expect(white).toBe(true); capSnow++; } if (uncovered) { expect(white).toBe(false); capBare++; } }
+      if (mat.altRole[p] === Role.BranchSnow && isDeciduous(mat.role[p]!) && covered) { expect(white).toBe(true); branchSnow++; }
+    }
+    expect(capSnow).toBeGreaterThan(0);
+    expect(capBare).toBeGreaterThan(0);
+    expect(branchSnow).toBeGreaterThan(0);
+  });
+});
+
+describe('seasons Phase 2c: ice', () => {
+  it('a small pond freezes right through; a lake from its shore, its middle open; the sea never', () => {
+    const pond = new WinterField(20, 12); pond.ensure(hillMap('pond'));
+    const lake = new WinterField(20, 12); lake.ensure(hillMap('lake'));
+    const sea = new WinterField(20, 12); sea.ensure(hillMap('sea'));
+    const at = (f: WinterField, tx: number, ty: number, ox = 4, oy = 4): number => f.ice[(ty * TILE + oy) * f.pw + tx * TILE + ox]!;
+    expect(pond.ponds[5 * 20 + 4]).toBe(1);
+    expect(at(pond, 4, 5)).toBeLessThan(NEVER);                         // the pond's middle freezes
+    expect(lake.ponds[5 * 20 + 4]).toBe(0);
+    expect(at(lake, 1, 5, 0, 4)).toBeLessThan(at(lake, 2, 5, 0, 4));    // the shore before further in
+    expect(at(lake, 4, 5)).toBe(NEVER);                                 // the middle stays open
+    expect(at(sea, 2, 5, 7, 4)).toBe(NEVER);
+    expect(at(sea, 4, 5, 7, 4)).toBe(NEVER);
+  });
+
+  it('as the ice line rises no water pixel thaws, the pond ends frozen, and the ice front is a darker line', () => {
+    let prev = new Set<number>();
+    for (const line of [40, 90, 140, 200, 255]) {
+      const { mat, hex } = winterIn(hillMap('pond'), LookState.Winter, 0, line);
+      const frozen = new Set<number>();
+      for (let p = 0; p < hex.length; p++) if (isWaterRole(mat.role[p]!) && iceColours.has(hex[p]!)) frozen.add(p);
+      for (const p of prev) expect(frozen.has(p)).toBe(true);
+      prev = frozen;
+    }
+    const water = winterIn(hillMap('pond'), LookState.Winter, 0, 255);
+    const pondPx = water.hex.filter((_h, p) => water.mat.role[p] === Role.Pond);
+    expect(pondPx.length).toBeGreaterThan(0);
+    expect(pondPx.every((h) => iceColours.has(h))).toBe(true);
+    const lake = winterIn(hillMap('lake'), LookState.Winter, 0, 255);
+    expect(lake.hex.filter((h) => h === SEASON_HEX.iceRim[1]).length).toBeGreaterThan(20);   // the front
+    expect(lake.hex.some((h, p) => isWaterRole(lake.mat.role[p]!) && !iceColours.has(h))).toBe(true);   // open water left
+    expect(winterIn(hillMap('pond'), LookState.Spring, 0, 255).hex.some((h) => iceColours.has(h))).toBe(false);
+  });
+
+  it('recolouring only the band a moved line crossed gives exactly the full recolour', () => {
+    const m = hillMap('lake');
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(16).fill(LookState.Winter));
+    l.flush();
+    const inner = l as unknown as { mat: MatBuf; look: Parameters<typeof resolveTile>[1] };
+    for (const [s, i] of [[40, 30], [90, 80], [160, 170], [255, 255], [120, 60], [0, 0], [70, 200]] as const) {
+      l.setCover(s, i); l.flush();
+      const ref = new Uint32Array(inner.mat.w * inner.mat.h);
+      for (let ty = 0; ty < m.height; ty++) for (let tx = 0; tx < m.width; tx++) resolveTile(inner.mat, inner.look, ref, tx, ty);
+      expect(fnv(imageOf(l)), `snow ${s} ice ${i}`).toBe(fnv(new Uint8ClampedArray(ref.buffer)));
+    }
+  });
+
+  it('the terrain layer reports frozen tiles (boats keep off) and snow at a pixel (roofs)', () => {
+    const m = hillMap('pond');
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(16).fill(LookState.Winter));
+    l.setCover(255, 255);
+    l.flush();
+    expect(l.frozenTile(5 * 20 + 4)).toBe(true);
+    expect(l.frozenTile(5 * 20 + 12)).toBe(false);                     // land
+    expect(l.snowAt(18 * TILE + 3, 6 * TILE + 3)).toBe(true);
+    l.setCover(0, 0); l.flush();
+    expect(l.frozenTile(5 * 20 + 4)).toBe(false);
+    expect(l.snowAt(18 * TILE + 3, 6 * TILE + 3)).toBe(false);
   });
 });

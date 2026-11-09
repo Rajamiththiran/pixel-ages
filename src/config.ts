@@ -863,6 +863,36 @@ export const CONFIG = {
         cutPerMonth: 0.4, raggedPx: 1.5, sheafEveryPx: [7, 6],
         salt: 151,
       },
+      // Phase 2c: snow by height (mockup B; arrival from its arrW). Each land pixel has a fixed place in
+      // the order snow reaches it: heightWeight × (1 − height) + latitudeWeight × (how far south) +
+      // noiseWeight × clustered noise (cells noiseCellPx and noiseCellPx / 3 wide), as a share of the land
+      // (0 first … 1 last; mountain ground counts as the highest). Over winter the snow line rises from
+      // startMonth to fullMonth (screen-clock months of the year) up to `cover` of the land, or harshCover
+      // while a planned Harsh winters event runs (owner decision S5: the winter's progress plus that event).
+      // Light dusting covers the next dustShare beyond the line; the edge is dithered over edgeShare.
+      // It melts with the spring that reaches each pixel. Off: `?off=snow`.
+      snow: {
+        on: true,
+        heightWeight: 0.5, latitudeWeight: 0.22, noiseWeight: 0.28, noiseCellPx: 96, noiseSalt: 161,
+        startMonth: 9, fullMonth: 11.5, cover: 0.55, harshCover: 0.9,
+        dustShare: 0.05, edgeShare: 0.03,
+      },
+      // Phase 2c: ice (mockup B). Over winter the ice grows from the shore inward, from startMonth to
+      // fullMonth: on lakes to lakeRimPx (between the two, by clustered noise), on rivers to riverRimPx;
+      // a still water body of at most pondMaxTiles tiles freezes right through; the sea stays open
+      // (owner decision S6). The ice front is drawn as a 1-px darker line. Boats stay off frozen water.
+      // It melts with the spring that reaches each pixel. Off: `?off=ice`.
+      ice: {
+        on: true,
+        startMonth: 9.5, fullMonth: 12,
+        lakeRimPx: [8, 18], riverRimPx: [2, 4.5], pondMaxTiles: 16, noiseCellPx: 12, noiseSalt: 171,
+      },
+      // Phase 2c: snow on buildings in winter where the snow lies (mockup: the roof's upper rows white,
+      // lit side brightest, a checker on the row below). In each column of a building sprite the top
+      // pixels, capShare of the building's drawn height, take it; windows and flames stay. 0.45 covers a
+      // hut's roof and a longhouse's five roof rows (0.3 left most hut roofs bare, seen in the browser).
+      // Off: `?off=roofs`.
+      roofs: { on: true, capShare: 0.45 },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,

@@ -62,11 +62,17 @@ export const Role = {
   FruitTwig: 24,   // a bush pixel that is a bare twig in winter
   FruitBlossom: 25, // a bush pixel in blossom in spring
   FloorBare: 26,   // the floor of a mostly deciduous wood: in winter, with the canopy gone, the grass's winter ramp a step darker (mockup)
+  Pond: 27,        // Phase 2c: still water in a body small enough to freeze right through
 } as const;
 export type Role = (typeof Role)[keyof typeof Role];
 
 /** Phase 2b switch: fields go through their stages, and the farmers' harvest shows. */
 export const fieldsOn: boolean = seasonRampsOn && SC.fields.on && !styleOff('fields');
+
+/** Phase 2c switches: snow by height, ice on water, snow on roofs. */
+export const snowOn: boolean = seasonRampsOn && SC.snow.on && !styleOff('snow');
+export const iceOn: boolean = seasonRampsOn && SC.ice.on && !styleOff('ice');
+export const roofsOn: boolean = snowOn && SC.roofs.on && !styleOff('roofs');
 
 /**
  * Phase 2b: where a field pixel sits in the rows (mockup fieldPixel): a furrow row, or a ridge row
@@ -75,7 +81,7 @@ export const fieldsOn: boolean = seasonRampsOn && SC.fields.on && !styleOff('fie
 export const FieldPos = { Furrow: 0, Sprout: 1, Stubble: 2, Ridge: 3 } as const;
 const FIELD_POS = 4;
 /** Field roles follow the others: per field class × position × cut (harvested), then a sheaf per class. */
-export const FIELD_ROLE_BASE = 27;
+export const FIELD_ROLE_BASE = 28;
 const FIELD_ROLES = FIELD_CLASSES * FIELD_POS * 2;
 /** The role of a field pixel. */
 export const fieldRole = (cls: number, pos: number, cut: boolean): number => FIELD_ROLE_BASE + (cls * FIELD_POS + pos) * 2 + (cut ? 1 : 0);
@@ -173,6 +179,7 @@ const AUTUMN: Readonly<Record<number, Ramp>> = {
 const baseRole = (role: number): number =>
   role === Role.FruitTwig || role === Role.FruitBlossom || role === Role.FruitSpeck ? Role.Fruit
     : role === Role.CrownSnow ? Role.Crown : role === Role.BranchSnow ? Role.Branch : role === Role.FloorBare ? Role.Forest
+      : role === Role.Pond ? Role.Lake
       : role >= FIELD_ROLE_BASE ? Role.Farm : role;
 
 /**
@@ -235,8 +242,6 @@ export function lookColour(state: LookState, cls: number, role: number, tag: num
   const winter = season === 3;
   // Phase 2a: trees and bushes.
   if (isDeciduous(role) && g === Mat.Forest && winter) return ALT;
-  if (winter && (role === Role.CrownSnow && g === Mat.Forest)) return seasonRampRgb('snowFull')[step >= 3 ? 4 : 3]!;
-  if (winter && role === Role.BranchSnow && g === Mat.Wood) return seasonRampRgb('snowFull')[4]!;
   if (role === Role.FruitSpeck && tag === fruitTag) {
     if (season === 0) return seasonRampRgb('blossom')[3]!;
     if (winter) return tagRgb(Mat.Wood * 8 + 1);
@@ -284,6 +289,68 @@ function lookTables(): Uint32Array[] {
   return tables;
 }
 
+// ---------- Phase 2c: what lies on a pixel in winter ----------
+
+/** Snow (light dusting or full cover) on land, ice on water: only on pixels showing winter. */
+export const Cover = { None: 0, Dust: 1, Snow: 2, Ice: 3, IceEdge: 4, PondIce: 5 } as const;
+const COVERS = 6;
+
+/** Is this role water (it ices; it never takes snow)? */
+export const isWaterRole = (role: number): boolean => role === Role.Lake || role === Role.Pond || role === Role.River || role === Role.Sea;
+
+const RAMP_GROUPS = 10;   // groups past the ramps (RAMP_HEX) are accents
+const clampStep = (s: number): number => Math.max(0, Math.min(4, s));
+
+/**
+ * The colour of (role, tag) under a cover, or null where the cover leaves the pixel as it is (mockup
+ * B): full snow one step lighter than the ground's shading, dusting at the same step; paths and roads
+ * only dusted; field furrows filled while the ridges show; snow caps on the evergreen and branch
+ * pixels marked for it; flames, accents, peak snow, crowns and branches showing through. Lake and
+ * river ice is the ice rim ramp, its front a darker line; a pond freezes as the lake ice ramp.
+ */
+export function coverColour(cover: number, role: number, tag: number): RGB | null {
+  const g = tag >> 3, step = tag & 7;
+  const snowFull = seasonRampRgb('snowFull'), dust = seasonRampRgb('snowDust');
+  if (cover === Cover.Ice || cover === Cover.IceEdge || cover === Cover.PondIce) {
+    if (!isWaterRole(role)) return null;
+    const s = g === Mat.Water ? step : 4;   // foam and glints are the shallowest
+    if (cover === Cover.IceEdge) return seasonRampRgb('iceRim')[1]!;
+    return seasonRampRgb(cover === Cover.PondIce ? 'ice' : 'iceRim')[s >= 4 ? 4 : 3]!;
+  }
+  if (isWaterRole(role) || role === Role.Fire || role === Role.Crown || role === Role.Branch || isDeciduous(role)) return null;
+  if (g >= RAMP_GROUPS || g === Mat.Snow) return null;
+  const full = cover === Cover.Snow;
+  if (role === Role.CrownSnow) return full && g === Mat.Forest ? snowFull[step >= 3 ? 4 : 3]! : null;
+  if (role === Role.BranchSnow) return full && g === Mat.Wood ? snowFull[4]! : null;
+  if (role === Role.Mark) return dust[clampStep(step)]!;
+  const field = fieldRoleParts(role);
+  if (field) return !field.sheaf && field.pos === FieldPos.Furrow ? (full ? snowFull[3]! : dust[2]!) : null;
+  return full ? snowFull[clampStep(step + 1)]! : dust[clampStep(step)]!;
+}
+
+let covers: Uint32Array[] | null = null;
+
+/** One table per cover, indexed like the look tables; 0 where the cover leaves the pixel as it is. */
+function coverTables(): Uint32Array[] {
+  if (covers) return covers;
+  lookTables();
+  covers = [];
+  for (let k = 0; k < COVERS; k++) {
+    const t = new Uint32Array(ROLES * span);
+    if (k !== Cover.None) {
+      for (let role = 0; role < ROLES; role++) {
+        for (let tag = 0; tag < span; tag++) {
+          if (!tagValid(tag)) continue;
+          const c = coverColour(k, role, tag);
+          if (c) t[role * span + tag] = packRgba(c);
+        }
+      }
+    }
+    covers.push(t);
+  }
+  return covers;
+}
+
 // ---------- the look: which state each Bayer rank shows ----------
 
 const RANKS = 16;
@@ -297,29 +364,106 @@ export interface Look {
   readonly tables: Uint32Array[];
   readonly span: number;
   readonly shown: Int8Array;   // state per rank
+  // Phase 2c: winter's snow and ice. Per pixel, the order snow and ice reach it (winter.ts; null: none),
+  // and the lines (0–255) the winter has reached; a pixel showing winter is covered below them.
+  readonly cover: Uint32Array[];
+  cold: Uint8Array | null;
+  ice: Uint8Array | null;
+  snowLine: number;
+  iceLine: number;
 }
 
 export function createLook(state: LookState = LookState.Painted): Look {
   const t = lookTables();
-  return { tables: t, span, shown: new Int8Array(RANKS).fill(state) };
+  return { tables: t, span, shown: new Int8Array(RANKS).fill(state), cover: coverTables(), cold: null, ice: null, snowLine: 0, iceLine: 0 };
 }
 
-/** The colour word of an entry (tag, role, alt) at buffer pixel `p`, whose rank is `rank`. */
-function colourOf(buf: MatBuf, look: Look, tag: number, role: number, rank: number, alt: number, altRole: number, p: number): number {
+const SN = CONFIG.render.seasons.snow;
+const EDGE = SN.edgeShare * 255, DUST = SN.dustShare * 255;
+
+/** The cover on pixel `p` at (x, y) with `role`, for a pixel showing winter. */
+function coverAt(buf: MatBuf, look: Look, role: number, p: number, x: number, y: number): number {
+  if (isWaterRole(role)) {
+    const ice = look.ice;
+    if (!ice || ice[p]! >= look.iceLine) return Cover.None;
+    // The ice front: a frozen pixel beside open water of its own body.
+    if ((x > 0 && openWater(buf, look, ice, p - 1)) || (x < buf.w - 1 && openWater(buf, look, ice, p + 1))
+      || (y > 0 && openWater(buf, look, ice, p - buf.w)) || (y < buf.h - 1 && openWater(buf, look, ice, p + buf.w))) return Cover.IceEdge;
+    return role === Role.Pond ? Cover.PondIce : Cover.Ice;
+  }
+  const cold = look.cold;
+  if (!cold || look.snowLine <= 0 || cold[p] === 255) return Cover.None;
+  if (look.snowLine >= 255) return Cover.Snow;   // a full line covers all the land, its dithered edge too
+  const v = cold[p]! + (bayer(x, y) - 0.5) * EDGE;
+  return v < look.snowLine ? Cover.Snow : v < look.snowLine + DUST ? Cover.Dust : Cover.None;
+}
+
+/** Is pixel q water that is not frozen? */
+const openWater = (buf: MatBuf, look: Look, ice: Uint8Array, q: number): boolean => isWaterRole(buf.role[q]!) && ice[q]! >= look.iceLine;
+
+/**
+ * Recolours the pixels listed in `order` from `from` to `to` (exclusive) that show winter: the ones
+ * a moved snow or ice line can change (winter.ts keeps the land and water pixels sorted by the order
+ * snow and ice reach them, so a step touches a thin band, not the map). `around`: their 4 neighbours
+ * too (the ice front moves with the ice).
+ */
+export function resolveBand(buf: MatBuf, look: Look, px: Uint32Array, order: Int32Array, from: number, to: number, around: boolean): void {
+  const w = buf.w, n = buf.w * buf.h;
+  const one = (p: number): void => {
+    if (p < 0 || p >= n || look.shown[buf.rank[p]!] !== LookState.Winter || buf.tag[p] === NO_TAG) return;
+    const x = p % w;
+    px[p] = colourAt(buf, look, p, x, (p - x) / w);
+  };
+  for (let k = from; k < to; k++) {
+    const p = order[k]!;
+    one(p);
+    if (around) { one(p - 1); one(p + 1); one(p - w); one(p + w); }
+  }
+}
+
+/** The ranks (bit r) showing winter: the ones a moved snow or ice line recolours. */
+export function winterRanks(look: Look): number {
+  let m = 0;
+  for (let r = 0; r < RANKS; r++) if (look.shown[r] === LookState.Winter) m |= 1 << r;
+  return m;
+}
+
+/** Is pixel `p` at (x, y) under snow now (a building there wears it on its roof)? */
+export function snowAt(buf: MatBuf, look: Look, p: number, x: number, y: number): boolean {
+  return look.shown[buf.rank[p]!] === LookState.Winter && !isWaterRole(buf.role[p]!) && coverAt(buf, look, buf.role[p]!, p, x, y) === Cover.Snow;
+}
+
+/** Is pixel `p` frozen now (boats keep off)? */
+export function iceAt(buf: MatBuf, look: Look, p: number): boolean {
+  return look.shown[buf.rank[p]!] === LookState.Winter && isWaterRole(buf.role[p]!) && !!look.ice && look.ice[p]! < look.iceLine;
+}
+
+/** The colour word of an entry (tag, role, alt) at buffer pixel `p` (at x, y), whose rank is `rank`. */
+function colourOf(buf: MatBuf, look: Look, tag: number, role: number, rank: number, alt: number, altRole: number, p: number, x: number, y: number): number {
   if (tag === NO_TAG) return 0;
-  const t = look.tables[look.shown[rank]! * CLASSES + buf.moist[p]!]!;
-  const c = t[role * look.span + tag]!;
-  return c !== ALT ? c : alt === NO_TAG ? 0 : t[altRole * look.span + alt]!;
+  const st = look.shown[rank]!;
+  const t = look.tables[st * CLASSES + buf.moist[p]!]!;
+  let c = t[role * look.span + tag]!;
+  if (c === ALT) {
+    if (alt === NO_TAG) return 0;
+    role = altRole; tag = alt;
+    c = t[role * look.span + tag]!;
+  }
+  if (st === LookState.Winter) {
+    const k = coverAt(buf, look, role, p, x, y);
+    if (k !== Cover.None) { const cc = look.cover[k]![role * look.span + tag]!; if (cc !== 0) c = cc; }
+  }
+  return c;
 }
 
-const colourAt = (buf: MatBuf, look: Look, p: number): number =>
-  colourOf(buf, look, buf.tag[p]!, buf.role[p]!, buf.rank[p]!, buf.alt[p]!, buf.altRole[p]!, p);
+const colourAt = (buf: MatBuf, look: Look, p: number, x: number, y: number): number =>
+  colourOf(buf, look, buf.tag[p]!, buf.role[p]!, buf.rank[p]!, buf.alt[p]!, buf.altRole[p]!, p, x, y);
 
 /** Writes tile (tx, ty)'s colours from the buffer into the image (`px` = its pixels as words). */
 export function resolveTile(buf: MatBuf, look: Look, px: Uint32Array, tx: number, ty: number): void {
   for (let y = 0; y < TILE; y++) {
     const o = (ty * TILE + y) * buf.w + tx * TILE;
-    for (let x = 0; x < TILE; x++) px[o + x] = colourAt(buf, look, o + x);
+    for (let x = 0; x < TILE; x++) px[o + x] = colourAt(buf, look, o + x, tx * TILE + x, ty * TILE + y);
   }
 }
 
@@ -338,6 +482,8 @@ export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, mask: num
     if (((mask >> r) & 1) === 0) continue;
     const g = tag[p]!;
     if (g === NO_TAG) continue;
+    // Winter pixels may lie under snow or ice: the full path.
+    if (look.shown[r] === LookState.Winter) { const x = p % buf.w; px[p] = colourAt(buf, look, p, x, (p - x) / buf.w); continue; }
     const t = byRank[r * CLASSES + moist[p]!]!;
     const c = t[role[p]! * span + g]!;
     px[p] = c !== ALT ? c : alt[p] === NO_TAG ? 0 : t[altRole[p]! * span + alt[p]!]!;
@@ -366,8 +512,9 @@ export function sameMatLook(buf: MatBuf, look: Look, tx: number, ty: number, a: 
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
       const k = y * TILE + x, p = (ty * TILE + y) * buf.w + tx * TILE + x;
-      const ca = colourOf(buf, look, a.tag[k]!, a.role[k]!, a.rank[k]!, a.alt[k]!, a.altRole[k]!, p);
-      if (ca !== colourOf(buf, look, b.tag[k]!, b.role[k]!, b.rank[k]!, b.alt[k]!, b.altRole[k]!, p)) return false;
+      const px = tx * TILE + x, py = ty * TILE + y;
+      const ca = colourOf(buf, look, a.tag[k]!, a.role[k]!, a.rank[k]!, a.alt[k]!, a.altRole[k]!, p, px, py);
+      if (ca !== colourOf(buf, look, b.tag[k]!, b.role[k]!, b.rank[k]!, b.alt[k]!, b.altRole[k]!, p, px, py)) return false;
     }
   }
   return true;

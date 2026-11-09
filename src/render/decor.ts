@@ -415,11 +415,13 @@ export class BuildingLayer {
     }
   }
 
-  collect(push: (img: HTMLCanvasElement, x: number, y: number) => void, night = false): void {
+  /** `snowAt` (seasons Phase 2c): does snow lie at a map pixel? A building there wears snow on its roof. */
+  collect(push: (img: HTMLCanvasElement, x: number, y: number) => void, night = false, snowAt: ((x: number, y: number) => boolean) | null = null): void {
     for (const b of this.list) {
-      const name = `${b.img}|${night ? 1 : 0}`;
+      const snow = snowAt !== null && snowAt((b.x + b.w / 2) * TILE, (b.y + b.h / 2) * TILE);
+      const name = `${b.img}|${night ? 1 : 0}|${snow ? 1 : 0}`;
       let img = this.imgs.get(name);
-      if (!img) { img = getSprite(b.img, {}, false, night); this.imgs.set(name, img); }
+      if (!img) { img = getSprite(b.img, {}, false, night, snow); this.imgs.set(name, img); }
       push(img, (b.x + b.w / 2) * TILE, (b.y + b.h) * TILE);
     }
     for (const st of this.stalls) push(getSprite('stall', { C: st.C, D: darken(st.C) }), st.x, st.y);
