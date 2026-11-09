@@ -50,10 +50,18 @@ export class DayNight {
   enabled = true;
   /** Darkness 0–1 right now (0 when switched off). */
   darkness = 0;
+  /**
+   * Seasons Phase 3b (S2): hold the day in full daylight (Watch: a night would cover half a year
+   * there and a front could play in the dark). In daylight the day stops; at dusk, night or dawn it
+   * runs on `holdCatchUp` times faster until full daylight (never a pop, never a race through an evening).
+   */
+  hold = false;
 
   /** Advances the day while the world plays. */
   update(dtMs: number, playing: boolean): void {
-    if (playing) this.clockMs += dtMs;
+    if (playing && this.hold) {
+      if (darknessAt(this.clockMs / L.dayMs) > 0) this.clockMs += dtMs * L.holdCatchUp;
+    } else if (playing) this.clockMs += dtMs;
     this.darkness = this.enabled ? darknessAt(this.clockMs / L.dayMs) : 0;
   }
 

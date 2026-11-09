@@ -26,7 +26,7 @@ import { Editor } from './editor/editor';
 import { Layer, cloneMap, createMap } from './editor/mapState';
 import { RegionsPreview } from './editor/regionsPreview';
 import { Renderer, type SetupView } from './render/renderer';
-import { clockPace, gradualLand, seasonShow, walkerPace } from './render/speedLook';
+import { clockPace, gradualLand, holdsDay, seasonLook, seasonShow, walkerPace } from './render/speedLook';
 import { GROUP_COLORS, usePalette } from './render/palette';
 import { AgeClass, carrySprite, clearComposites, personSprite } from './render/sprites';
 import type { WalkerSprite } from './render/decor';
@@ -742,7 +742,7 @@ function startRun(): void {
       // Speeds plan Phases 3–4: the screen clock runs on at the speed between frames, so seasons flow;
       // a jump in time (full tiles) snaps it. Paused and time-lapse frames only set the month. How
       // much of the year shows follows the speed (the fast speeds hold one calm look).
-      renderer.setTime(f.year, f.month, clockPace(f), f.fullTiles !== undefined, seasonShow(f));
+      renderer.setTime(f.year, f.month, clockPace(f), f.fullTiles !== undefined, seasonShow(f), seasonLook(f), holdsDay(f));
       // Phase 5: land changes dissolve and the yearly rain slides while a season can be read.
       renderer.gradual = gradualLand(f);
       view.playing = f.playing;
@@ -1150,6 +1150,8 @@ if (import.meta.env.DEV) {
     clock: () => renderer.clock.t,
     simMonth: () => { const f = session?.lastFrame; return f ? f.year * CONFIG.time.ticksPerYear + f.month : null; },
     seasonWeights: () => Array.from(renderer.season.weights),
+    // Seasons Phase 3b: how many keys show each look state (materials.ts LookState), and the day's darkness.
+    seasonStates: () => { const n: Record<number, number> = {}; for (const s of renderer.shownSeasons) n[s] = (n[s] ?? 0) + 1; return n; },
     tilesChanged: () => devTilesChanged,
     frameMs: () => renderer.frameMs,
     rainArrays: () => { const r = renderer.rainShown; return r ? { shown: Array.from(r), sim: Array.from(view.map.rain) } : null; },
@@ -1208,7 +1210,7 @@ window.addEventListener('keydown', (e) => {
     if (!session || e.ctrlKey || e.metaKey || e.altKey) return;
     const f = session.lastFrame;
     if (e.key === ' ') { e.preventDefault(); session.send({ type: f?.playing ? 'pause' : 'play' }); }
-    // Speeds plan Phase 2: keys 1 2 4 6 8 pick a speed; − and + step one speed down or up.
+    // Speeds plan Phase 2: the speed keys (` 0 1 2 4 6 8) pick a speed; − and + step one speed down or up.
     else if (speedForKey(e.key) !== null) setSpeed(speedForKey(e.key)!);
     else if (e.key === '-' || e.key === '_') setSpeed(stepSpeed(askedSpeed ?? f?.speed ?? DEFAULT_SPEED, -1));
     else if (e.key === '+' || e.key === '=') setSpeed(stepSpeed(askedSpeed ?? f?.speed ?? DEFAULT_SPEED, 1));

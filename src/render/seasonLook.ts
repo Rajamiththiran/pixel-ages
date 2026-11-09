@@ -6,7 +6,8 @@
 
 import { CONFIG } from '../config';
 import { KEYS, LookState } from './materials';
-import { FRONT_KIND } from './seasonFront';
+import { FRONT_KIND, FrontKind } from './seasonFront';
+import type { SeasonMode } from './speedLook';
 
 const SC = CONFIG.render.seasons;
 const RANKS = KEYS;
@@ -25,6 +26,21 @@ export function frontAt(m: number): { from: LookState; to: LookState; level: num
   }
   const p = Math.min(1, best / SC.fronts[k]!.months);
   return { from: SEASONS[(k + 3) % 4]!, to: SEASONS[k]!, level: Math.floor(p * RANKS), kind: FRONT_KIND[k]! };
+}
+
+/**
+ * Two looks a year (Phase 3b, owner decision S3: Walk, where four seasons a second would flash): the
+ * green look (summer) arrives with the spring front, the winter look with the winter front.
+ */
+export function twoLooksAt(m: number): { from: LookState; to: LookState; level: number; kind: number } {
+  const sp = SC.fronts[0]!, wi = SC.fronts[3]!;
+  const since = (start: number): number => (((m - start) % MONTHS) + MONTHS) % MONTHS;
+  const green = since(sp.start) <= since(wi.start);
+  const f = green ? sp : wi;
+  const p = Math.min(1, since(f.start) / f.months);
+  return green
+    ? { from: LookState.Winter, to: LookState.Summer, level: Math.floor(p * RANKS), kind: FrontKind.Warm }
+    : { from: LookState.Summer, to: LookState.Winter, level: Math.floor(p * RANKS), kind: FrontKind.Cold };
 }
 
 const NAMES: Record<string, LookState> = {
@@ -88,7 +104,7 @@ const pinLinesFromUrl = (): [number, number] => {
   return parsePinLines(q.get('snow'), q.get('ice'));
 };
 
-type Mode = 'painted' | 'held' | 'year' | 'pin';
+type Mode = 'painted' | 'held' | 'year' | 'two' | 'pin';
 
 /**
  * Works out, each frame, the state each key shows and the front field the keys follow. A season
@@ -115,12 +131,12 @@ export class SeasonDriver {
   constructor(private readonly pin: Pin | null = pinFromUrl(), private readonly pinLines: [number, number] = pinLinesFromUrl()) {}
 
   /**
-   * `month`: the screen clock's month of the year. `show` (the speed's seasonShow): below 1 the
-   * year can't be read and the held look shows (Phase 1b; owner decisions S3, S4 refine it). `year`:
-   * the screen clock's year (Phase 3a: each year's front differs a little).
+   * `month`: the screen clock's month of the year. `look` (Phase 3b, the speed's season look): every
+   * season, two looks a year, or the held look. `year`: the screen clock's year (Phase 3a: each
+   * year's front differs a little).
    */
-  update(nowMs: number, month: number, show: number, running: boolean, jump: boolean, year = 0): Int8Array {
-    const mode: Mode = this.pin ? 'pin' : !running ? 'painted' : show < 1 ? 'held' : 'year';
+  update(nowMs: number, month: number, look: SeasonMode, running: boolean, jump: boolean, year = 0): Int8Array {
+    const mode: Mode = this.pin ? 'pin' : !running ? 'painted' : look === 'held' ? 'held' : look === 'two' ? 'two' : 'year';
     const t = this.target;
     // Setup and the held look keep the field they had (every key shows one state, so it does not matter).
     let kind = this.kind, fy = this.year;
@@ -128,7 +144,7 @@ export class SeasonDriver {
     else if (mode === 'painted') t.fill(LookState.Painted);
     else if (mode === 'held') t.fill(LookState.Held);
     else {
-      const f = frontAt(month);
+      const f = mode === 'two' ? twoLooksAt(month) : frontAt(month);
       for (let r = 0; r < RANKS; r++) t[r] = r < f.level ? f.to : f.from;
       kind = f.kind; fy = year;
     }
@@ -148,7 +164,7 @@ export class SeasonDriver {
     // few batches a front look the same (each pixel still changes once). A jump shows at once.
     const next = this.next;
     for (let r = 0; r < RANKS; r++) next[r] = r < level ? t[r]! : this.old[r]!;
-    const [snow, ice] = mode === 'pin' ? this.pinLines : mode === 'year' ? coverLines(month, this.harsh) : [0, 0];
+    const [snow, ice] = mode === 'pin' ? this.pinLines : mode === 'year' || mode === 'two' ? coverLines(month, this.harsh) : [0, 0];
     let same = snow === this.snowLine && ice === this.iceLine && kind === this.kind && fy === this.year;
     for (let r = 0; r < RANKS; r++) if (next[r] !== this.shown[r]) { same = false; break; }
     if (!same && (jump || this.lastStep < 0 || nowMs - this.lastStep >= SC.lookStepMs)) {

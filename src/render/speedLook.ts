@@ -44,6 +44,21 @@ export function seasonShow(f: TimeState): number {
   return f.playing ? speedRow(f.speed).seasonShow : 1;
 }
 
+/** How the seasons show (seasons plan §6.3): every season with its front, two looks a year, or one held look. */
+export type SeasonMode = 'full' | 'two' | 'held';
+
+/**
+ * Seasons Phase 3b: the season look of a frame: the speed's `look` while time runs; every season
+ * while paused (a season can be read); the held look in a time-lapse, which runs faster than any speed.
+ */
+export function seasonLook(f: TimeState): SeasonMode {
+  if (f.timelapse) return 'held';
+  return f.playing ? speedRow(f.speed).look : 'full';
+}
+
+/** Seasons Phase 3b (S2): does the day stop at noon (Watch, while time runs)? */
+export const holdsDay = (f: TimeState): boolean => f.playing && !f.timelapse && speedRow(f.speed).holdDay;
+
 /**
  * Phase 5: whether land changes dissolve and the yearly rain slides, rather than showing at once:
  * yes while a season can be read (paused, or a speed that shows some of it), no at the speeds

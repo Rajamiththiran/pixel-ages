@@ -5,20 +5,28 @@ export const CONFIG = {
   time: {
     ticksPerYear: 12,
     // Speeds (owner, 6 Nov 2026; docs/pixel-ages-speeds-plan.md). Slow speeds let seasons and
-    // climate drift be watched; fast ones skip centuries. `speed` is the key that picks it (and
-    // the old ×-name: 8× is 16 times 1×, not 8); `label` is the button's name (owner: short and
+    // climate drift be watched; fast ones skip centuries. `speed` is its value (the old ×-name: 8× is
+    // 16 times 1×, not 8; Watch, slower than Drift's 0, is −1); `label` is the button's name (owner: short and
     // creative, set A of plan §7.2). Months per second = yearsPerSecond × ticksPerYear.
     // `seasonShow` (Phase 4, owner's choice §7.3): how much of the season shows while time runs at
     // this speed, from 1 (the full year) to 0 (the held fast-forward look, render.f8.season.heldWeights).
     // Drift (owner, 6 Nov 2026): a sixth, slowest speed on key 0, to watch seasons and climate turn.
+    // Seasons Phase 3b (owner decisions S1–S4, the plan's recommendations): a seventh, slowest speed,
+    // Watch, at which the season fronts play in full (a season 6 s, a year 24 s). `key` is the key that
+    // picks a speed (Watch's is the backquote, left of 1). `look` is the season look while time runs
+    // (seasons plan §6.3): `full` the four seasons with their fronts, `two` two looks a year (green from
+    // the spring front, winter from the winter front: S3, Walk), `held` the one calm look (S4: Trot holds).
+    // `seasonShow` now drives only the old tint (`?off=seasonRamps`) and the gradual land changes.
+    // `holdDay` (S2): the day stops at noon, so a front never plays in the dark.
     speeds: [
-      { speed: 0, label: 'Drift', yearsPerSecond: 1 / 6, seasonShow: 1 },  // 2 months a second
-      { speed: 1, label: 'Crawl', yearsPerSecond: 0.5, seasonShow: 1 },    // 6 months a second
-      { speed: 2, label: 'Walk', yearsPerSecond: 1, seasonShow: 1 },       // 12: the old 1×
-      { speed: 4, label: 'Trot', yearsPerSecond: 3, seasonShow: 0.5 },     // 36: softened
-      { speed: 6, label: 'Ride', yearsPerSecond: 5, seasonShow: 0 },       // 60: held
-      { speed: 8, label: 'Fly', yearsPerSecond: 8, seasonShow: 0 },        // 96: the old 8×; held
-    ],
+      { speed: -1, key: '`', label: 'Watch', yearsPerSecond: 1 / 24, seasonShow: 1, look: 'full', holdDay: true },  // 0.5 months a second
+      { speed: 0, key: '0', label: 'Drift', yearsPerSecond: 1 / 6, seasonShow: 1, look: 'full', holdDay: false },  // 2 months a second
+      { speed: 1, key: '1', label: 'Crawl', yearsPerSecond: 0.5, seasonShow: 1, look: 'full', holdDay: false },    // 6 months a second
+      { speed: 2, key: '2', label: 'Walk', yearsPerSecond: 1, seasonShow: 1, look: 'two', holdDay: false },        // 12: the old 1×
+      { speed: 4, key: '4', label: 'Trot', yearsPerSecond: 3, seasonShow: 0.5, look: 'held', holdDay: false },     // 36: softened tint
+      { speed: 6, key: '6', label: 'Ride', yearsPerSecond: 5, seasonShow: 0, look: 'held', holdDay: false },       // 60: held
+      { speed: 8, key: '8', label: 'Fly', yearsPerSecond: 8, seasonShow: 0, look: 'held', holdDay: false },        // 96: the old 8×; held
+    ] as { speed: -1 | 0 | 1 | 2 | 4 | 6 | 8; key: string; label: string; yearsPerSecond: number; seasonShow: number; look: 'full' | 'two' | 'held'; holdDay: boolean }[],
     defaultSpeed: 2,             // a run starts at 1 year a second, the same pace as before (owner's choice)
     maxFramesPerSecond: 30,
     maxWorkMsPerLoop: 50,
@@ -1006,7 +1014,9 @@ export const CONFIG = {
         crackShare: 0.12, puddleShare: 0.06,
       },
       // Day and night (§14.2): a real-time cycle that runs while the world plays.
-      light: { dayMs: 48000, nightShare: 0.3, dusk: 0.12, maxDark: 0.5, glowRadiusPx: 7, fireGlowRadiusPx: 12 }, // glows: lit windows, fires
+      // holdCatchUp (seasons Phase 3b, S2): at a speed that holds the day (Watch) the day stops in full
+      // daylight; at dusk, night or dawn it runs this many times faster until daylight (at most ~4 s, no pop).
+      light: { dayMs: 48000, nightShare: 0.3, dusk: 0.12, maxDark: 0.5, glowRadiusPx: 7, fireGlowRadiusPx: 12, holdCatchUp: 6 }, // glows: lit windows, fires
       // People and animals (§14.3).
       people: {
         poseFrameMs: 380,        // work poses (bending, hoeing, chopping) alternate this often

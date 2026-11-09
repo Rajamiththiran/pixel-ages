@@ -22,6 +22,7 @@ import { Camera } from './camera';
 import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
 import { SeasonDriver } from './seasonLook';
+import type { SeasonMode } from './speedLook';
 import { fieldsOn, iceOn, roofsOn, seasonRampsOn } from './materials';
 import { FieldState } from './fields';
 import { ScreenClock } from './screenClock';
@@ -97,6 +98,7 @@ export class Renderer {
   readonly season: SeasonLayer;
   /** Seasons Phase 1b: which season each Bayer rank of the terrain shows. */
   private readonly seasonDriver = new SeasonDriver();
+  private seasonLook: SeasonMode = 'full';
   private seasonJump = false;
   /** Seasons Phase 2b: the harvest the screen shows, moved on by the simulation's farmers. */
   private readonly fields: FieldState | null;
@@ -234,9 +236,13 @@ export class Renderer {
    * A frame's time (speeds plan Phase 3). `monthsPerSecond`: the speed while time runs at it, else
    * 0 (paused, time-lapse). `jump` after a jump in time: the clock and the season snap.
    * `seasonShow` (Phase 4): how much of the turning year shows at this speed (0 = the held look).
+   * Seasons Phase 3b: `look`, how the seasons show in the materials (every season, two looks a year,
+   * held); the season weights for weather and sound follow it. `holdDay`: the day stops in daylight (Watch).
    */
-  setTime(year: number, month: number, monthsPerSecond: number, jump: boolean, seasonShow = 1): void {
-    this.season.show = seasonShow;
+  setTime(year: number, month: number, monthsPerSecond: number, jump: boolean, seasonShow = 1, look: SeasonMode = 'full', holdDay = false): void {
+    this.seasonLook = look;
+    this.season.show = seasonRampsOn ? (look === 'held' ? 0 : 1) : seasonShow;
+    this.light.hold = holdDay;
     this.clock.sync(year * CONFIG.time.ticksPerYear + month, monthsPerSecond, jump);
     if (jump) {
       this.season.setMonth(this.clock.monthOfYear, true);
@@ -244,6 +250,9 @@ export class Renderer {
       if (this.fields) this.terrain.redrawTiles(this.fields.reset());
     }
   }
+
+  /** Dev checks (seasons Phase 3b): the state each key of the terrain shows now. */
+  get shownSeasons(): readonly number[] { return this.terrain.shownStates; }
 
   /** Seasons Phase 2c: a planned Harsh winters event runs this year (deeper, lower snow). */
   set harshWinter(on: boolean) { this.seasonDriver.harsh = on; }
@@ -388,7 +397,7 @@ export class Renderer {
     // the front field the keys follow, and the year (each year's front differs a little).
     if (seasonRampsOn) {
       const d = this.seasonDriver;
-      const shown = d.update(now, this.clock.monthOfYear, this.season.show, v.running, this.seasonJump, Math.floor(this.clock.t / CONFIG.time.ticksPerYear));
+      const shown = d.update(now, this.clock.monthOfYear, this.seasonLook, v.running, this.seasonJump, Math.floor(this.clock.t / CONFIG.time.ticksPerYear));
       this.terrain.setLook(shown, d.kind, d.year);
       this.terrain.setCover(this.seasonDriver.snowLine, this.seasonDriver.iceLine);
       this.seasonJump = false;

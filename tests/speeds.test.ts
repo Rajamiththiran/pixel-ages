@@ -3,18 +3,18 @@
 
 import { describe, expect, it } from 'vitest';
 import { CONFIG } from '../src/config';
-import { DEFAULT_SPEED, SPEEDS, speedForKey, speedRow, speedTitle, stepSpeed, ticksPerSecondAt, yearsPerSecondAt } from '../src/shared/speeds';
+import { DEFAULT_SPEED, SPEEDS, speedForKey, speedKey, speedRow, speedTitle, stepSpeed, ticksPerSecondAt, yearsPerSecondAt } from '../src/shared/speeds';
 
 const SIM = import.meta.glob('../src/sim/**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 describe('speed table', () => {
-  it('has the six buttons, slowest first (Drift added by the owner)', () => {
-    expect(SPEEDS).toEqual([0, 1, 2, 4, 6, 8]);
+  it('has the seven buttons, slowest first (Drift added by the owner, Watch by seasons Phase 3b)', () => {
+    expect(SPEEDS).toEqual([-1, 0, 1, 2, 4, 6, 8]);
   });
 
   it('gives the plan\'s years and months per second', () => {
-    expect(SPEEDS.map(yearsPerSecondAt)).toEqual([1 / 6, 0.5, 1, 3, 5, 8]);
-    expect(SPEEDS.map(ticksPerSecondAt)).toEqual([2, 6, 12, 36, 60, 96]);
+    expect(SPEEDS.map(yearsPerSecondAt)).toEqual([1 / 24, 1 / 6, 0.5, 1, 3, 5, 8]);
+    expect(SPEEDS.map(ticksPerSecondAt)).toEqual([0.5, 2, 6, 12, 36, 60, 96]);
   });
 
   it('starts at 2×, the old 1× pace, and keeps the old 8× pace at the top', () => {
@@ -31,18 +31,20 @@ describe('speed table', () => {
     expect(speedTitle(1)).toBe('0.5 years per second');
     expect(speedTitle(2)).toBe('1 year per second');
     expect(speedTitle(0)).toBe('2 months per second');
+    expect(speedTitle(-1)).toBe('0.5 months per second');
   });
 });
 
 describe('buttons and keys (Phase 2)', () => {
-  it('names every speed shortly, so six buttons fit the bar', () => {
+  it('names every speed shortly, so seven buttons fit the bar', () => {
     for (const v of SPEEDS) expect(speedRow(v).label.length).toBeLessThanOrEqual(5);
     expect(new Set(SPEEDS.map((v) => speedRow(v).label)).size).toBe(SPEEDS.length);
   });
 
-  it('keys 0 1 2 4 6 8 pick their speed; other keys pick none', () => {
-    for (const v of SPEEDS) expect(speedForKey(String(v))).toBe(v);
-    for (const k of ['3', '5', '7', '9', 'a', ' ']) expect(speedForKey(k)).toBeNull();
+  it('keys ` 0 1 2 4 6 8 pick their speed; other keys pick none', () => {
+    expect(SPEEDS.map(speedKey)).toEqual(['`', '0', '1', '2', '4', '6', '8']);
+    for (const v of SPEEDS) expect(speedForKey(speedKey(v))).toBe(v);
+    for (const k of ['3', '5', '7', '9', '-1', 'a', ' ']) expect(speedForKey(k)).toBeNull();
   });
 
   it('− and + step one speed and stop at the ends', () => {
@@ -50,7 +52,8 @@ describe('buttons and keys (Phase 2)', () => {
     expect(stepSpeed(6, -1)).toBe(4);
     expect(stepSpeed(8, 1)).toBe(8);
     expect(stepSpeed(1, -1)).toBe(0);
-    expect(stepSpeed(0, -1)).toBe(0);
+    expect(stepSpeed(0, -1)).toBe(-1);
+    expect(stepSpeed(-1, -1)).toBe(-1);
   });
 });
 

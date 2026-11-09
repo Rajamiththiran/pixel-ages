@@ -25,7 +25,9 @@ import { WallType } from '../src/shared/ids';
 import { Action } from '../src/shared/ids';
 import { crownKind, evergreenChance } from '../src/render/terrain';
 import { MoistureField, tileWetness } from '../src/render/moisture';
-import { SeasonDriver, frontAt, parsePin } from '../src/render/seasonLook';
+import { SeasonDriver, frontAt, parsePin, twoLooksAt } from '../src/render/seasonLook';
+import { DayNight } from '../src/render/light';
+import { ticksPerSecondAt } from '../src/shared/speeds';
 import { FrontFields, FrontKind } from '../src/render/seasonFront';
 import { nightOf } from '../src/render/light';
 import { GROUP_COLORS, PALETTE, usePalette, type RGB } from '../src/render/palette';
@@ -402,9 +404,9 @@ describe('seasons Phase 1b: a season arrives key by key, each pixel once', () =>
   it('over two years each key changes exactly once per season', () => {
     const d = new SeasonDriver(null);
     const changes = new Array<number>(KEYS).fill(0);
-    let prev = Array.from(d.update(0, 0, 1, true, true));
+    let prev = Array.from(d.update(0, 0, 'full', true, true));
     for (let t = 0.01; t < 24; t += 0.01) {
-      const now = Array.from(d.update(t * 1000, t % 12, 1, true, false));
+      const now = Array.from(d.update(t * 1000, t % 12, 'full', true, false));
       now.forEach((s, r) => { if (s !== prev[r]) changes[r]!++; });
       prev = now;
     }
@@ -413,14 +415,14 @@ describe('seasons Phase 1b: a season arrives key by key, each pixel once', () =>
 
   it('setup shows the painted map; the fast speeds hold one look; a change of mode dissolves rank by rank', () => {
     const d = new SeasonDriver(null);
-    expect([...d.update(0, 4.5, 1, false, false)].every((s) => s === LookState.Painted)).toBe(true);
-    expect([...d.update(10, 4.5, 1, true, true)].every((s) => s === LookState.Summer)).toBe(true);   // a jump snaps
+    expect([...d.update(0, 4.5, 'full', false, false)].every((s) => s === LookState.Painted)).toBe(true);
+    expect([...d.update(10, 4.5, 'full', true, true)].every((s) => s === LookState.Summer)).toBe(true);   // a jump snaps
     const ms = CONFIG.render.seasons.modeFadeMs;
-    d.update(1000, 7.5, 0, true, false);                     // Ride: to the held look
-    const half = [...d.update(1000 + ms / 2, 7.5, 0, true, false)];
+    d.update(1000, 7.5, 'held', true, false);                     // Ride: to the held look
+    const half = [...d.update(1000 + ms / 2, 7.5, 'held', true, false)];
     expect(half.filter((s) => s === LookState.Held).length).toBe(KEYS / 2);
-    expect([...d.update(1000 + ms, 7.5, 0, true, false)].every((s) => s === LookState.Held)).toBe(true);
-    expect([...d.update(5000, 7.5, 0.5, true, false)].every((s) => s === LookState.Held)).toBe(true);   // Trot holds too (Phase 1b)
+    expect([...d.update(1000 + ms, 7.5, 'held', true, false)].every((s) => s === LookState.Held)).toBe(true);
+    expect([...d.update(5000, 7.5, 'held', true, false)].every((s) => s === LookState.Held)).toBe(true);   // Trot holds too (S4)
   });
 
   it('a dev pin freezes a season or a front', () => {
@@ -431,7 +433,7 @@ describe('seasons Phase 1b: a season arrives key by key, each pixel once', () =>
     expect(parsePin('front:snow:0.25')!.kind).toBe(FrontKind.Cold);
     expect(parsePin('nonsense')).toBeNull();
     const d = new SeasonDriver(parsePin('autumn'));
-    expect([...d.update(0, 0, 0, false, false)].every((s) => s === LookState.Autumn)).toBe(true);
+    expect([...d.update(0, 0, 'held', false, false)].every((s) => s === LookState.Autumn)).toBe(true);
   });
 });
 
@@ -1376,5 +1378,55 @@ describe('seasons Phase 3a: the front on the terrain layer', () => {
       diff += Math.abs(inner.winter.cold[p]! / 255 - inner.fronts.coldShare[p]!); n++;
     }
     expect(diff / n).toBeLessThan(0.01);
+  });
+});
+
+// ---------- Phase 3b: a speed for watching the seasons ----------
+
+describe('seasons Phase 3b: a speed for watching the seasons', () => {
+  it('at Watch a spring front takes 3 s and a year 24 s of real time (S1)', () => {
+    const fr = CONFIG.render.seasons.fronts;
+    expect(fr[0]!.months / ticksPerSecondAt(-1)).toBeCloseTo(3, 9);
+    expect(CONFIG.time.ticksPerYear / ticksPerSecondAt(-1)).toBeCloseTo(24, 9);
+  });
+
+  it('at Walk two looks a year: green from the spring front, winter from the winter front (S3)', () => {
+    const fr = CONFIG.render.seasons.fronts;
+    expect(twoLooksAt(fr[0]!.start)).toEqual({ from: LookState.Winter, to: LookState.Summer, level: 0, kind: FrontKind.Warm });
+    expect(twoLooksAt(6.5)).toEqual({ from: LookState.Winter, to: LookState.Summer, level: KEYS, kind: FrontKind.Warm });
+    expect(twoLooksAt(fr[3]!.start)).toEqual({ from: LookState.Summer, to: LookState.Winter, level: 0, kind: FrontKind.Cold });
+    expect(twoLooksAt(11.99).level).toBe(KEYS);
+    const d = new SeasonDriver(null);
+    const changes = new Array<number>(KEYS).fill(0);
+    const seen = new Set<number>();
+    let prev = Array.from(d.update(0, 0, 'two', true, true));
+    for (let t = 0.01; t < 24; t += 0.01) {
+      const now = Array.from(d.update(t * 1000, t % 12, 'two', true, false));
+      now.forEach((s, r) => { seen.add(s); if (s !== prev[r]) changes[r]!++; });
+      prev = now;
+    }
+    expect([...seen].sort()).toEqual([LookState.Summer, LookState.Winter].sort());
+    expect(changes).toEqual(new Array(KEYS).fill(4));   // two changes a year, each key once per front
+  });
+
+  it('at Watch the day stops in daylight, and a night ends quickly instead of popping (S2)', () => {
+    const L = CONFIG.render.f8.light;
+    const dn = new DayNight();
+    dn.update(0, true);
+    expect(dn.darkness).toBe(0);                       // it starts in the morning
+    dn.hold = true;
+    for (let k = 0; k < 600; k++) dn.update(100, true);
+    expect(dn.darkness).toBe(0);                       // a minute of Watch: still day
+    // Into the night at a normal speed, then Watch: dark at first, light within a night ÷ holdCatchUp.
+    dn.hold = false;
+    let ms = 0;
+    while (dn.darkness < 1 && ms < L.dayMs) { dn.update(100, true); ms += 100; }
+    expect(dn.darkness).toBe(1);
+    dn.hold = true;
+    let steps = 0, biggest = 0, before = dn.darkness;
+    while (dn.darkness > 0 && steps < 1000) { dn.update(1000 / 60, true); biggest = Math.max(biggest, Math.abs(dn.darkness - before)); before = dn.darkness; steps++; }
+    expect(dn.darkness).toBe(0);
+    expect((steps * 1000) / 60).toBeLessThan(((L.nightShare + 2 * L.dusk) * L.dayMs) / L.holdCatchUp + 100);
+    expect(biggest).toBeLessThan(0.1);                 // a gradual dawn, not a pop
   });
 });

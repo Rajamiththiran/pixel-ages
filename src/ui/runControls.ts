@@ -4,7 +4,7 @@
 import { SEASON_NAMES } from '../shared/ids';
 import { CONFIG } from '../config';
 import type { Frame, Speed } from '../shared/protocol';
-import { inMonths, SPEEDS, speedRow, speedTitle } from '../shared/speeds';
+import { inMonths, SPEEDS, speedKey, speedRow, speedTitle } from '../shared/speeds';
 import { h } from './layout';
 import { trayOn } from './theme';
 
@@ -41,7 +41,7 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
   const play = h('button', { class: trayOn ? 'primary bb-play' : undefined, text: '▶', title: 'Play / pause (Space)' });
   // Speeds plan Phase 2: one button per speed in the table, named by its label; the tooltip
   // carries the real rate and the key.
-  const speedBtns = SPEEDS.map((v) => h('button', { text: speedRow(v).label, title: `${speedTitle(v)} (${v})`, 'aria-pressed': 'false' }));
+  const speedBtns = SPEEDS.map((v) => h('button', { text: speedRow(v).label, title: `${speedTitle(v)} (${speedKey(v)})`, 'aria-pressed': 'false' }));
   const step = h('button', { text: 'Step', title: 'Advance one month (.)' });
   const yearbox = h('span', { class: 'yearbox' });
   const speedLabel = h('span', { class: trayOn ? 'mode rate' : 'mode' });
@@ -131,8 +131,10 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
       slider.value = String(f.year);
       setFill();
     }
+    // A pace in months is the set one: at Watch a 1 s measuring window holds 0 or 1 month, so the
+    // measured rate flickered 0.0 / 1.0, and a pace this slow never falls behind (seasons Phase 3b).
     setText(speedLabel, !f.playing ? 'Paused'
-      : inMonths(speedRow(f.speed).yearsPerSecond) ? `${(f.yearsPerSecond * CONFIG.time.ticksPerYear).toFixed(1)} months/s`
+      : inMonths(speedRow(f.speed).yearsPerSecond) ? `${speedRow(f.speed).yearsPerSecond * CONFIG.time.ticksPerYear} months/s`
       : `${f.yearsPerSecond.toFixed(1)} years/s`);
     back.style.display = f.isPast ? '' : 'none';
   }
