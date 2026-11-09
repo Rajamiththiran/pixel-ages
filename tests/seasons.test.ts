@@ -15,7 +15,9 @@ import {
 } from '../src/render/materials';
 import { allTilesMap, scenarioA, scenarioF, scenarioH } from './fixtures';
 import { Mat, RAMP_HEX, SEASON_HEX, hexRgb, rampColours, rampTag, shadowOf, tagCount, tagRgb, tagValid, type SeasonRampName } from '../src/render/ramps';
-import { LookState, Moist, lookColour } from '../src/render/materials';
+import { ALT, LookState, Moist, ROLES, bayerRank, isCrown, isDeciduous, lookColour } from '../src/render/materials';
+import { buildCrowns, crownPixelAt } from '../src/render/crowns';
+import { crownKind, evergreenChance } from '../src/render/terrain';
 import { MoistureField, tileWetness } from '../src/render/moisture';
 import { SeasonDriver, frontAt, parsePin } from '../src/render/seasonLook';
 import { nightOf } from '../src/render/light';
@@ -235,9 +237,9 @@ describe('seasons Phase 1a: each pixel knows what it is', () => {
 
   it('a forest has crowns and the floor between them', () => {
     const r = rolesOf(mat, 2, 20);
-    expect(r.has(Role.Crown)).toBe(true);
-    expect(r.has(Role.Forest)).toBe(true);
-    only(2, 20, [Role.Crown, Role.Forest]);
+    expect([...r].some(isCrown)).toBe(true);
+    expect(r.has(Role.Forest) || r.has(Role.FloorBare)).toBe(true);
+    only(2, 20, [Role.Crown, Role.CrownSnow, Role.DecGreen, Role.DecYellow, Role.DecCopper, Role.Forest, Role.FloorBare]);
   });
 
   it('marks, fire and beaches override the ground under them', () => {
@@ -293,7 +295,7 @@ describe('seasons Phase 1b: the seasonal ramps are the mockup ramps', () => {
   });
 });
 
-const rgbOf = (c: readonly number[]): string => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
+const rgbOf = (c: readonly number[] | typeof ALT): string => (c === ALT ? 'alt' : '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join(''));
 const stepTag = (m: number, s: number): number => m * 8 + s;
 
 describe('seasons Phase 1b: each material takes the ramp of its season', () => {
@@ -301,7 +303,7 @@ describe('seasons Phase 1b: each material takes the ramp of its season', () => {
   const sys = (m: number, s: number): string => RAMP_HEX[m]![s]!;
 
   it('painted is the colour of today for every role and tag', () => {
-    for (let role = 0; role <= Role.Fire; role++) {
+    for (let role = 0; role < ROLES; role++) {
       for (let tag = 0; tag < tagCount(); tag++) if (tagValid(tag)) expect(lookColour(LookState.Painted, 1, role, tag)).toBe(tagRgb(tag));
     }
   });
@@ -359,8 +361,13 @@ describe('seasons Phase 1b: each material takes the ramp of its season', () => {
     const ok = new Set<string>([...rampColours().map(rgbOf), ...Object.values(SEASON_HEX).flat()]);
     for (let state = 0; state <= LookState.Held; state++) {
       for (let cls = 0; cls < 3; cls++) {
-        for (let role = 0; role <= Role.Fire; role++) {
-          for (let tag = 0; tag < tagCount(); tag++) if (tagValid(tag)) expect(ok.has(rgbOf(lookColour(state as LookState, cls, role, tag)))).toBe(true);
+        for (let role = 0; role < ROLES; role++) {
+          for (let tag = 0; tag < tagCount(); tag++) {
+            if (!tagValid(tag)) continue;
+            const c = rgbOf(lookColour(state as LookState, cls, role, tag));
+            // A bare deciduous crown shows its alt entry (a branch or the ground under it).
+            expect(c === 'alt' ? isDeciduous(role) && state === LookState.Winter : ok.has(c), `state ${state} role ${role} tag ${tag}`).toBe(true);
+          }
         }
       }
     }
@@ -552,5 +559,152 @@ describe('seasons Phase 1b: lineage colours against the seasonal ground (report)
     }
     console.log('LINEAGE\n' + close.join('\n'));
     expect(close.length).toBeGreaterThan(0);   // a report for the owner (step report and DECISIONS), not a rule
+  });
+});
+
+// ---------- Phase 2a: trees and bushes ----------
+
+const TRS = CONFIG.render.seasons.trees;
+
+/** A W × H map of one plant at full density and one height. */
+function plantMap(plant: number, elevation: number, w = 12, h = 8): MapData {
+  const m = createMap(w, h);
+  for (let i = 0; i < w * h; i++) { m.plantType[i] = plant; m.plantDensity[i] = 255; m.elevation[i] = elevation; }
+  return m;
+}
+
+/** Draws `m` into a buffer and resolves it in `state`; returns the buffer and the colours as hex. */
+function drawIn(m: MapData, state: number): { mat: MatBuf; hex: string[] } {
+  const mat = createMatBuf(m.width * TILE, m.height * TILE);
+  draw(m, none, STEPS[0], mat);
+  const look = createLook();
+  look.shown.fill(state);
+  const px = new Uint32Array(mat.w * mat.h);
+  for (let ty = 0; ty < m.height; ty++) for (let tx = 0; tx < m.width; tx++) resolveTile(mat, look, px, tx, ty);
+  const hex = Array.from(px, (v) => '#' + [v & 255, (v >> 8) & 255, (v >> 16) & 255].map((c) => c.toString(16).padStart(2, '0')).join(''));
+  return { mat, hex };
+}
+
+const inRamp = (name: SeasonRampName): Set<string> => new Set<string>(SEASON_HEX[name]);
+
+describe('seasons Phase 2a: evergreen and deciduous trees', () => {
+  it('evergreens grow commoner with height (mockup: 12%, up to 97% on high ground)', () => {
+    expect(evergreenChance(0)).toBeCloseTo(TRS.evergreenBase);
+    expect(evergreenChance(TRS.evergreenFromElevation)).toBeCloseTo(TRS.evergreenBase);
+    expect(evergreenChance(9)).toBeCloseTo(TRS.evergreenBase + TRS.evergreenHigh);
+    expect(evergreenChance(Infinity)).toBeCloseTo(TRS.evergreenBase + TRS.evergreenHigh);
+  });
+
+  it('deciduous trees turn yellow, copper or stay green in autumn, in the configured shares', () => {
+    const n = { [Role.Crown]: 0, [Role.DecYellow]: 0, [Role.DecCopper]: 0, [Role.DecGreen]: 0 } as Record<number, number>;
+    for (let x = 0; x < 200; x++) for (let y = 0; y < 100; y++) n[crownKind(x * 7, y * 5, 0)]!++;
+    const dec = 20000 - n[Role.Crown]!;
+    expect(n[Role.Crown]! / 20000).toBeCloseTo(TRS.evergreenBase, 1);
+    expect(n[Role.DecYellow]! / dec).toBeCloseTo(TRS.autumnYellow, 1);
+    expect(n[Role.DecCopper]! / dec).toBeCloseTo(TRS.autumnCopper, 1);
+  });
+
+  it('a low wood is mostly deciduous, a high one mostly evergreen', () => {
+    const share = (elev: number): number => {
+      const { mat } = drawIn(plantMap(Plant.Forest, elev), LookState.Summer);
+      let crowns = 0, ever = 0;
+      for (const r of mat.role) { if (isCrown(r)) { crowns++; if (r === Role.Crown || r === Role.CrownSnow) ever++; } }
+      return ever / crowns;
+    };
+    expect(share(0)).toBeLessThan(0.25);
+    expect(share(9)).toBeGreaterThan(0.85);
+  });
+
+  it('a tree turns as one: every pixel of a crown takes its centre\'s rank', () => {
+    const m = plantMap(Plant.Forest, 0);
+    const { mat } = drawIn(m, LookState.Summer);
+    const c = { x: 0, y: 0, r: 0, dx: 0, dy: 0, branch: 0 };
+    let checked = 0;
+    for (let ty = 0; ty < m.height; ty++) {
+      for (let tx = 0; tx < m.width; tx++) {
+        buildCrowns(m, tx, ty);
+        for (let y = ty * TILE; y < ty * TILE + TILE; y++) {
+          for (let x = tx * TILE; x < tx * TILE + TILE; x++) {
+            const p = y * mat.w + x;
+            if (!isCrown(mat.role[p]!)) continue;
+            expect(crownPixelAt(x, y, c)).toBe(true);
+            expect(mat.rank[p]).toBe(bayerRank(c.x, c.y));
+            checked++;
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(1000);
+  });
+
+  it('autumn shows yellow and copper crowns among the green; summer none', () => {
+    const autumn = new Set(drawIn(plantMap(Plant.Forest, 0), LookState.Autumn).hex);
+    const summer = new Set(drawIn(plantMap(Plant.Forest, 0), LookState.Summer).hex);
+    for (const name of ['deciduousAuYellow', 'deciduousAuCopper'] as const) {
+      expect([...inRamp(name)].some((h) => autumn.has(h)), name).toBe(true);
+      expect([...inRamp(name)].some((h) => summer.has(h)), name).toBe(false);
+    }
+  });
+
+  it('in winter a deciduous crown is bare: its branches in wood, the ground under it elsewhere', () => {
+    const m = plantMap(Plant.Forest, 0);
+    const { mat, hex } = drawIn(m, LookState.Winter);
+    const wood = new Set(RAMP_HEX[Mat.Wood]!.slice(1, 4));
+    const leaves = new Set<string>([...inRamp('deciduousSu'), ...inRamp('deciduousSp'), ...inRamp('deciduousAuGreen'), ...inRamp('deciduousAuYellow'), ...inRamp('deciduousAuCopper')]);
+    let branches = 0, ground = 0;
+    for (let p = 0; p < mat.role.length; p++) {
+      if (!isDeciduous(mat.role[p]!)) continue;
+      expect(mat.alt[p]).not.toBe(NO_TAG);
+      expect(leaves.has(hex[p]!)).toBe(false);
+      if (mat.altRole[p] === Role.Branch) { branches++; expect(wood.has(hex[p]!)).toBe(true); }
+      else { ground++; expect(isCrown(mat.altRole[p]!)).toBe(false); }
+    }
+    expect(branches).toBeGreaterThan(100);
+    expect(ground).toBeGreaterThan(branches);
+  });
+
+  it('in winter a low (deciduous) wood has a grass floor, a high (evergreen) wood keeps its dark floor', () => {
+    const grassWinter = new Set<string>([...inRamp('grassWiNormal'), ...inRamp('grassWiDry'), ...inRamp('grassWiLush')]);
+    const floorShare = (elev: number): number => {
+      const { mat, hex } = drawIn(plantMap(Plant.Forest, elev), LookState.Winter);
+      let floor = 0, light = 0;
+      for (let p = 0; p < mat.role.length; p++) {
+        if (mat.role[p] !== Role.Forest && mat.role[p] !== Role.FloorBare) continue;
+        floor++;
+        if (grassWinter.has(hex[p]!)) light++;
+      }
+      return light / floor;
+    };
+    expect(floorShare(0)).toBeGreaterThan(0.9);
+    expect(floorShare(9)).toBeLessThan(0.1);
+  });
+
+  it('snow lies on crowns only where winter snow lies (high or mountain ground), and only in winter', () => {
+    const snow = inRamp('snowFull');
+    const count = (elev: number, state: number): number => drawIn(plantMap(Plant.Forest, elev), state).hex.filter((h) => snow.has(h)).length;
+    const high = CONFIG.render.f8.season.snowElevation + 1;
+    expect(count(high, LookState.Winter)).toBeGreaterThan(50);
+    expect(count(high, LookState.Autumn)).toBe(0);
+    expect(count(0, LookState.Winter)).toBe(0);
+  });
+});
+
+describe('seasons Phase 2a: fruit bushes', () => {
+  it('blossom in spring, berries in summer and autumn, bare twigs in winter', () => {
+    const at = (state: number): Set<string> => new Set(drawIn(plantMap(Plant.FruitBushes, 0), state).hex);
+    const blossom = inRamp('blossom'), berry = PALETTE.fruit, twig = RAMP_HEX[Mat.Wood]![1]!;
+    const spring = at(LookState.Spring), summer = at(LookState.Summer), autumn = at(LookState.Autumn), winter = at(LookState.Winter);
+    expect([...blossom].some((h) => spring.has(h))).toBe(true);
+    expect(spring.has(berry)).toBe(false);
+    expect(summer.has(berry) && autumn.has(berry)).toBe(true);
+    expect([...blossom].some((h) => summer.has(h))).toBe(false);
+    expect(winter.has(berry)).toBe(false);
+    expect(winter.has(twig)).toBe(true);
+  });
+
+  it('the held look keeps the summer bush (berries, no blossom)', () => {
+    const held = new Set(drawIn(plantMap(Plant.FruitBushes, 0), LookState.Held).hex);
+    expect(held.has(PALETTE.fruit)).toBe(true);
+    expect([...inRamp('blossom')].some((h) => held.has(h))).toBe(false);
   });
 });

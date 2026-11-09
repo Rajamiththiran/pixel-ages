@@ -12,11 +12,11 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  LookState, Role, createLook, createMatBuf, dissolveMat, matbufOn, readMatTile, resolveRank, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
+  LookState, NO_TAG, Role, bayerRank, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
 import { MoistureField } from './moisture';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
-import { buildCrowns, canopyDistance, crownColourAt, inTreeShadow } from './crowns';
+import { buildCrowns, canopyDistance, crownColourAt, crownPixelAt, inTreeShadow, type CrownPixel } from './crowns';
 import { occlusionOn, shadowsOn } from './shadows';
 import { HazardMark, Look, Mark, lookLevel } from '../shared/protocol';
 import {
@@ -141,11 +141,52 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
   const painted = ex.base && ex.base.plantType[i] === Plant.Forest ? ex.base.plantDensity[i]! / 255 : 0;
   const nowForest = plant === Plant.Forest ? dens : 0;
   const stumps = !water && wall === WallType.None && painted - nowForest > F8.stumps.belowPainted;
-  // Phase 3: lay out the crowns near a forest once, for crown pixels, tree shadows and the canopy edge.
-  crownsReady = nearForest && (shadowsOn || occlusionOn);
+  // Phase 3: lay out the crowns near a forest once, for crown pixels, tree shadows and the canopy edge
+  // (seasons Phase 2a: and each crown's kind and bare branches).
+  crownsReady = nearForest && (shadowsOn || occlusionOn || treesOn);
   if (crownsReady) buildCrowns(map, tx, ty);
   const occlude = occlusionOn && crownsReady && wall === WallType.None && plant !== Plant.Forest && plant !== Plant.Farmland;
   const mat = ex.mat ?? null;
+  // Seasons Phase 2a: a wood of mostly deciduous trees (low ground) has a bright floor in winter.
+  const bareWood = treesOn && ground !== Ground.Mountain && evergreenChance(map.elevation[i]!) < 0.5;
+
+  /**
+   * One land pixel into `out`; returns its role. Seasons Phase 2a draws it a second time without
+   * crowns (`crowns` false): the ground a bare deciduous crown shows in winter.
+   */
+  const land = (ox: number, oy: number, px: number, py: number, edge: number, crowns: boolean): Role => {
+    onCrown = false;
+    onPeak = false;
+    onFruitSpeck = false;
+    landPixel(map, ground, plant, dens, kind, crowns && nearForest, stumps ? painted : -1, px, py, out);
+    let role = landRole(ground, plant);
+    if (treesOn) {
+      onTree = onCrown && crownsReady && crownPixelAt(px, py, cp);
+      if (onTree) role = crownRole(map, cp, px, py);
+      else if (role === Role.Fruit) role = fruitRole(px, py, dens);
+      else if (role === Role.Forest && bareWood) role = Role.FloorBare;
+    }
+    if (resShare > 0 && hash01(px, py, SALT.resource + res) < resShare) copy(RESOURCE_COLOR[res]!, out);
+    if (look !== 0) soilPixel(look, plant, px, py, out);
+    if (tileMarks !== 0) {
+      onMark = false;
+      markPixel(map, ex.marks!, i, tileMarks, plant, look, ox, oy, px, py, out);
+      if (onMark) role = Role.Mark;
+    }
+    if (tileHazards & HazardMark.Fire) {
+      const f = hash01(px, py, SALT.fire);
+      if (f < R.marks.flameShare) copy(f < R.marks.flameShare / 2 ? RGBS.fireYellow : RGBS.fireOrange, out);
+      else shade(out, R.marks.burnDark, DR.burnSteps);
+      role = Role.Fire;
+    }
+    if (beachGround && hasLake && edgeDistance(ox, oy, nbLake) < F8.beachPx) { copy(RGBS.sand, out); role = Role.Beach; }
+    if (shaded) shadeHeight(map, px, py, out);
+    if (hasEdge) applyWetEdge(edge, out);
+    if (occlude && !onCrown) occludePixel(px, py, out);
+    // Diorama phase 2: clustered ordered dither on land (the mockup leaves water untextured).
+    if (ditherOn) applyTexture(px, py, out);
+    return role;
+  };
 
   for (let oy = 0; oy < TILE; oy++) {
     const py = ty * TILE + oy;
@@ -156,6 +197,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
       if (ditherOn) ditherPixel(px, py);
       onCrown = false;
       onPeak = false;
+      onTree = false;
       let role: Role;
 
       if (water && !corner) {
@@ -183,36 +225,24 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         if (ditherOn) applyTexture(px, py, out);
         role = onPeak ? Role.Peak : Role.Wall;
       } else {
-        landPixel(map, ground, plant, dens, kind, nearForest, stumps ? painted : -1, px, py, out);
-        role = landRole(ground, plant);
-        if (resShare > 0 && hash01(px, py, SALT.resource + res) < resShare) copy(RESOURCE_COLOR[res]!, out);
-        if (look !== 0) soilPixel(look, plant, px, py, out);
-        if (tileMarks !== 0) {
-          onMark = false;
-          markPixel(map, ex.marks!, i, tileMarks, plant, look, ox, oy, px, py, out);
-          if (onMark) role = Role.Mark;
-        }
-        if (tileHazards & HazardMark.Fire) {
-          const f = hash01(px, py, SALT.fire);
-          if (f < R.marks.flameShare) copy(f < R.marks.flameShare / 2 ? RGBS.fireYellow : RGBS.fireOrange, out);
-          else shade(out, R.marks.burnDark, DR.burnSteps);
-          role = Role.Fire;
-        }
-        if (beachGround && hasLake && edgeDistance(ox, oy, nbLake) < F8.beachPx) { copy(RGBS.sand, out); role = Role.Beach; }
-        if (shaded) shadeHeight(map, px, py, out);
-        if (hasEdge) applyWetEdge(edge, out);
-        if (occlude && !onCrown) occludePixel(px, py, out);
-        // Diorama phase 2: clustered ordered dither on land (the mockup leaves water untextured).
-        if (ditherOn) applyTexture(px, py, out);
+        role = land(ox, oy, px, py, edge, true);
       }
 
       // Diorama: no random grain (readme: texture is ordered dither, applyTexture above), and
       // every pixel ends on a ramp or accent colour.
       let g = 1;
+      // Seasons Phase 2a: a tree turns as one, at its centre's rank (a crown covered by sand or a
+      // mark is ground again).
+      const tree = onTree && isCrown(role);
       if (rampsOn) {
         const tag = rampTag(out);
         // Seasons Phase 1a: the material buffer keeps the step and role; the image is resolved from it.
-        if (mat) { const p = py * imgW + px; mat.tag[p] = tag; mat.role[p] = role; }
+        if (mat) {
+          const p = py * imgW + px;
+          mat.tag[p] = tag; mat.role[p] = role;
+          mat.rank[p] = tree ? bayerRank(cp.x, cp.y) : bayerRank(px, py);
+          mat.alt[p] = NO_TAG;
+        }
       } else g = 1 + R.grain * (2 * hash01(px, py, SALT.grain) - 1);
       const o = (py * imgW + px) * 4;
       if (ex.shadow) {
@@ -224,8 +254,64 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
       data[o + 1] = out[1] * g;
       data[o + 2] = out[2] * g;
       data[o + 3] = 255;
+      // Seasons Phase 2a: what a bare deciduous crown shows in winter: its branch, else the ground under it.
+      if (mat && tree && isDeciduous(role)) {
+        const p = py * imgW + px;
+        if (cp.branch > 0) {
+          mat.alt[p] = Mat.Wood * 8 + cp.branch;
+          mat.altRole[p] = crownCold && hash01(px, py, TRS.salt + 13) < TRS.branchSnowShare ? Role.BranchSnow : Role.Branch;
+        } else {
+          const cold = crownCold, under = land(ox, oy, px, py, edge, false);
+          mat.alt[p] = rampTag(out);
+          mat.altRole[p] = under;
+          crownCold = cold;
+        }
+      }
     }
   }
+}
+
+// ---------- seasons Phase 2a: trees and bushes ----------
+
+const TRS = CONFIG.render.seasons.trees;
+const SNOW_ELEVATION = CONFIG.render.f8.season.snowElevation;
+const cp: CrownPixel = { x: 0, y: 0, r: 0, dx: 0, dy: 0, branch: 0 };
+let onTree = false;        // the pixel being drawn is a laid-out crown (cp holds it)
+let crownCold = false;     // its tree stands where winter snow lies
+let onFruitSpeck = false;  // landPixel drew a fruit speck
+
+/** The chance that a crown on land of this height is evergreen (mountain ground: Infinity). */
+export function evergreenChance(elevation: number): number {
+  const t = Math.max(0, Math.min(1, (elevation - TRS.evergreenFromElevation) / (TRS.evergreenFullElevation - TRS.evergreenFromElevation)));
+  return TRS.evergreenBase + TRS.evergreenHigh * t;
+}
+
+/** A crown's kind from its centre (x, y): evergreen (Role.Crown) or a deciduous tree by its autumn colour. */
+export function crownKind(x: number, y: number, elevation: number): Role {
+  if (hash01(x, y, TRS.salt + 10) < evergreenChance(elevation)) return Role.Crown;
+  const h = hash01(x, y, TRS.salt + 11);
+  return h < TRS.autumnYellow ? Role.DecYellow : h < TRS.autumnYellow + TRS.autumnCopper ? Role.DecCopper : Role.DecGreen;
+}
+
+/** The role of a crown pixel, and whether its tree stands where snow lies (`crownCold`). */
+function crownRole(map: MapData, c: CrownPixel, px: number, py: number): Role {
+  const tx = Math.min(map.width - 1, Math.max(0, Math.floor(c.x / TILE)));
+  const ty = Math.min(map.height - 1, Math.max(0, Math.floor(c.y / TILE)));
+  const ti = ty * map.width + tx;
+  const mountain = map.ground[ti] === Ground.Mountain;
+  // Until Phase 2c's snow line: winter snow lies on mountain ground and high land (the F8 rule).
+  crownCold = mountain || map.elevation[ti]! >= SNOW_ELEVATION;
+  const kind = crownKind(c.x, c.y, mountain ? Infinity : map.elevation[ti]!);
+  if (kind === Role.Crown && crownCold && c.dy < 0 && (c.dx + c.dy) / c.r <= TRS.snowLitBelow
+    && hash01(px, py, TRS.salt + 12) < TRS.snowCapShare) return Role.CrownSnow;
+  return kind;
+}
+
+/** The role of a fruit-bush pixel: its fruit, a twig bare in winter, a blossom in spring, or a leaf. */
+function fruitRole(px: number, py: number, dens: number): Role {
+  if (onFruitSpeck) return Role.FruitSpeck;
+  const h = hash01(px, py, TRS.salt + 14);
+  return h < TRS.twigShare * dens ? Role.FruitTwig : h < (TRS.twigShare + TRS.blossomShare) * dens ? Role.FruitBlossom : Role.Fruit;
 }
 
 // ---------- rivers (F8) ----------
@@ -485,7 +571,7 @@ function landPixel(
     case Plant.FruitBushes:
       copy(out, tmp);
       grad(tmp, RGBS.fruitBush, dens, out);
-      if (speck(px, py, SALT.fruit, R.fruitSpeck * dens)) copy(RGBS.fruit, out);
+      if (speck(px, py, SALT.fruit, R.fruitSpeck * dens)) { copy(RGBS.fruit, out); onFruitSpeck = true; }
       break;
     case Plant.Farmland:
       // Crop rows; the season's colour (green → gold → stubble → bare) is the season tint (F8).
@@ -800,7 +886,7 @@ export class TerrainLayer {
         this.moisture.update(this.map, this.rain, this.mat, (i) => { store.commit(i % w, Math.floor(i / w)); this.wholeImage = true; });
       }
       if (this.ranksDirty !== 0) {
-        for (let r = 0; r < this.look.shown.length; r++) if (this.ranksDirty & (1 << r)) resolveRank(this.mat, this.look, this.px, r);
+        resolveRanks(this.mat, this.look, this.px, this.ranksDirty);
         this.ranksDirty = 0;
         this.wholeImage = true;
       }

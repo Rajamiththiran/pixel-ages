@@ -822,6 +822,29 @@ export const CONFIG = {
       // ditherWidth: the mockup's 0.06 assumes a smooth noise field; painted rain changes tile by tile, so
       // 0.12 makes an edge between two rains stipple over about 3 px instead of reading as a line.
       moisture: { waterReachTiles: 3, waterBonus: 0.25, noiseAmp: 0.2, noiseCellTiles: 6, noiseSalt: 131, lushAbove: 0.68, dryBelow: 0.4, ditherWidth: 0.12 },
+      // Phase 2a: trees and bushes (mockup B; numbers from its tree drawing). Each crown is evergreen
+      // or deciduous and turns as a whole. Off: `?off=trees` (every crown evergreen, bushes plain, as Phase 1b).
+      trees: {
+        on: true,
+        // Evergreen share: evergreenBase, plus up to evergreenHigh more as the crown's tile rises from
+        // evergreenFromElevation to evergreenFullElevation (mockup: 12% + 85% on high ground). Mountain ground counts as full.
+        evergreenBase: 0.12, evergreenHigh: 0.85, evergreenFromElevation: 3, evergreenFullElevation: 6,
+        autumnYellow: 0.4, autumnCopper: 0.35,   // deciduous crowns in autumn; the rest stay green
+        // Bare winter crowns: a trunk from the centre down and `branches` branches fanning upward,
+        // branchSpreadRad apart (± branchJitterRad / 2), reaching the radius + branchReachPx, sampled every branchStepPx.
+        // The mockup's tree (radius 3–4: 5 branches reaching r + 0.6) scaled to the game's crowns (radius
+        // 1.6–2.6): with 5 branches the wood filled ~70% of a crown, so a bare tree looked full; 3 that stop
+        // half a pixel inside leave ~40% wood, the ground showing between, as in the mockup.
+        branches: 3, branchSpreadRad: 0.7, branchJitterRad: 0.4, branchReachPx: -0.5, branchStepPx: 0.7,
+        // Snow on crowns (only where winter snow lies; until Phase 2c: mountain ground and land at
+        // f8.season.snowElevation or higher): this share of an evergreen's lit upper pixels (lit side:
+        // (dx + dy) / r at most snowLitBelow), and this share of a bare tree's branch pixels.
+        snowCapShare: 0.6, snowLitBelow: -0.3, branchSnowShare: 0.55,
+        // Fruit bushes: blossom in spring on this share × density of their pixels, bare twigs in winter
+        // on this share × density; the berries are the fruit specks (render.fruitSpeck), shown in summer and autumn.
+        blossomShare: 0.15, twigShare: 0.25,   // blossom 0.3 made a pink carpet (seen in the browser, Garden)
+        salt: 141,
+      },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,

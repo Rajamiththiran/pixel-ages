@@ -5,6 +5,7 @@
 // window (the tile plus a margin above and to the left), then read per pixel.
 
 import { CONFIG } from '../config';
+import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
 import { crownColour, crownIn, type Crown } from './terrainDetail';
 import type { RGB } from './palette';
@@ -22,9 +23,15 @@ const dys = new Int8Array(S * S);
 const radius = new Float32Array(S * S);
 const tone = new Float32Array(S * S);
 const shade = new Uint8Array(S * S);   // a crown's cast shadow
+const branch = new Uint8Array(S * S);  // seasons Phase 2a: a bare crown's wood step here (1–3), 0 none
 let ox = 0, oy = 0;
 
 const crown: Crown = { x: 0, y: 0, r: 0, tone: 0 };
+const TR = CONFIG.render.seasons.trees;
+// The crowns laid out in the window (centre and radius), for their branches.
+const MAX_CROWNS = 256;
+const cxs = new Int16Array(MAX_CROWNS), cys = new Int16Array(MAX_CROWNS), crs = new Float32Array(MAX_CROWNS);
+let crownCount = 0;
 
 function stampShadow(x: number, y: number): void {
   const lx = x - ox, ly = y - oy;
@@ -41,6 +48,7 @@ export function buildCrowns(map: MapData, tx: number, ty: number): void {
   oy = ty * TILE - M;
   bestY.fill(-1);
   shade.fill(0);
+  crownCount = 0;
   const c = D.treeCell;
   const rMax = Math.ceil(D.treeRadiusMax);
   const lift = DS.treeLiftPx + D.treeRadiusMax;
@@ -67,8 +75,51 @@ export function buildCrowns(map: MapData, tx: number, ty: number): void {
         for (let dx = -ri; dx <= ri; dx++) if (dx * dx + dy * dy <= r * r) stampShadow(sx + dx, sy + dy);
       }
       for (let t = 0; t <= Math.floor(l); t++) stampShadow(Math.round(x + t * DS.perHeightPx), Math.round(y + r + t * DS.perHeightPx));
+      if (crownCount < MAX_CROWNS) { cxs[crownCount] = x; cys[crownCount] = y; crs[crownCount] = r; crownCount++; }
     }
   }
+  layBranches();
+}
+
+/**
+ * Seasons Phase 2a: where each crown's bare winter branches are (the mockup's bare tree, scaled to
+ * the game's small crowns): a trunk from the centre down, then branches fanning upward from the
+ * centre, darker on the right, lighter at the tips. Only on the crown's own pixels (the front-most
+ * crown keeps a pixel), so a bare tree never draws over its neighbours.
+ */
+function layBranches(): void {
+  branch.fill(0);
+  for (let n = 0; n < crownCount; n++) {
+    const x = cxs[n]!, y = cys[n]!, r = crs[n]!;
+    const own = (bx: number, by: number): number => {
+      const k = index(bx, by);
+      return k >= 0 && bestY[k] === y && bestX[k] === x ? k : -1;
+    };
+    for (let t = 0; t <= Math.floor(r); t++) {
+      const k = own(x, y + t);
+      if (k >= 0) branch[k] = 1;
+    }
+    const len = r + TR.branchReachPx;
+    for (let j = 0; j < TR.branches; j++) {
+      // Render only: Math.cos and Math.sin are fine here (rule 4 is for the simulation).
+      const ang = -Math.PI / 2 + (j - (TR.branches - 1) / 2) * TR.branchSpreadRad + (hash01(x, y, TR.salt + j) - 0.5) * TR.branchJitterRad;
+      for (let s = 1; s <= len; s += TR.branchStepPx) {
+        const k = own(Math.round(x + Math.cos(ang) * s), Math.round(y + Math.sin(ang) * s));
+        if (k >= 0) branch[k] = s > len - 1 ? 3 : Math.cos(ang) < 0 ? 2 : 1;
+      }
+    }
+  }
+}
+
+/** The crown over a pixel of the built tile (seasons Phase 2a). */
+export interface CrownPixel { x: number; y: number; r: number; dx: number; dy: number; branch: number }
+
+/** Fills `out` with the crown covering (px, py); false where no crown covers it. */
+export function crownPixelAt(px: number, py: number, out: CrownPixel): boolean {
+  const k = index(px, py);
+  if (k < 0 || bestY[k]! < 0) return false;
+  out.x = bestX[k]!; out.y = bestY[k]!; out.r = radius[k]!; out.dx = dxs[k]!; out.dy = dys[k]!; out.branch = branch[k]!;
+  return true;
 }
 
 const index = (px: number, py: number): number => {

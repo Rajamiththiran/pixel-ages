@@ -3,14 +3,16 @@
 // ramps.ts) and its role (grass, crown, lake…). The colour is picked last, through lookup tables,
 // as in the seasons mockup ("the buffer holds (material, step), effects move steps, and only then
 // is a colour picked"). Phase 1b: one table per season state and grass moisture class, so a pixel
-// swaps from one seasonal ramp to the next at the same step; nothing is laid over it. Drawing only.
+// swaps from one seasonal ramp to the next at the same step; nothing is laid over it. Phase 2a: trees
+// and bushes, as roles (evergreen, deciduous by autumn colour, branch, fruit, blossom, twig); a bare
+// deciduous crown shows its alt entry. Drawing only.
 
 import { CONFIG } from '../config';
 import { bayer } from './dither';
 import {
-  Mat, rampsOn, seasonRampRgb, styleOff, tagCount, tagRgb, tagValid, type SeasonRampName,
+  Mat, rampTag, rampsOn, seasonRampRgb, styleOff, tagCount, tagRgb, tagValid, type SeasonRampName,
 } from './ramps';
-import type { RGB } from './palette';
+import { RGBS, type RGB } from './palette';
 
 const TILE = CONFIG.map.tilePx;
 const TILE_PX = TILE * TILE;
@@ -23,6 +25,9 @@ export const matbufOn: boolean = rampsOn && SC.matbuf.on && !styleOff('matbuf');
 /** Phase 1b switch: the seasons live in the materials, not in a tint on top. Needs the buffer. */
 export const seasonRampsOn: boolean = matbufOn && SC.seasonRamps.on && !styleOff('seasonRamps');
 
+/** Phase 2a switch: crowns turn as evergreen or deciduous trees, bushes blossom and fruit. */
+export const treesOn: boolean = seasonRampsOn && SC.trees.on && !styleOff('trees');
+
 /**
  * What a terrain pixel is, so a later phase can recolour it by season (a crown turns copper, a
  * lake ices, a field goes to stubble). The last thing drawn over a pixel sets it.
@@ -31,8 +36,8 @@ export const Role = {
   None: 0,       // not drawn yet
   Grass: 1,      // grassland: open ground and grass
   Forest: 2,     // the floor between trees
-  Crown: 3,      // a tree crown (own tile or overhanging)
-  Fruit: 4,      // fruit bushes
+  Crown: 3,      // a tree crown (own tile or overhanging); from Phase 2a an evergreen's
+  Fruit: 4,      // fruit bushes (their leaves)
   Farm: 5,       // farmland rows
   Desert: 6,     // desert sand (and grass on it)
   Mountain: 7,   // mountain ground
@@ -45,9 +50,26 @@ export const Role = {
   Beach: 14,     // sand round a lake or the sea
   Mark: 15,      // what people left on the land: paths, roads, canals, pits, ruins
   Fire: 16,      // a burning tile's flames and char
+  // Phase 2a: trees and bushes.
+  CrownSnow: 17,   // an evergreen's lit upper pixel where winter snow lies: snow in winter
+  DecGreen: 18,    // a deciduous crown that stays green in autumn …
+  DecYellow: 19,   // … turns yellow …
+  DecCopper: 20,   // … or copper; bare in winter (the pixel shows its `alt` entry)
+  Branch: 21,      // a bare crown's trunk or branch (an `alt` role: wood)
+  BranchSnow: 22,  // a branch pixel where winter snow lies: snow
+  FruitSpeck: 23,  // a fruit bush's fruit: blossom in spring, berries in summer and autumn, a twig in winter
+  FruitTwig: 24,   // a bush pixel that is a bare twig in winter
+  FruitBlossom: 25, // a bush pixel in blossom in spring
+  FloorBare: 26,   // the floor of a mostly deciduous wood: in winter, with the canopy gone, the grass's winter ramp a step darker (mockup)
 } as const;
 export type Role = (typeof Role)[keyof typeof Role];
-const ROLES = 17;
+/** How many roles there are (tables are indexed by role). */
+export const ROLES = 27;
+
+/** Is this role a deciduous crown? */
+export const isDeciduous = (role: number): boolean => role >= Role.DecGreen && role <= Role.DecCopper;
+/** Is this role a tree crown of any kind? */
+export const isCrown = (role: number): boolean => role === Role.Crown || role === Role.CrownSnow || isDeciduous(role);
 
 /** What the buffer resolves to: today's colours (setup, and the switch off), a season, or the held fast-forward look. */
 export const LookState = { Painted: 0, Spring: 1, Summer: 2, Autumn: 3, Winter: 4, Held: 5 } as const;
@@ -66,17 +88,32 @@ export interface MatBuf {
   readonly tag: Uint16Array;
   readonly role: Uint8Array;
   readonly moist: Uint8Array;   // Phase 1b: the pixel's grass moisture class (rain, not the tile's drawing)
+  // Phase 2a: the Bayer rank whose state the pixel shows (its own, or its tree's centre, so a tree
+  // turns as one), and for a deciduous crown what shows when it is bare: a branch, or the ground under it.
+  readonly rank: Uint8Array;
+  readonly alt: Uint16Array;
+  readonly altRole: Uint8Array;
 }
 
 /** The tag of a pixel not drawn yet: it resolves to transparent, as the image's undrawn pixels are. */
 export const NO_TAG = 0xffff;
 
 export function createMatBuf(w: number, h: number): MatBuf {
-  return { w, h, tag: new Uint16Array(w * h).fill(NO_TAG), role: new Uint8Array(w * h), moist: new Uint8Array(w * h).fill(Moist.Normal) };
+  const n = w * h;
+  return {
+    w, h, tag: new Uint16Array(n).fill(NO_TAG), role: new Uint8Array(n), moist: new Uint8Array(n).fill(Moist.Normal),
+    rank: new Uint8Array(n), alt: new Uint16Array(n).fill(NO_TAG), altRole: new Uint8Array(n),
+  };
 }
 
 /** A tile's entries, copied out (for a tile dissolving from its old look). */
-export interface MatTile { tag: Uint16Array; role: Uint8Array }
+export interface MatTile { tag: Uint16Array; role: Uint8Array; rank: Uint8Array; alt: Uint16Array; altRole: Uint8Array }
+
+// Bayer rank (0–15) of each 4×4 cell, the same matrix as dither.ts.
+const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+
+/** The Bayer rank of a pixel (0–15). */
+export const bayerRank = (x: number, y: number): number => B4[(y & 3) * 4 + (x & 3)]!;
 
 /** Packs a colour as the image's little-endian RGBA word, opaque (as blit.ts packs sprite pixels). */
 const packRgba = (c: RGB): number => ((255 << 24) | (c[2] << 16) | (c[1] << 8) | c[0]) >>> 0;
@@ -100,6 +137,16 @@ const STONE: readonly Ramp[] = [Mat.Stone, Mat.Stone, Mat.Stone, 'stoneWi'];
 const CROP: readonly Ramp[] = ['cropSprout', 'cropGreen', Mat.Crop, 'cropStubble'];   // one stage per season until Phase 2b
 const RIVER: readonly Ramp[] = ['waterSpring', Mat.Water, Mat.Water, 'waterWinter'];  // spring meltwater
 const STILL: readonly Ramp[] = [Mat.Water, Mat.Water, Mat.Water, 'waterWinter'];
+// Phase 2a: deciduous crowns by season (autumn by the crown's own colour; winter: bare).
+const DECIDUOUS: readonly Ramp[] = ['deciduousSp', 'deciduousSu', 'deciduousAuGreen', 'deciduousSu'];
+const AUTUMN: Readonly<Record<number, Ramp>> = {
+  [Role.DecGreen]: 'deciduousAuGreen', [Role.DecYellow]: 'deciduousAuYellow', [Role.DecCopper]: 'deciduousAuCopper',
+};
+
+/** The role a variant falls back to for its plain colours (a bush's twig is a bush leaf in summer). */
+const baseRole = (role: number): number =>
+  role === Role.FruitTwig || role === Role.FruitBlossom || role === Role.FruitSpeck ? Role.Fruit
+    : role === Role.CrownSnow ? Role.Crown : role === Role.BranchSnow ? Role.Branch : role === Role.FloorBare ? Role.Forest : role;
 
 /**
  * The ramp a pixel of group `g` with `role` takes in `season` (0 spring … 3 winter) and moisture
@@ -107,10 +154,13 @@ const STILL: readonly Ramp[] = [Mat.Water, Mat.Water, Mat.Water, 'waterWinter'];
  * keep their ramp's season; accents (ink, flowers, flames, fruit) never change.
  */
 export function seasonalRamp(g: number, role: number, season: number, cls: number): Ramp | null {
+  const base = baseRole(role);
   switch (g) {
     case Mat.Grass:
-      return role === Role.Fruit && FRUIT[season] !== null ? FRUIT[season]! : GRASS[season]![cls]!;
-    case Mat.Forest: return EVERGREEN[season]!;   // Phase 2a splits crowns into evergreen and deciduous
+      return base === Role.Fruit && FRUIT[season] !== null ? FRUIT[season]! : GRASS[season]![cls]!;
+    case Mat.Forest:
+      if (isDeciduous(role)) return season === 2 ? AUTUMN[role]! : DECIDUOUS[season]!;
+      return EVERGREEN[season]!;
     case Mat.Sand: return SAND[season]!;
     case Mat.Stone: return STONE[season]!;
     case Mat.Crop: return CROP[season]!;
@@ -119,23 +169,42 @@ export function seasonalRamp(g: number, role: number, season: number, cls: numbe
   }
 }
 
-/** The held fast-forward look (seasons brief D): summer, normal moisture, gold fields. */
-function heldRamp(g: number, role: number): Ramp | null {
-  if (g === Mat.Crop) return null;
-  return seasonalRamp(g, role, 1, Moist.Normal);
-}
-
 function rampColour(r: Ramp, step: number): RGB {
   if (typeof r === 'number') return tagRgb(r * 8 + step);
   const c = seasonRampRgb(r);
   return c[Math.max(0, Math.min(c.length - 1, step))]!;
 }
 
-/** The colour of (role, tag) in a state and moisture class. */
-export function lookColour(state: LookState, cls: number, role: number, tag: number): RGB {
+/** "Show the pixel's `alt` entry": a bare deciduous crown in winter (a table value no colour has: colours are opaque). */
+export const ALT = 1;
+
+let fruitTag = -1;
+
+/**
+ * The colour of (role, tag) in a state and moisture class, or ALT where the pixel shows its
+ * `alt` entry instead (a deciduous crown in winter: its branches and the ground under it).
+ */
+export function lookColour(state: LookState, cls: number, role: number, tag: number): RGB | typeof ALT {
   const g = tag >> 3, step = tag & 7;
   if (state === LookState.Painted) return tagRgb(tag);
-  const r = state === LookState.Held ? heldRamp(g, role) : seasonalRamp(g, role, state - 1, cls);
+  const held = state === LookState.Held;
+  // The held fast-forward look (seasons brief D): summer, normal moisture, gold fields.
+  const season = held ? 1 : state - 1;
+  const c = held ? Moist.Normal : cls;
+  const winter = season === 3;
+  // Phase 2a: trees and bushes.
+  if (isDeciduous(role) && g === Mat.Forest && winter) return ALT;
+  if (winter && (role === Role.CrownSnow && g === Mat.Forest)) return seasonRampRgb('snowFull')[step >= 3 ? 4 : 3]!;
+  if (winter && role === Role.BranchSnow && g === Mat.Wood) return seasonRampRgb('snowFull')[4]!;
+  if (role === Role.FruitSpeck && tag === fruitTag) {
+    if (season === 0) return seasonRampRgb('blossom')[3]!;
+    if (winter) return tagRgb(Mat.Wood * 8 + 1);
+    return tagRgb(tag);   // the berries: the fruit colour, berries step 2
+  }
+  if (role === Role.FloorBare && g === Mat.Forest && winter) return rampColour(GRASS[3]![c]!, Math.min(4, step + 1));
+  if (role === Role.FruitTwig && g === Mat.Grass && winter) return tagRgb(Mat.Wood * 8 + (step >= 2 ? 2 : 1));
+  if (role === Role.FruitBlossom && g === Mat.Grass && season === 0 && !held) return seasonRampRgb('blossom')[step >= 3 ? 4 : 3]!;
+  const r = held && g === Mat.Crop ? null : seasonalRamp(g, role, season, c);
   // The crop furrow (step 0) is soil all year; Phase 2b gives the fields their stages.
   if (r === null || (g === Mat.Crop && step === 0)) return tagRgb(tag);
   return rampColour(r, step);
@@ -148,12 +217,17 @@ let span = 0;
 function lookTables(): Uint32Array[] {
   if (tables) return tables;
   span = tagCount();
+  fruitTag = rampTag([...RGBS.fruit] as RGB);
   tables = [];
   for (let s = 0; s < STATES; s++) {
     for (let c = 0; c < CLASSES; c++) {
       const t = new Uint32Array(ROLES * span);
       for (let role = 0; role < ROLES; role++) {
-        for (let tag = 0; tag < span; tag++) if (tagValid(tag)) t[role * span + tag] = packRgba(lookColour(s as LookState, c, role, tag));
+        for (let tag = 0; tag < span; tag++) {
+          if (!tagValid(tag)) continue;
+          const col = lookColour(s as LookState, c, role, tag);
+          t[role * span + tag] = col === ALT ? ALT : packRgba(col);
+        }
       }
       tables.push(t);
     }
@@ -163,13 +237,12 @@ function lookTables(): Uint32Array[] {
 
 // ---------- the look: which state each Bayer rank shows ----------
 
-// Bayer rank (0–15) of each 4×4 cell, the same matrix as dither.ts.
-const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const RANKS = 16;
 
 /**
  * What the image shows now: the state of each of the 16 Bayer ranks. A season arrives as a
  * dissolve, rank by rank, so each pixel changes once (Phase 3 replaces the ranks with the front).
+ * A pixel shows the state of its own rank, or (Phase 2a) of its tree's centre.
  */
 export interface Look {
   readonly tables: Uint32Array[];
@@ -182,42 +255,50 @@ export function createLook(state: LookState = LookState.Painted): Look {
   return { tables: t, span, shown: new Int8Array(RANKS).fill(state) };
 }
 
-/** The colour word of pixel `p` at (x, y). */
-function colourAt(buf: MatBuf, look: Look, tag: number, role: number, p: number, x: number, y: number): number {
+/** The colour word of an entry (tag, role, alt) at buffer pixel `p`, whose rank is `rank`. */
+function colourOf(buf: MatBuf, look: Look, tag: number, role: number, rank: number, alt: number, altRole: number, p: number): number {
   if (tag === NO_TAG) return 0;
-  return look.tables[look.shown[B4[(y & 3) * 4 + (x & 3)]!]! * CLASSES + buf.moist[p]!]![role * look.span + tag]!;
+  const t = look.tables[look.shown[rank]! * CLASSES + buf.moist[p]!]!;
+  const c = t[role * look.span + tag]!;
+  return c !== ALT ? c : alt === NO_TAG ? 0 : t[altRole * look.span + alt]!;
 }
+
+const colourAt = (buf: MatBuf, look: Look, p: number): number =>
+  colourOf(buf, look, buf.tag[p]!, buf.role[p]!, buf.rank[p]!, buf.alt[p]!, buf.altRole[p]!, p);
 
 /** Writes tile (tx, ty)'s colours from the buffer into the image (`px` = its pixels as words). */
 export function resolveTile(buf: MatBuf, look: Look, px: Uint32Array, tx: number, ty: number): void {
   for (let y = 0; y < TILE; y++) {
-    const py = ty * TILE + y;
-    const o = py * buf.w + tx * TILE;
-    for (let x = 0; x < TILE; x++) px[o + x] = colourAt(buf, look, buf.tag[o + x]!, buf.role[o + x]!, o + x, tx * TILE + x, py);
+    const o = (ty * TILE + y) * buf.w + tx * TILE;
+    for (let x = 0; x < TILE; x++) px[o + x] = colourAt(buf, look, o + x);
   }
 }
 
-/** Writes the colours of every pixel of Bayer rank `rank` (one pixel in 16, on a 4 × 4 lattice). */
-export function resolveRank(buf: MatBuf, look: Look, px: Uint32Array, rank: number): void {
-  const k = B4.indexOf(rank), ox = k & 3, oy = k >> 2;
-  // Every pixel of a rank shows the same state: pick its three moisture tables once.
-  const s = look.shown[rank]! * CLASSES;
-  const t = [look.tables[s]!, look.tables[s + 1]!, look.tables[s + 2]!];
-  const { tag, role, moist } = buf, span = look.span;
-  for (let y = oy; y < buf.h; y += 4) {
-    for (let p = y * buf.w + ox, end = (y + 1) * buf.w; p < end; p += 4) {
-      const g = tag[p]!;
-      px[p] = g === NO_TAG ? 0 : t[moist[p]!]![role[p]! * span + g]!;
-    }
+/**
+ * Writes the colours of every pixel whose rank is in `mask` (bit r = rank r). One pass over the
+ * map: a tree's pixels share its centre's rank, so a rank is no longer a 4 × 4 lattice.
+ */
+export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, mask: number): void {
+  const { tag, rank } = buf, n = buf.w * buf.h;
+  for (let p = 0; p < n; p++) {
+    if (((mask >> rank[p]!) & 1) === 0 || tag[p] === NO_TAG) continue;
+    px[p] = colourAt(buf, look, p);
   }
 }
+
+const newMatTile = (): MatTile => ({
+  tag: new Uint16Array(TILE_PX), role: new Uint8Array(TILE_PX), rank: new Uint8Array(TILE_PX), alt: new Uint16Array(TILE_PX), altRole: new Uint8Array(TILE_PX),
+});
 
 /** Copies tile (tx, ty)'s entries out of the buffer. */
-export function readMatTile(buf: MatBuf, tx: number, ty: number, out: MatTile = { tag: new Uint16Array(TILE_PX), role: new Uint8Array(TILE_PX) }): MatTile {
+export function readMatTile(buf: MatBuf, tx: number, ty: number, out: MatTile = newMatTile()): MatTile {
   for (let y = 0; y < TILE; y++) {
-    const o = (ty * TILE + y) * buf.w + tx * TILE;
-    out.tag.set(buf.tag.subarray(o, o + TILE), y * TILE);
-    out.role.set(buf.role.subarray(o, o + TILE), y * TILE);
+    const o = (ty * TILE + y) * buf.w + tx * TILE, d = y * TILE;
+    out.tag.set(buf.tag.subarray(o, o + TILE), d);
+    out.role.set(buf.role.subarray(o, o + TILE), d);
+    out.rank.set(buf.rank.subarray(o, o + TILE), d);
+    out.alt.set(buf.alt.subarray(o, o + TILE), d);
+    out.altRole.set(buf.altRole.subarray(o, o + TILE), d);
   }
   return out;
 }
@@ -225,10 +306,10 @@ export function readMatTile(buf: MatBuf, tx: number, ty: number, out: MatTile = 
 /** Would two snapshots of tile (tx, ty) look the same now? (A tile only fades when it would look different.) */
 export function sameMatLook(buf: MatBuf, look: Look, tx: number, ty: number, a: MatTile, b: MatTile): boolean {
   for (let y = 0; y < TILE; y++) {
-    const py = ty * TILE + y;
     for (let x = 0; x < TILE; x++) {
-      const k = y * TILE + x, p = py * buf.w + tx * TILE + x;
-      if (colourAt(buf, look, a.tag[k]!, a.role[k]!, p, tx * TILE + x, py) !== colourAt(buf, look, b.tag[k]!, b.role[k]!, p, tx * TILE + x, py)) return false;
+      const k = y * TILE + x, p = (ty * TILE + y) * buf.w + tx * TILE + x;
+      const ca = colourOf(buf, look, a.tag[k]!, a.role[k]!, a.rank[k]!, a.alt[k]!, a.altRole[k]!, p);
+      if (ca !== colourOf(buf, look, b.tag[k]!, b.role[k]!, b.rank[k]!, b.alt[k]!, b.altRole[k]!, p)) return false;
     }
   }
   return true;
@@ -245,9 +326,9 @@ export function dissolveMat(buf: MatBuf, tx: number, ty: number, old: MatTile, n
     const py = ty * TILE + y;
     const o = py * buf.w + tx * TILE;
     for (let x = 0; x < TILE; x++) {
-      const src = bayer(tx * TILE + x, py) < share ? neu : old;
-      buf.tag[o + x] = src.tag[y * TILE + x]!;
-      buf.role[o + x] = src.role[y * TILE + x]!;
+      const src = bayer(tx * TILE + x, py) < share ? neu : old, k = y * TILE + x;
+      buf.tag[o + x] = src.tag[k]!; buf.role[o + x] = src.role[k]!; buf.rank[o + x] = src.rank[k]!;
+      buf.alt[o + x] = src.alt[k]!; buf.altRole[o + x] = src.altRole[k]!;
     }
   }
 }
