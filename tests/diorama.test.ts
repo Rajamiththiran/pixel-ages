@@ -3,8 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { CONFIG } from '../src/config';
-import { Ground, Plant, Resource, WallType } from '../src/shared/ids';
-import { HazardMark, Look, Mark } from '../src/shared/protocol';
+import { Ground, Plant } from '../src/shared/ids';
 import { createMap } from '../src/editor/mapState';
 import { Mat, NIGHT_HEX, RAMP_HEX, hexRgb, lineageShade, rampColours, rampsOn, shadowOf } from '../src/render/ramps';
 import { darken, GROUP_COLORS, PALETTE, usePalette } from '../src/render/palette';
@@ -16,7 +15,7 @@ import { lightBand, nightLevel, nightMultiplyAdd, nightOf } from '../src/render/
 import { ringPixels, ringRadiusAt } from '../src/render/effects';
 import { bayer, ditherPixel, mixGrad, valueNoise } from '../src/render/dither';
 import { stippleCells, stippleCounts, TintClass } from '../src/render/season';
-import { scenarioA } from './fixtures';
+import { allTilesMap, scenarioA } from './fixtures';
 
 // Node's fs, loaded at run time: the project has no Node typings, and Vitest blanks CSS imports.
 interface Fs { readFileSync(p: URL, enc: 'utf8'): string; readdirSync(p: URL): string[] }
@@ -80,27 +79,8 @@ describe('Diorama ramps are the design system tokens', () => {
   });
 });
 
-/** A small map with every ground, plant, wall, ore, hill, mark, hazard and look. */
-function testMap() {
-  const W = 40, H = 24, m = createMap(W, H);
-  const n = W * H;
-  const marks = new Uint8Array(n), hazards = new Uint8Array(n), look = new Uint8Array(n);
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = y * W + x;
-      const band = Math.floor(x / 5);
-      m.ground[i] = [Ground.Grassland, Ground.Desert, Ground.Grassland, Ground.Water, Ground.Mountain, Ground.Grassland, Ground.Grassland, Ground.Desert][band]!;
-      if (band === 0) { m.plantType[i] = Plant.Forest; m.plantDensity[i] = (y * 11) % 256; }
-      if (band === 2) { m.plantType[i] = [Plant.Grass, Plant.FruitBushes, Plant.Farmland][y % 3]!; m.plantDensity[i] = 40 + y * 9; }
-      if (band === 5) { m.plantType[i] = Plant.Farmland; marks[i] = y % 2 ? Mark.Terrace : Mark.Road; look[i] = (y % 4) << Look.wornShift | ((y >> 2) % 4) << Look.saltShift; }
-      if (band === 6) { marks[i] = [Mark.Path, Mark.Ash, Mark.Ruin, Mark.Quarry, Mark.Canal][y % 5]!; if (y % 7 === 0) hazards[i] = HazardMark.Fire; if (y % 5 === 1) look[i] = 2 << Look.ashShift | (y % 3 ? Look.Silt : 0); }
-      if (band === 7 && y < 8) m.wall[i] = [WallType.River, WallType.Mountain, WallType.Sea][x % 3]!;
-      if (x % 6 === 1 && y % 4 === 1) { m.resourceType[i] = 1 + ((x + y) % 6) as Resource; m.resourceAmount[i] = 200; }
-      m.elevation[i] = Math.max(0, Math.min(9, Math.round(9 - Math.hypot(x - 20, y - 12) / 1.5)));
-    }
-  }
-  return { m, marks, hazards, look, base: createMap(W, H) };
-}
+/** A small map with every ground, plant, wall, ore, hill, mark, hazard and look (tests/fixtures.ts). */
+const testMap = allTilesMap;
 
 function render(m: ReturnType<typeof createMap>, ex: Parameters<typeof drawTilePixels>[5]): Uint8ClampedArray {
   const imgW = m.width * CONFIG.map.tilePx;
