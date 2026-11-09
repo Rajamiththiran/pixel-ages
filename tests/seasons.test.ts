@@ -15,7 +15,7 @@ import {
 } from '../src/render/materials';
 import { allTilesMap, scenarioA, scenarioF, scenarioH } from './fixtures';
 import { Mat, RAMP_HEX, SEASON_HEX, hexRgb, rampColours, rampTag, shadowOf, tagCount, tagRgb, tagValid, type SeasonRampName } from '../src/render/ramps';
-import { ALT, LookState, Moist, ROLES, bayerRank, isCrown, isDeciduous, lookColour } from '../src/render/materials';
+import { ALT, KEYS, LookState, Moist, ROLES, bayerKey, isCrown, isDeciduous, lookColour } from '../src/render/materials';
 import { buildCrowns, crownPixelAt } from '../src/render/crowns';
 import { FieldState, Stage, fieldClass, rowCut, stageOf } from '../src/render/fields';
 import { FieldPos, GroundRole, fieldRoleParts, isGroundRole, isWaterRole } from '../src/render/materials';
@@ -26,6 +26,7 @@ import { Action } from '../src/shared/ids';
 import { crownKind, evergreenChance } from '../src/render/terrain';
 import { MoistureField, tileWetness } from '../src/render/moisture';
 import { SeasonDriver, frontAt, parsePin } from '../src/render/seasonLook';
+import { FrontFields, FrontKind } from '../src/render/seasonFront';
 import { nightOf } from '../src/render/light';
 import { GROUP_COLORS, PALETTE, usePalette, type RGB } from '../src/render/palette';
 
@@ -385,27 +386,29 @@ describe('seasons Phase 1b: each material takes the ramp of its season', () => {
   });
 });
 
-describe('seasons Phase 1b: a season arrives rank by rank, each pixel once', () => {
-  it('spring starts at month 0 and reaches every rank over its front', () => {
+describe('seasons Phase 1b: a season arrives key by key, each pixel once', () => {
+  it('spring starts at month 0 and reaches every key over its front', () => {
     const fr = CONFIG.render.seasons.fronts;
-    expect(frontAt(0)).toEqual({ from: LookState.Winter, to: LookState.Spring, level: 0 });
-    expect(frontAt(fr[0]!.months / 2).level).toBe(8);
-    expect(frontAt(fr[0]!.months).level).toBe(16);
-    expect(frontAt(2.9)).toEqual({ from: LookState.Winter, to: LookState.Spring, level: 16 });
-    expect(frontAt(3)).toEqual({ from: LookState.Spring, to: LookState.Summer, level: 0 });
+    expect(frontAt(0)).toEqual({ from: LookState.Winter, to: LookState.Spring, level: 0, kind: FrontKind.Warm });
+    expect(frontAt(fr[0]!.months / 2).level).toBe(KEYS / 2);
+    expect(frontAt(fr[0]!.months).level).toBe(KEYS);
+    expect(frontAt(2.9)).toEqual({ from: LookState.Winter, to: LookState.Spring, level: KEYS, kind: FrontKind.Warm });
+    expect(frontAt(3)).toEqual({ from: LookState.Spring, to: LookState.Summer, level: 0, kind: FrontKind.Warm });
+    expect(frontAt(6.5).kind).toBe(FrontKind.Autumn);
     expect(frontAt(11.99).to).toBe(LookState.Winter);
+    expect(frontAt(11.99).kind).toBe(FrontKind.Cold);
   });
 
-  it('over two years each rank changes exactly once per season', () => {
+  it('over two years each key changes exactly once per season', () => {
     const d = new SeasonDriver(null);
-    const changes = new Array<number>(16).fill(0);
+    const changes = new Array<number>(KEYS).fill(0);
     let prev = Array.from(d.update(0, 0, 1, true, true));
     for (let t = 0.01; t < 24; t += 0.01) {
       const now = Array.from(d.update(t * 1000, t % 12, 1, true, false));
       now.forEach((s, r) => { if (s !== prev[r]) changes[r]!++; });
       prev = now;
     }
-    expect(changes).toEqual(new Array(16).fill(8));
+    expect(changes).toEqual(new Array(KEYS).fill(8));
   });
 
   it('setup shows the painted map; the fast speeds hold one look; a change of mode dissolves rank by rank', () => {
@@ -415,16 +418,17 @@ describe('seasons Phase 1b: a season arrives rank by rank, each pixel once', () 
     const ms = CONFIG.render.seasons.modeFadeMs;
     d.update(1000, 7.5, 0, true, false);                     // Ride: to the held look
     const half = [...d.update(1000 + ms / 2, 7.5, 0, true, false)];
-    expect(half.filter((s) => s === LookState.Held).length).toBe(8);
+    expect(half.filter((s) => s === LookState.Held).length).toBe(KEYS / 2);
     expect([...d.update(1000 + ms, 7.5, 0, true, false)].every((s) => s === LookState.Held)).toBe(true);
     expect([...d.update(5000, 7.5, 0.5, true, false)].every((s) => s === LookState.Held)).toBe(true);   // Trot holds too (Phase 1b)
   });
 
   it('a dev pin freezes a season or a front', () => {
-    expect([...parsePin('winter')!].every((s) => s === LookState.Winter)).toBe(true);
-    const f = [...parsePin('front:spring:0.5')!];
-    expect(f.filter((s) => s === LookState.Spring).length).toBe(8);
-    expect(f.filter((s) => s === LookState.Winter).length).toBe(8);
+    expect([...parsePin('winter')!.states].every((s) => s === LookState.Winter)).toBe(true);
+    const f = [...parsePin('front:spring:0.5')!.states];
+    expect(f.filter((s) => s === LookState.Spring).length).toBe(KEYS / 2);
+    expect(f.filter((s) => s === LookState.Winter).length).toBe(KEYS / 2);
+    expect(parsePin('front:snow:0.25')!.kind).toBe(FrontKind.Cold);
     expect(parsePin('nonsense')).toBeNull();
     const d = new SeasonDriver(parsePin('autumn'));
     expect([...d.update(0, 0, 0, false, false)].every((s) => s === LookState.Autumn)).toBe(true);
@@ -523,10 +527,10 @@ describe('seasons Phase 1b: the terrain layer shows the season', () => {
     l.setRain(m.rain);
     l.flush();
     expect(fnv(imageOf(l))).toBe(GOLDEN.A![0]);              // painted: the look of today
-    const winter = new Array<number>(16).fill(LookState.Winter);
+    const winter = new Array<number>(KEYS).fill(LookState.Winter);
     l.setLook(winter); l.flush();
     expect(fnv(imageOf(l))).toBe(reference(m, m.rain, winter));
-    const front = winter.map((s, r) => (r < 5 ? LookState.Spring : s));
+    const front = winter.map((s, r) => (r < 80 ? LookState.Spring : s));
     l.setLook(front); l.flush();
     expect(fnv(imageOf(l))).toBe(reference(m, m.rain, front));
     expect(fnv(imageOf(l))).not.toBe(reference(m, m.rain, winter));
@@ -536,7 +540,7 @@ describe('seasons Phase 1b: the terrain layer shows the season', () => {
     const m = scenarioA().map;
     clock = 0;
     const l = new TerrainLayer(m, true);
-    const summer = new Array<number>(16).fill(LookState.Summer);
+    const summer = new Array<number>(KEYS).fill(LookState.Summer);
     l.setRain(m.rain); l.setLook(summer); l.flush();
     const before = fnv(imageOf(l));
     const wet = m.rain.map((v) => Math.min(100, v + 25));
@@ -651,7 +655,7 @@ describe('seasons Phase 2a: evergreen and deciduous trees', () => {
             const p = y * mat.w + x;
             if (!isCrown(mat.role[p]!)) continue;
             expect(crownPixelAt(x, y, c)).toBe(true);
-            expect(mat.rank[p]).toBe(bayerRank(c.x, c.y));
+            expect(mat.rank[p]).toBe(bayerKey(c.x, c.y));   // the centre's key (no front here: its Bayer key)
             checked++;
           }
         }
@@ -1045,7 +1049,7 @@ describe('seasons Phase 2c: ice', () => {
     clock = 0;
     const l = new TerrainLayer(m, true);
     l.setRain(m.rain);
-    l.setLook(new Array<number>(16).fill(LookState.Winter));
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter));
     l.flush();
     const inner = l as unknown as { mat: MatBuf; look: Parameters<typeof resolveTile>[1] };
     for (const [s, i] of [[40, 30], [90, 80], [160, 170], [255, 255], [120, 60], [0, 0], [70, 200]] as const) {
@@ -1061,7 +1065,7 @@ describe('seasons Phase 2c: ice', () => {
     clock = 0;
     const l = new TerrainLayer(m, true);
     l.setRain(m.rain);
-    l.setLook(new Array<number>(16).fill(LookState.Winter));
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter));
     l.setCover(255, 255);
     l.flush();
     expect(l.frozenTile(5 * 20 + 4)).toBe(true);
@@ -1172,5 +1176,205 @@ describe('seasons Phase 2d: the ground through the year', () => {
     };
     expect(dryShare(0)).toBeLessThan(0.1);
     expect(dryShare(CONFIG.editor.maxElevation)).toBeGreaterThan(0.8);
+  });
+});
+
+// ---------- Phase 3a: the season front ----------
+
+const FCF = CONFIG.render.seasons.front;
+
+/** A W × H grass map, flat or rising from west (0) to east (9). */
+function frontMap(w: number, h: number, slope: boolean): MapData {
+  const m = createMap(w, h);
+  if (slope) for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) m.elevation[y * w + x] = Math.round((x / (w - 1)) * 9);
+  return m;
+}
+
+function keysOf(m: MapData, kind: number, year = 0): { f: FrontFields; k: Uint8Array } {
+  const f = new FrontFields(m.width, m.height);
+  f.ensure(m);
+  const k = new Uint8Array(f.pw * f.ph);
+  f.keys(kind, year, k);
+  return { f, k };
+}
+
+/** Separate 4-connected patches of pixels with key below `level`, of at least `min` pixels. */
+function patches(k: Uint8Array, w: number, level: number, min: number): number {
+  const seen = new Uint8Array(k.length);
+  let n = 0;
+  const stack: number[] = [];
+  for (let p0 = 0; p0 < k.length; p0++) {
+    if (seen[p0] || k[p0]! >= level) continue;
+    let size = 0;
+    seen[p0] = 1; stack.push(p0);
+    while (stack.length > 0) {
+      const p = stack.pop()!; size++;
+      const x = p % w;
+      for (const q of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w]) {
+        if (q < 0 || q >= k.length || seen[q] || k[q]! >= level) continue;
+        seen[q] = 1; stack.push(q);
+      }
+    }
+    if (size >= min) n++;
+  }
+  return n;
+}
+
+describe('seasons Phase 3a: the season front', () => {
+  it('the front moves evenly over the land', () => {
+    const { k } = keysOf(frontMap(64, 40, false), FrontKind.Warm);
+    const share = (level: number): number => k.reduce((n, v) => n + (v < level ? 1 : 0), 0) / k.length;
+    expect(share(64)).toBeCloseTo(0.25, 1);
+    expect(share(128)).toBeCloseTo(0.5, 1);
+    expect(share(192)).toBeCloseTo(0.75, 1);
+    expect(share(256)).toBe(1);
+  });
+
+  it('on a flat map the front starts in several separate patches, not one band', () => {
+    const m = frontMap(80, 45, false);
+    for (const kind of [FrontKind.Warm, FrontKind.Autumn, FrontKind.Cold]) {
+      const { f, k } = keysOf(m, kind);
+      expect(patches(k, f.pw, Math.round(0.05 * 255), 20), `kind ${kind}`).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it('the edge is never a straight line or a tile grid', () => {
+    const { f, k } = keysOf(frontMap(64, 40, false), FrontKind.Warm);
+    let longest = 0;
+    for (let y = 0; y < f.ph - 1; y++) {
+      let run = 0;
+      for (let x = 0; x < f.pw; x++) {
+        const p = y * f.pw + x;
+        run = (k[p]! < 128) !== (k[p + f.pw]! < 128) ? run + 1 : 0;
+        longest = Math.max(longest, run);
+      }
+    }
+    for (let x = 0; x < f.pw - 1; x++) {
+      let run = 0;
+      for (let y = 0; y < f.ph; y++) {
+        const p = y * f.pw + x;
+        run = (k[p]! < 128) !== (k[p + 1]! < 128) ? run + 1 : 0;
+        longest = Math.max(longest, run);
+      }
+    }
+    expect(longest).toBeLessThan(2 * TILE);   // short runs where the dither lines up, never a line along the map
+  });
+
+  it('spring reaches low ground first; autumn and snow the heights first', () => {
+    const m = frontMap(64, 40, true);
+    const lowHigh = (kind: number): [number, number] => {
+      const { f, k } = keysOf(m, kind);
+      let lo = 0, hi = 0, nl = 0, nh = 0;
+      for (let p = 0; p < k.length; p++) { if (p % f.pw < f.pw / 2) { lo += k[p]!; nl++; } else { hi += k[p]!; nh++; } }
+      return [lo / nl, hi / nh];
+    };
+    const [wl, wh] = lowHigh(FrontKind.Warm);
+    expect(wl).toBeLessThan(wh - 40);
+    for (const kind of [FrontKind.Autumn, FrontKind.Cold]) {
+      const [l, h] = lowHigh(kind);
+      expect(h, `kind ${kind}`).toBeLessThan(l - 40);
+    }
+  });
+
+  it('each year the front shifts a little in patches, never more than the configured jitter', () => {
+    const m = frontMap(48, 30, false);
+    const f = new FrontFields(m.width, m.height);
+    f.ensure(m);
+    const a = new Uint8Array(f.pw * f.ph), b = new Uint8Array(f.pw * f.ph);
+    f.keys(FrontKind.Warm, 1, a);
+    f.keys(FrontKind.Warm, 2, b);
+    let differ = 0, most = 0;
+    for (let p = 0; p < a.length; p++) { const d = Math.abs(a[p]! - b[p]!); if (d > 0) differ++; most = Math.max(most, d); }
+    expect(differ / a.length).toBeGreaterThan(0.5);
+    expect(most).toBeLessThanOrEqual(Math.ceil(FCF.yearJitter * 255) + 1);
+  });
+});
+
+describe('seasons Phase 3a: the front on the terrain layer', () => {
+  const states = (level: number, from: number, to: number): number[] => Array.from({ length: KEYS }, (_, r) => (r < level ? to : from));
+
+  it('a front recolours each pixel once, and in place matches a fresh resolve', () => {
+    const m = scenarioF().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(states(0, LookState.Winter, LookState.Spring), FrontKind.Warm, 0);
+    l.flush();
+    let prev = new Uint32Array(imageOf(l).slice().buffer);
+    const changes = new Uint8Array(prev.length);
+    for (let level = 16; level <= KEYS; level += 16) {
+      l.setLook(states(level, LookState.Winter, LookState.Spring), FrontKind.Warm, 0);
+      l.flush();
+      const now = new Uint32Array(imageOf(l).slice().buffer);
+      for (let p = 0; p < now.length; p++) if (now[p] !== prev[p]) changes[p]!++;
+      prev = now;
+    }
+    expect(changes.reduce((a, c) => Math.max(a, c), 0)).toBe(1);
+    expect(changes.reduce((n, c) => n + c, 0)).toBeGreaterThan(changes.length / 2);
+    // A new field at the start of the next front (every key one state) recolours nothing.
+    l.setLook(states(0, LookState.Spring, LookState.Summer), FrontKind.Autumn, 0);
+    l.flush();
+    expect(fnv(imageOf(l))).toBe(fnv(new Uint8Array(prev.buffer)));
+    // Mid-front, the image equals a resolve of every tile from the buffer.
+    l.setLook(states(100, LookState.Spring, LookState.Summer), FrontKind.Autumn, 0);
+    l.flush();
+    const inner = l as unknown as { mat: MatBuf; look: Parameters<typeof resolveTile>[1] };
+    const ref = new Uint32Array(inner.mat.w * inner.mat.h);
+    for (let ty = 0; ty < m.height; ty++) for (let tx = 0; tx < m.width; tx++) resolveTile(inner.mat, inner.look, ref, tx, ty);
+    expect(fnv(imageOf(l))).toBe(fnv(new Uint8ClampedArray(ref.buffer)));
+  });
+
+  it('a tree turns as one at the arrival of its centre, a field tile at that of its centre', () => {
+    const m = scenarioA().map;
+    for (let y = 40; y < 46; y++) for (let x = 100; x < 110; x++) { m.plantType[y * m.width + x] = Plant.Farmland; m.plantDensity[y * m.width + x] = 255; }
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.fields = new Uint8Array(m.width * m.height);
+    l.setLook(states(0, LookState.Winter, LookState.Spring), FrontKind.Warm, 0);
+    l.flush();
+    const { mat, keys } = l as unknown as { mat: MatBuf; keys: Uint8Array };
+    const c = { x: 0, y: 0, r: 0, dx: 0, dy: 0, branch: 0 };
+    let trees = 0, fields = 0;
+    for (let ty = 0; ty < m.height; ty++) {
+      for (let tx = 0; tx < m.width; tx++) {
+        const i = ty * m.width + tx;
+        if (m.plantType[i] === Plant.Forest && trees < 400) {
+          buildCrowns(m, tx, ty);
+          for (let y = ty * TILE; y < ty * TILE + TILE; y++) for (let x = tx * TILE; x < tx * TILE + TILE; x++) {
+            const p = y * mat.w + x;
+            if (!isCrown(mat.role[p]!) || !crownPixelAt(x, y, c)) continue;
+            expect(mat.rank[p]).toBe(keys[c.y * mat.w + c.x]);
+            trees++;
+          }
+        }
+        if (m.plantType[i] === Plant.Farmland) {
+          const centre = keys[(ty * TILE + TILE / 2) * mat.w + tx * TILE + TILE / 2];
+          for (let y = ty * TILE; y < ty * TILE + TILE; y++) for (let x = tx * TILE; x < tx * TILE + TILE; x++) {
+            const p = y * mat.w + x;
+            if (!fieldRoleParts(mat.role[p]!)) continue;
+            expect(mat.rank[p]).toBe(centre);
+            fields++;
+          }
+        }
+      }
+    }
+    expect(trees).toBeGreaterThan(100);
+    expect(fields).toBeGreaterThan(50);
+  });
+
+  it('snow lies first where the cold front came first', () => {
+    const m = frontMap(64, 40, true);
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    const inner = l as unknown as { winter: WinterField; fronts: FrontFields };
+    expect(inner.fronts.isReady).toBe(false);   // setup never waits for the fields
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter), FrontKind.Cold, 0);
+    expect(inner.fronts.isReady).toBe(true);
+    let diff = 0, n = 0;
+    for (let p = 0; p < inner.winter.cold.length; p++) {
+      if (inner.winter.cold[p] === NEVER) continue;
+      diff += Math.abs(inner.winter.cold[p]! / 255 - inner.fronts.coldShare[p]!); n++;
+    }
+    expect(diff / n).toBeLessThan(0.01);
   });
 });

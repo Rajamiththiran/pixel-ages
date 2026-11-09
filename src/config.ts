@@ -913,6 +913,32 @@ export const CONFIG = {
         litterGold: 0.23, litterYellow: 0.23,
         salt: 181,
       },
+      // Phase 3a: the season front (mockup C; plan §6.2). Each pixel has a fixed time each front reaches
+      // it, for three fields: warm (spring and summer), autumn, and cold (winter, and the order snow
+      // lies in). A field grows from seeds, one per seedCellPx square at a hashed spot, on a grid of
+      // gridPx: a seed starts after startSpreadPx of growth × its lateness (heightWeight × height +
+      // latitudeWeight × how far north + jitterWeight × a hash, for the warm field; high and north
+      // first for the others), so the front starts in the lowland and the south (spring) or on the
+      // heights and in the north (autumn, snow) in several spots that grow and merge. A step costs
+      // stepCost × (1 + noiseAmp × (clustered noise − 0.5)) × (1 + slope × height, the warm field;
+      // × (1 + slope × lowness) the others), so the patches are lumpy and climb slowly. The times become
+      // The noise in the cost averages out over distance (patches grow round), so the arrival also gets
+      // ± edgeNoisePx of growth from clustered noise in three octaves (edgeNoiseCellPx, edgeNoiseWeights):
+      // ragged edges, as the mockup's noise term. The times become
+      // shares of the land (the front moves evenly), its edge dithered with the Bayer matrix over
+      // edgeShare. Each year the warm, autumn and cold keys shift by up to ± yearJitter / 2 of the
+      // front in patches yearJitterCellPx wide (owner decision S15: a fixed base, a little different
+      // each year). Off: `?off=front` (Phase 1b's plain Bayer dissolve).
+      front: {
+        on: true,
+        gridPx: 2, seedCellPx: 96, startSpreadPx: 360,
+        heightWeight: 0.5, latitudeWeight: 0.25, jitterWeight: 0.25,
+        stepCost: 16, noiseAmp: 1.2, noiseCellPx: [24, 8], noiseWeights: [0.6, 0.4], slope: 2,
+        edgeNoisePx: 48, edgeNoiseCellPx: [48, 16, 6], edgeNoiseWeights: [0.5, 0.3, 0.2],
+        edgeShare: 0.035,
+        yearJitter: 0.12, yearJitterCellPx: 160,
+        salt: 191,
+      },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,

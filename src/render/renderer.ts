@@ -384,9 +384,12 @@ export class Renderer {
       this.effects.update(now, dt, vr, CONFIG.render.f8.weather.windPxPerS);
       this.people.setNight(this.light.darkness, this.camps.fireGroup);
     }
-    // Seasons Phase 1b: the season each rank shows (painted in setup, held at the fast speeds).
+    // Seasons Phase 1b: the season each key shows (painted in setup, held at the fast speeds); Phase 3a:
+    // the front field the keys follow, and the year (each year's front differs a little).
     if (seasonRampsOn) {
-      this.terrain.setLook(this.seasonDriver.update(now, this.clock.monthOfYear, this.season.show, v.running, this.seasonJump));
+      const d = this.seasonDriver;
+      const shown = d.update(now, this.clock.monthOfYear, this.season.show, v.running, this.seasonJump, Math.floor(this.clock.t / CONFIG.time.ticksPerYear));
+      this.terrain.setLook(shown, d.kind, d.year);
       this.terrain.setCover(this.seasonDriver.snowLine, this.seasonDriver.iceLine);
       this.seasonJump = false;
     }

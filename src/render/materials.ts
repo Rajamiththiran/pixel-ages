@@ -69,6 +69,9 @@ export type Role = (typeof Role)[keyof typeof Role];
 /** Phase 2b switch: fields go through their stages, and the farmers' harvest shows. */
 export const fieldsOn: boolean = seasonRampsOn && SC.fields.on && !styleOff('fields');
 
+/** Phase 3a switch: a season arrives as the seeded front (seasonFront.ts), not the plain Bayer dissolve. */
+export const frontOn: boolean = seasonRampsOn && SC.front.on && !styleOff('front');
+
 /** Phase 2d switch: dry grass on high ground, spring flowers, autumn leaf litter. */
 export const groundOn: boolean = seasonRampsOn && SC.ground.on && !styleOff('groundDetail');
 
@@ -138,9 +141,12 @@ export interface MatBuf {
   readonly tag: Uint16Array;
   readonly role: Uint8Array;
   readonly moist: Uint8Array;   // Phase 1b: the pixel's grass moisture class (rain, not the tile's drawing)
-  // Phase 2a: the Bayer rank whose state the pixel shows (its own, or its tree's centre, so a tree
-  // turns as one), and for a deciduous crown what shows when it is bare: a branch, or the ground under it.
+  // Phase 2a: the key (0–255) whose state the pixel shows: Phase 3a: the front's arrival at its anchor,
+  // without the front its Bayer key (bayerKey). The anchor: the pixel itself, or its tree's centre (a tree
+  // turns as one), or its field tile's centre (Phase 3a), as an offset (anchorCode).
   readonly rank: Uint8Array;
+  readonly anchor: Uint8Array;
+  // For a deciduous crown, what shows when it is bare: a branch, or the ground under it.
   readonly alt: Uint16Array;
   readonly altRole: Uint8Array;
 }
@@ -152,12 +158,26 @@ export function createMatBuf(w: number, h: number): MatBuf {
   const n = w * h;
   return {
     w, h, tag: new Uint16Array(n).fill(NO_TAG), role: new Uint8Array(n), moist: new Uint8Array(n).fill(Moist.Normal),
-    rank: new Uint8Array(n), alt: new Uint16Array(n).fill(NO_TAG), altRole: new Uint8Array(n),
+    rank: new Uint8Array(n), anchor: new Uint8Array(n).fill(SELF), alt: new Uint16Array(n).fill(NO_TAG), altRole: new Uint8Array(n),
   };
 }
 
+/** A pixel's anchor: the offset (−8…7 each way) to the pixel whose arrival it takes. */
+export const anchorCode = (dx: number, dy: number): number => ((Math.max(-8, Math.min(7, dy)) + 8) << 4) | (Math.max(-8, Math.min(7, dx)) + 8);
+/** The anchor of a pixel that takes its own arrival. */
+export const SELF = 0x88;
+/** Buffer index offset for each anchor code, in a buffer `w` pixels wide. */
+export function anchorOffsets(w: number): Int32Array {
+  const o = new Int32Array(256);
+  for (let c = 0; c < 256; c++) o[c] = ((c >> 4) - 8) * w + ((c & 15) - 8);
+  return o;
+}
+
+/** The key of a pixel without the front: its Bayer rank, spread over the 256 keys (rank × 16 + 15 turns at the same level as Phase 1b's 16 ranks did). */
+export const bayerKey = (x: number, y: number): number => bayerRank(x, y) * 16 + 15;
+
 /** A tile's entries, copied out (for a tile dissolving from its old look). */
-export interface MatTile { tag: Uint16Array; role: Uint8Array; rank: Uint8Array; alt: Uint16Array; altRole: Uint8Array }
+export interface MatTile { tag: Uint16Array; role: Uint8Array; rank: Uint8Array; anchor: Uint8Array; alt: Uint16Array; altRole: Uint8Array }
 
 // Bayer rank (0–15) of each 4×4 cell, the same matrix as dither.ts.
 const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
@@ -385,17 +405,18 @@ function coverTables(): Uint32Array[] {
 
 // ---------- the look: which state each Bayer rank shows ----------
 
-const RANKS = 16;
+/** How many keys a front has: a pixel shows the state of its key (Phase 1b: 16 Bayer ranks). */
+export const KEYS = 256;
 
 /**
- * What the image shows now: the state of each of the 16 Bayer ranks. A season arrives as a
- * dissolve, rank by rank, so each pixel changes once (Phase 3 replaces the ranks with the front).
- * A pixel shows the state of its own rank, or (Phase 2a) of its tree's centre.
+ * What the image shows now: the state of each key. A season arrives as a front, key by key, so each
+ * pixel changes once: Phase 3a's keys are each pixel's arrival in the front (seasonFront.ts), and
+ * without it the Bayer keys (bayerKey). A pixel shows the state of its anchor's key (a tree its centre's).
  */
 export interface Look {
   readonly tables: Uint32Array[];
   readonly span: number;
-  readonly shown: Int8Array;   // state per rank
+  readonly shown: Int8Array;   // state per key
   // Phase 2c: winter's snow and ice. Per pixel, the order snow and ice reach it (winter.ts; null: none),
   // and the lines (0–255) the winter has reached; a pixel showing winter is covered below them.
   readonly cover: Uint32Array[];
@@ -407,7 +428,7 @@ export interface Look {
 
 export function createLook(state: LookState = LookState.Painted): Look {
   const t = lookTables();
-  return { tables: t, span, shown: new Int8Array(RANKS).fill(state), cover: coverTables(), cold: null, ice: null, snowLine: 0, iceLine: 0 };
+  return { tables: t, span, shown: new Int8Array(KEYS).fill(state), cover: coverTables(), cold: null, ice: null, snowLine: 0, iceLine: 0 };
 }
 
 const SN = CONFIG.render.seasons.snow;
@@ -453,11 +474,11 @@ export function resolveBand(buf: MatBuf, look: Look, px: Uint32Array, order: Int
   }
 }
 
-/** The ranks (bit r) showing winter: the ones a moved snow or ice line recolours. */
-export function winterRanks(look: Look): number {
-  let m = 0;
-  for (let r = 0; r < RANKS; r++) if (look.shown[r] === LookState.Winter) m |= 1 << r;
-  return m;
+/** Flags in `out` the keys showing winter (the ones a moved snow or ice line recolours); true if any. */
+export function winterKeys(look: Look, out: Uint8Array): boolean {
+  let any = false;
+  for (let k = 0; k < KEYS; k++) { const w = look.shown[k] === LookState.Winter; out[k] = w ? 1 : 0; any ||= w; }
+  return any;
 }
 
 /** Is pixel `p` at (x, y) under snow now (a building there wears it on its roof)? */
@@ -500,18 +521,18 @@ export function resolveTile(buf: MatBuf, look: Look, px: Uint32Array, tx: number
 }
 
 /**
- * Writes the colours of every pixel whose rank is in `mask` (bit r = rank r). One pass over the
- * map: a tree's pixels share its centre's rank, so a rank is no longer a 4 × 4 lattice.
+ * Writes the colours of every pixel whose key is flagged in `dirty` (1 = recolour). One pass over the
+ * map: keys follow the front and the trees, not a lattice.
  */
-export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, mask: number): void {
+export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, dirty: Uint8Array): void {
   const { tag, role, rank, moist, alt, altRole } = buf, n = buf.w * buf.h, span = look.span;
-  // The three moisture tables each rank shows, picked once (a late-game map changes ranks often:
+  // The three moisture tables each key shows, picked once (a late-game map changes keys often:
   // a function call per pixel here was 9% of a frame, measured).
   const byRank: Uint32Array[] = [];
-  for (let r = 0; r < RANKS; r++) for (let c = 0; c < CLASSES; c++) byRank.push(look.tables[look.shown[r]! * CLASSES + c]!);
+  for (let r = 0; r < KEYS; r++) for (let c = 0; c < CLASSES; c++) byRank.push(look.tables[look.shown[r]! * CLASSES + c]!);
   for (let p = 0; p < n; p++) {
     const r = rank[p]!;
-    if (((mask >> r) & 1) === 0) continue;
+    if (dirty[r] === 0) continue;
     const g = tag[p]!;
     if (g === NO_TAG) continue;
     // Winter pixels may lie under snow or ice: the full path.
@@ -523,7 +544,7 @@ export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, mask: num
 }
 
 const newMatTile = (): MatTile => ({
-  tag: new Uint16Array(TILE_PX), role: new Uint8Array(TILE_PX), rank: new Uint8Array(TILE_PX), alt: new Uint16Array(TILE_PX), altRole: new Uint8Array(TILE_PX),
+  tag: new Uint16Array(TILE_PX), role: new Uint8Array(TILE_PX), rank: new Uint8Array(TILE_PX), anchor: new Uint8Array(TILE_PX), alt: new Uint16Array(TILE_PX), altRole: new Uint8Array(TILE_PX),
 });
 
 /** Copies tile (tx, ty)'s entries out of the buffer. */
@@ -533,6 +554,7 @@ export function readMatTile(buf: MatBuf, tx: number, ty: number, out: MatTile = 
     out.tag.set(buf.tag.subarray(o, o + TILE), d);
     out.role.set(buf.role.subarray(o, o + TILE), d);
     out.rank.set(buf.rank.subarray(o, o + TILE), d);
+    out.anchor.set(buf.anchor.subarray(o, o + TILE), d);
     out.alt.set(buf.alt.subarray(o, o + TILE), d);
     out.altRole.set(buf.altRole.subarray(o, o + TILE), d);
   }
@@ -564,7 +586,7 @@ export function dissolveMat(buf: MatBuf, tx: number, ty: number, old: MatTile, n
     const o = py * buf.w + tx * TILE;
     for (let x = 0; x < TILE; x++) {
       const src = bayer(tx * TILE + x, py) < share ? neu : old, k = y * TILE + x;
-      buf.tag[o + x] = src.tag[k]!; buf.role[o + x] = src.role[k]!; buf.rank[o + x] = src.rank[k]!;
+      buf.tag[o + x] = src.tag[k]!; buf.role[o + x] = src.role[k]!; buf.rank[o + x] = src.rank[k]!; buf.anchor[o + x] = src.anchor[k]!;
       buf.alt[o + x] = src.alt[k]!; buf.altRole[o + x] = src.altRole[k]!;
     }
   }

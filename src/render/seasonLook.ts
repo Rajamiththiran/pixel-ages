@@ -1,50 +1,59 @@
 // Which season the terrain shows (seasons plan Phase 1b). The season lives in the materials: each
-// of the 16 Bayer ranks of the 4×4 matrix shows one state (materials.ts LookState), and a season
-// arrives rank by rank over its front window of screen-clock months (config render.seasons.fronts),
-// so every pixel changes once. Phase 3 replaces the ranks with the seeded front. Drawing only.
+// of 256 keys shows one state (materials.ts LookState), and a season arrives key by key over its
+// front window of screen-clock months (config render.seasons.fronts), so every pixel changes once.
+// Phase 3a: a pixel's key is its arrival in the seeded front of the season's field (seasonFront.ts);
+// without the front, its Bayer rank. Drawing only.
 
 import { CONFIG } from '../config';
-import { LookState } from './materials';
+import { KEYS, LookState } from './materials';
+import { FRONT_KIND } from './seasonFront';
 
 const SC = CONFIG.render.seasons;
-const RANKS = 16;
+const RANKS = KEYS;
 const MONTHS = CONFIG.time.ticksPerYear;
 const SEASONS = [LookState.Spring, LookState.Summer, LookState.Autumn, LookState.Winter] as const;
 
-/** The season arriving at month `m` of the year (0–12, with a fraction): from, to, and how many ranks show `to`. */
-export function frontAt(m: number): { from: LookState; to: LookState; level: number } {
+/**
+ * The season arriving at month `m` of the year (0–12, with a fraction): from, to, how many keys show
+ * `to`, and the front field it follows (seasonFront.ts FrontKind).
+ */
+export function frontAt(m: number): { from: LookState; to: LookState; level: number; kind: number } {
   let k = 0, best = Infinity;
   for (let s = 0; s < 4; s++) {
     const d = (((m - SC.fronts[s]!.start) % MONTHS) + MONTHS) % MONTHS;
     if (d < best) { best = d; k = s; }
   }
   const p = Math.min(1, best / SC.fronts[k]!.months);
-  return { from: SEASONS[(k + 3) % 4]!, to: SEASONS[k]!, level: Math.floor(p * RANKS) };
+  return { from: SEASONS[(k + 3) % 4]!, to: SEASONS[k]!, level: Math.floor(p * RANKS), kind: FRONT_KIND[k]! };
 }
 
 const NAMES: Record<string, LookState> = {
   painted: LookState.Painted, spring: LookState.Spring, summer: LookState.Summer, autumn: LookState.Autumn, winter: LookState.Winter, held: LookState.Held,
 };
 
+/** A pinned look: the state of each key and the front field the keys follow. */
+export interface Pin { states: Int8Array; kind: number }
+
 /**
- * A pinned look from the URL, dev builds only (`?pin=winter`, `?pin=held`, `?pin=front:spring:0.5`):
- * a frozen state to compare with the mockups on a real map. Null otherwise.
+ * A pinned look from the URL, dev builds only (`?pin=winter`, `?pin=held`, `?pin=front:spring:0.5`,
+ * `?pin=front:snow:0.5` for the winter front): a frozen state to compare with the mockups on a real
+ * map. Null otherwise.
  */
-export function parsePin(q: string | null): Int8Array | null {
+export function parsePin(q: string | null): Pin | null {
   if (!q) return null;
   const out = new Int8Array(RANKS);
-  const f = /^front:(spring|summer|autumn|winter):([\d.]+)$/.exec(q);
+  const f = /^front:(spring|summer|autumn|winter|snow):([\d.]+)$/.exec(q);
   if (f) {
-    const k = SEASONS.indexOf(NAMES[f[1]!] as (typeof SEASONS)[number]);
+    const k = SEASONS.indexOf(NAMES[f[1] === 'snow' ? 'winter' : f[1]!] as (typeof SEASONS)[number]);
     const level = Math.round(Math.min(1, Math.max(0, Number(f[2]))) * RANKS);
     for (let r = 0; r < RANKS; r++) out[r] = r < level ? SEASONS[k]! : SEASONS[(k + 3) % 4]!;
-    return out;
+    return { states: out, kind: FRONT_KIND[k]! };
   }
   const s = NAMES[q];
-  return s === undefined ? null : out.fill(s);
+  return s === undefined ? null : { states: out.fill(s), kind: FRONT_KIND[0] };
 }
 
-const pinFromUrl = (): Int8Array | null =>
+const pinFromUrl = (): Pin | null =>
   import.meta.env.DEV && typeof location !== 'undefined' ? parsePin(new URLSearchParams(location.search).get('pin')) : null;
 
 // ---------- Phase 2c: how far winter has come ----------
@@ -82,9 +91,9 @@ const pinLinesFromUrl = (): [number, number] => {
 type Mode = 'painted' | 'held' | 'year' | 'pin';
 
 /**
- * Works out, each frame, the state each rank shows. A season arrives with the screen clock; a
- * change of mode (setup ↔ run, to or from the held look) dissolves rank by rank over `modeFadeMs`
- * of real time instead of popping; a jump in time snaps.
+ * Works out, each frame, the state each key shows and the front field the keys follow. A season
+ * arrives with the screen clock; a change of mode (setup ↔ run, to or from the held look) dissolves
+ * key by key over `modeFadeMs` of real time instead of popping; a jump in time snaps.
  */
 export class SeasonDriver {
   readonly shown = new Int8Array(RANKS);
@@ -94,27 +103,34 @@ export class SeasonDriver {
   private mode: Mode | null = null;
   private blendStart = -1;
   private lastStep = -1;
-  /** Phase 2c: the snow and ice lines shown now (0–255), stepped with the ranks. */
+  /** Phase 2c: the snow and ice lines shown now (0–255), stepped with the keys. */
   snowLine = 0;
   iceLine = 0;
   /** Phase 2c: a planned Harsh winters event runs this year. */
   harsh = false;
+  /** Phase 3a: the front field the keys follow now (seasonFront.ts FrontKind), and the year it began in. */
+  kind: number = FRONT_KIND[0];
+  year = 0;
 
-  constructor(private readonly pin: Int8Array | null = pinFromUrl(), private readonly pinLines: [number, number] = pinLinesFromUrl()) {}
+  constructor(private readonly pin: Pin | null = pinFromUrl(), private readonly pinLines: [number, number] = pinLinesFromUrl()) {}
 
   /**
    * `month`: the screen clock's month of the year. `show` (the speed's seasonShow): below 1 the
-   * year can't be read and the held look shows (Phase 1b; owner decisions S3, S4 refine it).
+   * year can't be read and the held look shows (Phase 1b; owner decisions S3, S4 refine it). `year`:
+   * the screen clock's year (Phase 3a: each year's front differs a little).
    */
-  update(nowMs: number, month: number, show: number, running: boolean, jump: boolean): Int8Array {
+  update(nowMs: number, month: number, show: number, running: boolean, jump: boolean, year = 0): Int8Array {
     const mode: Mode = this.pin ? 'pin' : !running ? 'painted' : show < 1 ? 'held' : 'year';
     const t = this.target;
-    if (mode === 'pin') t.set(this.pin!);
+    // Setup and the held look keep the field they had (every key shows one state, so it does not matter).
+    let kind = this.kind, fy = this.year;
+    if (mode === 'pin') { t.set(this.pin!.states); kind = this.pin!.kind; fy = 0; }
     else if (mode === 'painted') t.fill(LookState.Painted);
     else if (mode === 'held') t.fill(LookState.Held);
     else {
       const f = frontAt(month);
       for (let r = 0; r < RANKS; r++) t[r] = r < f.level ? f.to : f.from;
+      kind = f.kind; fy = year;
     }
     if (this.mode === null || jump) {
       this.blendStart = -1;
@@ -128,15 +144,17 @@ export class SeasonDriver {
       level = Math.floor(((nowMs - this.blendStart) / SC.modeFadeMs) * RANKS);
       if (level >= RANKS) { this.blendStart = -1; level = RANKS; }
     }
-    // Ranks move on at most every lookStepMs: each step re-uploads the whole terrain image, and a
+    // Keys move on at most every lookStepMs: each step re-uploads the whole terrain image, and a
     // few batches a front look the same (each pixel still changes once). A jump shows at once.
     const next = this.next;
     for (let r = 0; r < RANKS; r++) next[r] = r < level ? t[r]! : this.old[r]!;
     const [snow, ice] = mode === 'pin' ? this.pinLines : mode === 'year' ? coverLines(month, this.harsh) : [0, 0];
-    let same = snow === this.snowLine && ice === this.iceLine;
+    let same = snow === this.snowLine && ice === this.iceLine && kind === this.kind && fy === this.year;
     for (let r = 0; r < RANKS; r++) if (next[r] !== this.shown[r]) { same = false; break; }
     if (!same && (jump || this.lastStep < 0 || nowMs - this.lastStep >= SC.lookStepMs)) {
       this.shown.set(next);
+      this.kind = kind;
+      this.year = fy;
       this.snowLine = snow;
       this.iceLine = ice;
       this.lastStep = nowMs;

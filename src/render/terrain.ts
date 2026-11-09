@@ -12,10 +12,11 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  FieldPos, GroundRole, LookState, NO_TAG, Role, groundOn, bayerRank, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterRanks, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
+  FieldPos, GroundRole, KEYS, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
 import { MoistureField, cellNoise } from './moisture';
 import { WinterField } from './winter';
+import { FrontFields } from './seasonFront';
 import { fieldClass, rowCut } from './fields';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
 import { buildCrowns, canopyDistance, crownColourAt, crownPixelAt, inTreeShadow, type CrownPixel } from './crowns';
@@ -69,6 +70,7 @@ export interface TileExtras {
   mat?: MatBuf | null;           // Seasons Phase 1a: each pixel's ramp step and role, same layout as the image
   fields?: Uint8Array | null;    // Seasons Phase 2b: harvest per tile (0–255); given, farmland is drawn on the mockup's rows
   ponds?: Uint8Array | null;     // Seasons Phase 2c: still water small enough to freeze through (per tile, 1)
+  keys?: Uint8Array | null;      // Seasons Phase 3a: each pixel's key in the current front (null: its Bayer key)
 }
 
 // What the pixel being drawn turned out to be, for shadows and occlusion (phase 3).
@@ -252,7 +254,11 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         if (mat) {
           const p = py * imgW + px;
           mat.tag[p] = tag; mat.role[p] = role;
-          mat.rank[p] = tree ? bayerRank(cp.x, cp.y) : bayerRank(px, py);
+          // The pixel whose arrival it takes: a tree's centre, a field tile's centre (Phase 3a: field by field), or itself.
+          const ax = tree ? cp.x : frontOn && fieldRoleParts(role) ? tx * TILE + TILE / 2 : px;
+          const ay = tree ? cp.y : frontOn && fieldRoleParts(role) ? ty * TILE + TILE / 2 : py;
+          mat.anchor[p] = ax === px && ay === py ? SELF : anchorCode(ax - px, ay - py);
+          mat.rank[p] = ex.keys ? ex.keys[ay * imgW + ax]! : bayerKey(ax, ay);
           mat.alt[p] = NO_TAG;
           // Seasons Phase 2d: a flower or leaf litter, which keeps the ground under it in alt.
           if (details && (role === Role.Grass || role === Role.Forest || role === Role.FloorBare)) {
@@ -840,7 +846,14 @@ export class TerrainLayer {
   private drawnIce = 0;
   private rain: ArrayLike<number> | null = null;
   private moistureDirty = false;
-  private ranksDirty = 0;          // bit r: rank r shows a new state
+  private readonly keysDirty = new Uint8Array(KEYS);   // 1: key k shows a new state
+  private anyKeysDirty = false;
+  private readonly winterMask = new Uint8Array(KEYS);
+  // Phase 3a: the front fields, and each pixel's key in the field shown now (−1: the Bayer keys).
+  private readonly fronts: FrontFields | null = null;
+  private readonly keys: Uint8Array | null = null;
+  private keysKind = -1;
+  private keysYear = 0;
   private wholeImage = false;      // the next upload covers every tile
 
   /** `useMat`: draw through the material buffer (the switch; tests compare both ways). */
@@ -869,9 +882,12 @@ export class TerrainLayer {
       this.look = createLook();
       this.moisture = new MoistureField(map.width, map.height);
       if (snowOn || iceOn) this.winter = new WinterField(map.width, map.height);
+      this.keys = new Uint8Array(this.canvas.width * this.canvas.height);
+      this.bayerKeys(this.keys);
+      if (frontOn) this.fronts = new FrontFields(map.width, map.height);
     }
     this.store = this.mat && this.look ? matStore(this.mat, this.look, this.px) : rgbaStore(this.img.data, this.canvas.width);
-    this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null, shadow: this.shadowImg?.data ?? null, mat: this.mat };
+    this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null, shadow: this.shadowImg?.data ?? null, mat: this.mat, keys: this.keys };
     this.winterNow();
     this.markAll();
   }
@@ -895,6 +911,9 @@ export class TerrainLayer {
 
   setMap(map: MapData): void {
     this.map = map;
+    // Phase 3a: the front fields only change with the land's height (setMap also runs at a run's
+    // start and end, and they take ~250 ms on a full map).
+    if (this.fronts?.heightsChanged(map)) this.keysKind = -2;
     computeDepth(map, this.depth);
     this.moisture?.landChanged();
     this.moistureDirty = true;
@@ -910,6 +929,8 @@ export class TerrainLayer {
   private winterNow(): void {
     const w = this.winter, look = this.look;
     if (!w || !look) return;
+    // Phase 3a: snow lies in the cold front's order once the front fields are worked out (rekey).
+    w.arrival = this.fronts?.isReady ? this.fronts.coldShare : null;
     const before = w.ponds.slice();
     w.invalidate();
     w.ensure(this.map);
@@ -921,17 +942,61 @@ export class TerrainLayer {
   }
 
   /**
-   * Phase 1b: the state each of the 16 Bayer ranks shows (materials.ts LookState). Ranks that
-   * change are recoloured on the next flush, without redrawing a tile.
+   * Phase 1b: the state each key shows (materials.ts LookState). Keys that change are recoloured on
+   * the next flush, without redrawing a tile. Phase 3a: `kind` is the front field the keys follow
+   * (seasonFront.ts FrontKind; −1 the Bayer keys) in `year`.
    */
-  setLook(states: ArrayLike<number>): void {
+  setLook(states: ArrayLike<number>, kind = -1, year = 0): void {
     const look = this.look;
     if (!look) return;
+    const k = this.fronts ? kind : -1;
+    const y = k >= 0 ? year : 0;
+    // The painted map (setup) needs no keys: the fields are worked out when a season first shows,
+    // so painting in setup never waits for them.
+    let painted = true;
+    for (let r = 0; r < look.shown.length && painted; r++) painted = states[r] === LookState.Painted && look.shown[r] === LookState.Painted;
+    if (!painted && (k !== this.keysKind || y !== this.keysYear)) this.rekey(k, y);
     for (let r = 0; r < look.shown.length; r++) {
       if (look.shown[r] === states[r]) continue;
       look.shown[r] = states[r]!;
-      this.ranksDirty |= 1 << r;
+      this.keysDirty[r] = 1;
+      this.anyKeysDirty = true;
     }
+  }
+
+  /** The keys without the front: each pixel's Bayer key (Phase 1b's dissolve). */
+  private bayerKeys(out: Uint8Array): void {
+    const w = this.canvas.width, h = this.canvas.height;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = bayerKey(x, y);
+  }
+
+  /**
+   * Phase 3a: the keys follow another field (a new front, a new year). Each pixel takes the key of
+   * its anchor; snapshots of fading tiles too. A front starts with every key showing one state, so
+   * this recolours nothing; if they differ (a jump, a fast speed skipping a front's end) every key is.
+   */
+  private rekey(kind: number, year: number): void {
+    const mat = this.mat, look = this.look, keys = this.keys;
+    if (!mat || !look || !keys) return;
+    if (kind >= 0) {
+      if (this.fronts!.ensure(this.map)) this.winterNow();
+      this.fronts!.keys(kind, year, keys);
+    } else this.bayerKeys(keys);
+    this.keysKind = kind; this.keysYear = year;
+    const off = anchorOffsets(mat.w), n = keys.length, last = n - 1;
+    const keyOf = (p: number, a: number): number => keys[Math.min(last, Math.max(0, p + off[a]!))]!;
+    for (let p = 0; p < n; p++) mat.rank[p] = keyOf(p, mat.anchor[p]!);
+    const w = this.map.width;
+    const snap = (i: number, t: MatTile): void => {
+      const tx = i % w, ty = (i - tx) / w;
+      for (let y = 0; y < TILE; y++) {
+        const o = (ty * TILE + y) * mat.w + tx * TILE;
+        for (let x = 0; x < TILE; x++) t.rank[y * TILE + x] = keyOf(o + x, t.anchor[y * TILE + x]!);
+      }
+    };
+    for (const [i, f] of this.fades) { snap(i, f.old as MatTile); snap(i, f.neu as MatTile); }
+    const s0 = look.shown[0];
+    if (!look.shown.every((s) => s === s0)) { this.keysDirty.fill(1); this.anyKeysDirty = true; }
   }
 
   /** Phase 1b: the rain per tile the screen shows (its contents may change later; call again then). */
@@ -966,7 +1031,7 @@ export class TerrainLayer {
     this.moistureDirty = true;
   }
 
-  /** What each Bayer rank shows now (tests and the dev hooks). */
+  /** What each key shows now (tests and the dev hooks). */
   get shownStates(): readonly number[] { return this.look ? Array.from(this.look.shown) : []; }
 
   markDirty(i: number): void {
@@ -987,6 +1052,9 @@ export class TerrainLayer {
     if (this.moisture?.tilesChanged(this.map, list)) this.moistureDirty = true;
     // Water came or went: the snow and ice orders (and which water is a pond) are worked out again.
     if (this.winter?.tilesChanged(this.map, list)) this.winterNow();
+    // Phase 3a: the height changed: the front fields (and the snow order with them) are worked out
+    // again when a season next shows.
+    if (this.fronts?.tilesChanged(this.map, list)) this.keysKind = -2;
   }
 
   private markWithNeighbours(i: number, fade = false): void {
@@ -1070,9 +1138,10 @@ export class TerrainLayer {
         // Colours only (no shadow changes): recolour in place, then the whole image goes up.
         this.moisture.update(this.map, this.rain, this.mat, (i) => { store.commit(i % w, Math.floor(i / w)); this.wholeImage = true; });
       }
-      if (this.ranksDirty !== 0) {
-        resolveRanks(this.mat, this.look, this.px, this.ranksDirty);
-        this.ranksDirty = 0;
+      if (this.anyKeysDirty) {
+        resolveRanks(this.mat, this.look, this.px, this.keysDirty);
+        this.keysDirty.fill(0);
+        this.anyKeysDirty = false;
         this.wholeImage = true;
       }
       const L = this.look, wf = this.winter;
@@ -1080,8 +1149,7 @@ export class TerrainLayer {
         // New orders: every pixel showing winter.
         this.coverFull = false;
         this.coverDirty = false;
-        const mask = winterRanks(L);
-        if (mask !== 0) { resolveRanks(this.mat, L, this.px, mask); this.wholeImage = true; }
+        if (winterKeys(L, this.winterMask)) { resolveRanks(this.mat, L, this.px, this.winterMask); this.wholeImage = true; }
         this.drawnSnow = L.snowLine; this.drawnIce = L.iceLine;
       } else if (this.coverDirty && wf) {
         // A moved line: only the pixels it crossed (and the dusting and dithered edge beyond it; the
