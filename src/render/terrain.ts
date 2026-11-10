@@ -12,11 +12,12 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  FieldPos, GroundRole, KEYS, heldOn, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
+  FieldPos, GroundRole, KEYS, heldOn, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, colourAt, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
 import { MoistureField, cellNoise } from './moisture';
 import { WinterField } from './winter';
 import { FrontFields } from './seasonFront';
+import { Mask, cloudDitherOn, type CloudAt } from './clouds';
 import { fieldClass, rowCut } from './fields';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
 import { buildCrowns, canopyDistance, crownColourAt, crownPixelAt, inTreeShadow, type CrownPixel } from './crowns';
@@ -345,6 +346,7 @@ function crownRole(map: MapData, c: CrownPixel, px: number, py: number): Role {
 // ---------- seasons Phase 2b: fields and the harvest ----------
 
 const FC = CONFIG.render.seasons.fields;
+const CC = CONFIG.render.seasons.clouds;
 // Phase 2c: how far past the snow line a moved line can change a pixel (dusting, dithered edge), 0–255.
 const SNOW_EDGE = CONFIG.render.seasons.snow.edgeShare * 255;
 const SNOW_DUST = CONFIG.render.seasons.snow.dustShare * 255;
@@ -855,6 +857,12 @@ export class TerrainLayer {
   private keysKind = -1;
   private keysYear = 0;
   private wholeImage = false;      // the next upload covers every tile
+  // Phase 5: cloud shadows as ramp steps per pixel (look.shade), the clouds last stamped, and the storm's gloom.
+  private shade: Uint8Array | null = null;
+  private stamped: CloudAt[] = [];
+  private gloom = false;
+  private rects: number[] = [];                       // x, y, w, h of each rectangle to upload
+  private readonly rectImgs = new Map<number, ImageData>();   // small images for those uploads, by size
 
   /** `useMat`: draw through the material buffer (the switch; tests compare both ways). */
   constructor(private map: MapData, useMat = matbufOn) {
@@ -1011,6 +1019,100 @@ export class TerrainLayer {
     if (s === look.snowLine && i === look.iceLine) return;
     look.snowLine = s; look.iceLine = i;
     this.coverDirty = true;
+  }
+
+  /**
+   * Phase 5 (mockup E, owner decision S12): the clouds now, at whole-pixel positions, and whether a
+   * storm's gloom lies over the land. Their shadows (offset down-right) drop the ground one or two ramp
+   * steps on a world-fixed checker; only pixels whose drop changed are recoloured, so a ground pixel
+   * changes only as a shadow's edge passes it.
+   */
+  setClouds(clouds: readonly CloudAt[], gloom: boolean): void {
+    const mat = this.mat, look = this.look;
+    if (!mat || !look || !cloudDitherOn) return;
+    const same = gloom === this.gloom && clouds.length === this.stamped.length
+      && clouds.every((c, k) => c.shape === this.stamped[k]!.shape && c.x === this.stamped[k]!.x && c.y === this.stamped[k]!.y);
+    if (same) return;
+    const w = mat.w, h = mat.h;
+    if (!this.shade) { this.shade = new Uint8Array(w * h); look.shade = this.shade; }
+    const shade = this.shade;
+    const [sx, sy] = CC.shadowOffsetPx;
+    const box = (c: CloudAt): [number, number, number, number] => {
+      const x0 = c.x + c.shape.ox + sx!, y0 = c.y + c.shape.oy + sy!;
+      return [x0, y0, x0 + c.shape.w, y0 + c.shape.h];
+    };
+    const boxes = clouds.map(box);
+    const g = gloom ? 1 : 0;
+    /** Recomputes the shade in a rectangle; true if a pixel changed. */
+    const redo = (x0: number, y0: number, x1: number, y1: number): boolean => {
+      x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(w, x1); y1 = Math.min(h, y1);
+      if (x0 >= x1 || y0 >= y1) return false;
+      const near: number[] = [];
+      boxes.forEach((b, k) => { if (b[0] < x1 && b[2] > x0 && b[1] < y1 && b[3] > y0) near.push(k); });
+      let any = false;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const odd = (x + y) & 1;
+          let d = 0;
+          for (let j = 0; j < near.length; j++) {
+            const k = near[j]!, b = boxes[k]!;
+            if (x < b[0] || y < b[1] || x >= b[2] || y >= b[3]) continue;
+            const s = clouds[k]!.shape, m = s.mask[(y - b[1]) * s.w + (x - b[0])];
+            const v = m === Mask.Core ? 1 + odd : m === Mask.Rim ? odd : 0;
+            if (v > d) d = v;
+          }
+          const v = Math.min(3, d + g * odd), p = y * w + x;
+          if (v === shade[p]) continue;
+          shade[p] = v;
+          any = true;
+          if (mat.tag[p] !== NO_TAG) this.px[p] = colourAt(mat, look, p, x, y);
+        }
+      }
+      return any;
+    };
+    if (gloom !== this.gloom) {
+      // The storm came or went: every pixel.
+      this.gloom = gloom;
+      redo(0, 0, w, h);
+      this.wholeImage = true;
+    } else {
+      // Each cloud once, over where it was and where it is now (clouds keep their shape while crossing);
+      // a cloud that came or went, over its one box. Only those boxes are uploaded.
+      const before = new Map(this.stamped.map((c) => [c.shape, box(c)] as const));
+      const todo: [number, number, number, number][] = [];
+      clouds.forEach((c, k) => {
+        const b = boxes[k]!, o = before.get(c.shape);
+        before.delete(c.shape);
+        todo.push(o ? [Math.min(b[0], o[0]), Math.min(b[1], o[1]), Math.max(b[2], o[2]), Math.max(b[3], o[3])] : b);
+      });
+      for (const o of before.values()) todo.push(o);
+      for (const r of todo) {
+        if (!redo(r[0], r[1], r[2], r[3])) continue;
+        const x0 = Math.max(0, r[0]), y0 = Math.max(0, r[1]);
+        this.rects.push(x0, y0, Math.min(w, r[2]) - x0, Math.min(h, r[3]) - y0);
+      }
+    }
+    this.stamped = clouds.slice();
+  }
+
+  /**
+   * Phase 5: uploads the rectangles cloud shadows changed, each through a small image of its own (a
+   * dirty-rect putImageData of the whole image copies all of it in Chrome; measured: ~10 ms a move).
+   */
+  private uploadRects(): void {
+    const r = this.rects, w = this.canvas.width;
+    for (let k = 0; k < r.length; k += 4) {
+      const x = r[k]!, y = r[k + 1]!, rw = r[k + 2]!, rh = r[k + 3]!;
+      if (rw <= 0 || rh <= 0) continue;
+      const key = rw * 100000 + rh;
+      let img = this.rectImgs.get(key);
+      if (!img) { img = this.ctx.createImageData(rw, rh); this.rectImgs.set(key, img); }
+      const dst = new Uint32Array(img.data.buffer);
+      for (let row = 0; row < rh; row++) dst.set(this.px.subarray((y + row) * w + x, (y + row) * w + x + rw), row * rw);
+      this.ctx.putImageData(img, x, y);
+    }
+    this.rects.length = 0;
+    if (this.rectImgs.size > 64) this.rectImgs.clear();
   }
 
   /** Phase 2c: is map pixel (px, py) under snow now? (A building there wears it on its roof.) */
@@ -1170,7 +1272,7 @@ export class TerrainLayer {
         this.wholeImage = true;
       }
     }
-    if (this.dirtyList.length === 0 && this.fades.size === 0 && maxX < 0 && !this.wholeImage) return;
+    if (this.dirtyList.length === 0 && this.fades.size === 0 && maxX < 0 && !this.wholeImage && this.rects.length === 0) return;
     const t0 = performance.now();
 
     // Speeds plan Phase 5: fading tiles move on a step (75%, 50%, 25% old, then new).
@@ -1213,8 +1315,9 @@ export class TerrainLayer {
     const whole = this.wholeImage;
     if (whole) {
       this.wholeImage = false;
+      this.rects.length = 0;
       this.ctx.putImageData(this.img, 0, 0);
-    }
+    } else if (this.rects.length > 0) this.uploadRects();
     if (maxX < 0) return;
     if (!whole) {
       this.ctx.putImageData(

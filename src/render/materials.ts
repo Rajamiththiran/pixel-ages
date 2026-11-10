@@ -10,7 +10,7 @@
 import { CONFIG } from '../config';
 import { bayer } from './dither';
 import {
-  Mat, rampTag, rampsOn, seasonRampRgb, styleOff, tagCount, tagRgb, tagValid, type SeasonRampName,
+  Mat, RAMP_HEX, SEASON_HEX, hexRgb, rampTag, rampsOn, seasonRampRgb, styleOff, tagCount, tagRgb, tagValid, type SeasonRampName,
 } from './ramps';
 import { RGBS, type RGB } from './palette';
 import { FIELD_CLASSES, Stage, heldStageOf, stageOf } from './fields';
@@ -430,6 +430,8 @@ export interface Look {
   // and the lines (0–255) the winter has reached; a pixel showing winter is covered below them.
   readonly cover: Uint32Array[];
   cold: Uint8Array | null;
+  // Phase 5: how many ramp steps each pixel drops under a cloud's shadow (or a storm's gloom), 0–3; null without clouds.
+  shade: Uint8Array | null;
   ice: Uint8Array | null;
   snowLine: number;
   iceLine: number;
@@ -437,7 +439,7 @@ export interface Look {
 
 export function createLook(state: LookState = LookState.Painted): Look {
   const t = lookTables();
-  return { tables: t, span, shown: new Int8Array(KEYS).fill(state), cover: coverTables(), cold: null, ice: null, snowLine: 0, iceLine: 0 };
+  return { tables: t, span, shown: new Int8Array(KEYS).fill(state), cover: coverTables(), cold: null, ice: null, snowLine: 0, iceLine: 0, shade: null };
 }
 
 const SN = CONFIG.render.seasons.snow;
@@ -515,10 +517,48 @@ function colourOf(buf: MatBuf, look: Look, tag: number, role: number, rank: numb
     const k = coverAt(buf, look, role, p, x, y);
     if (k !== Cover.None) { const cc = look.cover[k]![role * look.span + tag]!; if (cc !== 0) c = cc; }
   }
+  if (look.shade) { const d = look.shade[p]!; if (d !== 0) c = shadeWord(c, d); }
   return c;
 }
 
-const colourAt = (buf: MatBuf, look: Look, p: number, x: number, y: number): number =>
+// ---------- Phase 5: cloud shadows, as ramp steps ----------
+
+let rampOf: Map<number, { ramp: number[]; step: number }> | null = null;
+const shaded: Map<number, number>[] = [new Map(), new Map(), new Map(), new Map()];
+const FAST_BITS = 12;
+const fastIn = new Uint32Array(4 << FAST_BITS), fastOut = new Uint32Array(4 << FAST_BITS);
+
+/**
+ * Colour word `c` `d` ramp steps darker (a cloud's shadow, mockup E: the buffer's step moves down,
+ * then the colour is picked; step 0 stays, so the darkest ground shows no shadow). Every system and
+ * seasonal ramp is known; accents and anything else stay as they are. Cached per colour.
+ */
+export function shadeWord(c: number, d: number): number {
+  if (c === 0 || c === ALT) return c;
+  // A small direct-mapped cache in front of the map: a storm shades every pixel, and a season step
+  // then looks up a million colours (a Map lookup each was ~7% of a frame, measured).
+  const slot = (Math.min(3, d) << FAST_BITS) | (Math.imul(c, 0x9e3779b1) >>> (32 - FAST_BITS));
+  if (fastIn[slot] === c) return fastOut[slot]!;
+  const cache = shaded[Math.min(3, d)]!;
+  const hit = cache.get(c);
+  if (hit !== undefined) { fastIn[slot] = c; fastOut[slot] = hit; return hit; }
+  if (!rampOf) {
+    rampOf = new Map();
+    const ramps = [...RAMP_HEX.slice(0, RAMP_GROUPS), ...Object.values(SEASON_HEX)];
+    for (const hexes of ramps) {
+      const words = hexes.map((h) => packRgba(hexRgb(h)));
+      // A colour in two ramps keeps the first (the system ramp): its shade is then the same everywhere.
+      words.forEach((w, step) => { if (!rampOf!.has(w)) rampOf!.set(w, { ramp: words, step }); });
+    }
+  }
+  const r = rampOf.get(c);
+  const out = r ? r.ramp[Math.max(0, r.step - d)]! : c;
+  cache.set(c, out);
+  fastIn[slot] = c; fastOut[slot] = out;
+  return out;
+}
+
+export const colourAt = (buf: MatBuf, look: Look, p: number, x: number, y: number): number =>
   colourOf(buf, look, buf.tag[p]!, buf.role[p]!, buf.rank[p]!, buf.alt[p]!, buf.altRole[p]!, p, x, y);
 
 /** Writes tile (tx, ty)'s colours from the buffer into the image (`px` = its pixels as words). */
@@ -534,7 +574,7 @@ export function resolveTile(buf: MatBuf, look: Look, px: Uint32Array, tx: number
  * map: keys follow the front and the trees, not a lattice.
  */
 export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, dirty: Uint8Array): void {
-  const { tag, role, rank, moist, alt, altRole } = buf, n = buf.w * buf.h, span = look.span;
+  const { tag, role, rank, moist, alt, altRole } = buf, n = buf.w * buf.h, span = look.span, shade = look.shade;
   // The three moisture tables each key shows, picked once (a late-game map changes keys often:
   // a function call per pixel here was 9% of a frame, measured).
   const byRank: Uint32Array[] = [];
@@ -548,7 +588,8 @@ export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, dirty: Ui
     if (look.shown[r] === LookState.Winter) { const x = p % buf.w; px[p] = colourAt(buf, look, p, x, (p - x) / buf.w); continue; }
     const t = byRank[r * CLASSES + moist[p]!]!;
     const c = t[role[p]! * span + g]!;
-    px[p] = c !== ALT ? c : alt[p] === NO_TAG ? 0 : t[altRole[p]! * span + alt[p]!]!;
+    const col = c !== ALT ? c : alt[p] === NO_TAG ? 0 : t[altRole[p]! * span + alt[p]!]!;
+    px[p] = shade && shade[p] !== 0 ? shadeWord(col, shade[p]!) : col;
   }
 }
 

@@ -28,6 +28,8 @@ import { MoistureField, tileWetness } from '../src/render/moisture';
 import { SeasonDriver, frontAt, parsePin, twoLooksAt } from '../src/render/seasonLook';
 import { DayNight } from '../src/render/light';
 import { HeldRain } from '../src/render/heldRain';
+import { Clouds, Mask, bodyStep, cloudiness, makeCloud } from '../src/render/clouds';
+import { shadeWord } from '../src/render/materials';
 import { yearLabel } from '../src/ui/runControls';
 import { ticksPerSecondAt } from '../src/shared/speeds';
 import { FrontFields, FrontKind } from '../src/render/seasonFront';
@@ -280,7 +282,7 @@ const MOCK_NIGHT_MUL = [0.2, 0.252, 0.42], MOCK_NIGHT_ADD = [10, 13.5, 40];   //
 // The mockup's ramp rule (seasons-render.js rampFrom): the warm light of step 4.
 const WARM = [281, 235, 105], WARM_MIX = 0.372;
 // Ramps the mockup lists by hand rather than building from one colour.
-const LISTED = new Set<SeasonRampName>(['fruitSu', 'snowDust', 'snowFull', 'waterSpring', 'waterWinter', 'ice', 'iceRim']);
+const LISTED = new Set<SeasonRampName>(['fruitSu', 'snowDust', 'snowFull', 'waterSpring', 'waterWinter', 'ice', 'iceRim', 'cloud', 'cloudStorm']);   // listed in full by the mockup
 
 describe('seasons Phase 1b: the seasonal ramps are the mockup ramps', () => {
   it('ramps built from one colour follow the rule: step 0 = shadowOf(step 2), 1 halfway, 4 the warm light, 3 halfway', () => {
@@ -1495,5 +1497,130 @@ describe('seasons Phase 4: the held fast-forward look', () => {
   it('the bar names the held season, summer', () => {
     expect(yearLabel(1240, 10, true)).toBe('Year 1,240 · Summer');
     expect(yearLabel(1240, 10)).toBe('Year 1,240 · Winter');
+  });
+});
+
+// ---------- Phase 5: clouds ----------
+
+describe('seasons Phase 5: pixel clouds', () => {
+  it('a cloud is a cluster of discs: a core inside its rim; the body lit top-left, dark underneath (mockup)', () => {
+    const c = makeCloud(12, 1, false);
+    let core = 0, rim = 0;
+    for (let k = 0; k < c.mask.length; k++) { if (c.mask[k] === Mask.Core) core++; else if (c.mask[k] === Mask.Rim) rim++; }
+    expect(core).toBeGreaterThan(300);
+    expect(rim).toBeGreaterThan(100);
+    // The top row of the cloud is its lit rim (step 4); the bottom row its underside (step 1).
+    const rows: number[][] = [];
+    for (let ly = 0; ly < c.h; ly++) for (let lx = 0; lx < c.w; lx++) {
+      const s = bodyStep(c, lx, ly, false);
+      if (s >= 0) (rows[ly] ??= []).push(s);
+    }
+    const filled = rows.map((r, y) => [y, r] as const).filter(([, r]) => r && r.length > 0);
+    expect(filled[0]![1].every((s) => s === 4)).toBe(true);
+    expect(filled[filled.length - 1]![1].every((s) => s === 1 || s === 4)).toBe(true);
+    expect(makeCloud(12, 1, false).mask).toEqual(c.mask);   // the same seed, the same cloud
+  });
+
+  it('wetter land carries more and bigger clouds', () => {
+    expect(cloudiness(10).share).toBeLessThan(cloudiness(50).share);
+    expect(cloudiness(50).share).toBeLessThan(cloudiness(90).share);
+    expect(cloudiness(10).size).toBeLessThan(cloudiness(90).size);
+    const count = (rain: number): number => {
+      let n = 0;
+      for (let pass = 0; pass < 20; pass++) {
+        const s = new Clouds(1280, 720, null);
+        s.update(pass * 1000, () => rain);
+        n += s.now.length;
+      }
+      return n;
+    };
+    expect(count(90)).toBeGreaterThan(count(10) * 2);
+  });
+
+  it('clouds drift with the wind in whole pixels and keep their shape while they cross', () => {
+    const s = new Clouds(1280, 720, 'clouds');
+    s.update(0, () => 50);
+    const first = s.now.map((c) => ({ ...c }));
+    s.update(1, () => 50);
+    for (const c of s.now) {
+      expect(Number.isInteger(c.x) && Number.isInteger(c.y)).toBe(true);
+      const was = first.find((f) => f.shape === c.shape);
+      if (was) { expect(c.y).toBe(was.y); expect(c.x - was.x).toBeGreaterThanOrEqual(CONFIG.render.f8.weather.windPxPerS - 1); }
+    }
+    expect(s.now.some((c) => first.some((f) => f.shape === c.shape))).toBe(true);
+  });
+
+  it('a shadow steps colours down their own ramp; the darkest step and accents stay', () => {
+    const word = (hex: string): number => { const [r, g, b] = hexRgb(hex); return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0; };
+    const grass = RAMP_HEX[Mat.Grass]!;
+    expect(shadeWord(word(grass[3]!), 1)).toBe(word(grass[2]!));
+    expect(shadeWord(word(grass[3]!), 2)).toBe(word(grass[1]!));
+    expect(shadeWord(word(grass[0]!), 2)).toBe(word(grass[0]!));
+    expect(shadeWord(word(SEASON_HEX.grassSpLush[4]), 1)).toBe(word(SEASON_HEX.grassSpLush[3]));
+    expect(shadeWord(word(PALETTE.flowerWhite), 2)).toBe(word(PALETTE.flowerWhite));
+  });
+
+  it('as a cloud crosses, each ground pixel changes only as an edge passes, and the image equals a fresh resolve', () => {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(LookState.Summer));
+    l.flush();
+    const shape = makeCloud(5, 1, false);
+    const [ox, oy] = CONFIG.render.seasons.clouds.shadowOffsetPx;
+    const w = m.width * TILE, y0 = 300;
+    /** The shadow's ramp-step drop at (x, y) with the cloud at cx (the mockup's rim and core on the world checker). */
+    const level = (cx: number, x: number, y: number): number => {
+      const lx = x - (cx + shape.ox + ox!), ly = y - (y0 + shape.oy + oy!);
+      if (lx < 0 || ly < 0 || lx >= shape.w || ly >= shape.h) return 0;
+      const mk = shape.mask[ly * shape.w + lx], odd = (x + y) & 1;
+      return mk === Mask.Core ? 1 + odd : mk === Mask.Rim ? odd : 0;
+    };
+    let prev = new Uint32Array(imageOf(l).slice().buffer);
+    let changed = 0;
+    for (let x = 200; x < 200 + shape.w + 4; x++) {
+      l.setClouds([{ shape, x, y: y0 }], false);
+      l.flush();
+      const now = new Uint32Array(imageOf(l).slice().buffer);
+      for (let p = 0; p < now.length; p++) {
+        const px = p % w, py = (p - px) / w;
+        const moved = x > 200 ? level(x - 1, px, py) !== level(x, px, py) : level(x, px, py) !== 0;
+        // A pixel changes only where its drop changed (an edge passed it); never inside a shadow or outside one.
+        if (now[p] !== prev[p]) { expect(moved, `pixel ${px},${py} at step ${x}`).toBe(true); changed++; }
+      }
+      prev = now;
+    }
+    expect(changed).toBeGreaterThan(shape.w);
+    const inner = l as unknown as { mat: MatBuf; look: Parameters<typeof resolveTile>[1] };
+    const ref = new Uint32Array(inner.mat.w * inner.mat.h);
+    for (let ty = 0; ty < m.height; ty++) for (let tx = 0; tx < m.width; tx++) resolveTile(inner.mat, inner.look, ref, tx, ty);
+    expect(fnv(imageOf(l))).toBe(fnv(new Uint8ClampedArray(ref.buffer)));
+    // Gone again: the ground as before the cloud came.
+    l.setClouds([], false); l.flush();
+    l.setLook(new Array<number>(KEYS).fill(LookState.Summer)); l.flush();
+    const clear = new TerrainLayer(m, true);
+    clear.setRain(m.rain); clear.setLook(new Array<number>(KEYS).fill(LookState.Summer)); clear.flush();
+    expect(fnv(imageOf(l))).toBe(fnv(imageOf(clear)));
+  });
+
+  it('a storm lays a world-fixed checker one step down over the land', () => {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(LookState.Summer));
+    l.flush();
+    const before = new Uint32Array(imageOf(l).slice().buffer);
+    l.setClouds([], true); l.flush();
+    const after = new Uint32Array(imageOf(l).slice().buffer);
+    const w = m.width * TILE;
+    let evenChanged = 0, oddChanged = 0;
+    for (let p = 0; p < after.length; p++) {
+      if (after[p] === before[p]) continue;
+      if ((((p % w) + Math.floor(p / w)) & 1) === 1) oddChanged++; else evenChanged++;
+    }
+    expect(evenChanged).toBe(0);
+    expect(oddChanged).toBeGreaterThan(after.length / 4);
   });
 });

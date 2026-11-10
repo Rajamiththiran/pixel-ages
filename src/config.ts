@@ -963,6 +963,26 @@ export const CONFIG = {
         rainYears: 2, stepMs: 100,
         note: { on: true, landShare: 0.25, minEventYears: 3 },
       },
+      // Phase 5: pixel clouds (mockup E). `slots` clouds travel with the wind (f8.weather.windPxPerS) across
+      // the map and marginPx beyond it; each pass a slot shows a cloud or not, by the rain under its row
+      // (shareDry of the slots where rain is dryRain or less, shareWet at wetRain or more), sized sizeDry to
+      // sizeWet. A cloud is a cluster of `puffs` discs (4–7, plus a centre disc of coreRadiusPx) spread over
+      // spreadPx, radii puffRadiusPx, squashed by aspect (the mockup's makeClouds). Owner decision S12
+      // (10 Nov 2026): the mockup's way throughout. Shadows: the ground under a cloud, offset
+      // shadowOffsetPx, drops ramp steps with a world-fixed checker (the rim: half the pixels one step; the
+      // core within coreScale: half one, half two), no translucency (`?off=cloudDither`: a crisp-edged navy
+      // wash of f8.weather.shadowAlpha instead). Bodies: opaque at every zoom, over the people (the mockup's
+      // rim: lit top-left within rimPx, underside within undersidePx, a dithered band within bandPx).
+      // A storm (dev `?weather=storm` until Phase 7): every slot, stormSize, the storm-cloud ramp, and a
+      // world-fixed checker one step down over the whole map. Off: `?off=clouds` (the F8 noise wash).
+      clouds: {
+        on: true,
+        slots: 16, marginPx: 200, salt: 211,
+        puffs: [4, 8], spreadPx: [70, 22], puffRadiusPx: [9, 21], coreRadiusPx: 16, aspect: 1.25, coreScale: 0.8,
+        dryRain: 20, wetRain: 80, shareDry: 0.15, shareWet: 0.8, sizeDry: 0.9, sizeWet: 1.25, stormSize: 1.5,
+        shadowOffsetPx: [28, 20],
+        rimPx: [3, 3], undersidePx: [2, 4], bandPx: [3, 7],
+      },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,

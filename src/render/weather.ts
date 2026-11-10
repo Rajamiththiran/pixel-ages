@@ -9,6 +9,7 @@ import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
 import { RGBS } from './palette';
 import { TintClass, tintClass } from './season';
+import { Clouds, bodySprite, cloudDitherOn, cloudsOn, washSprite, type CloudAt } from './clouds';
 
 const W = CONFIG.render.f8.weather;
 const TILE = CONFIG.map.tilePx;
@@ -56,6 +57,8 @@ export class Weather {
   enabled = true;
   /** Seasons Phase 4: rain and snow fall (off in the held fast-forward look; the clouds still drift). */
   falling = true;
+  /** Seasons Phase 5: pixel clouds (null with `?off=clouds`: the F8 noise wash). */
+  readonly sky: Clouds | null;
   /** Share of visible cells with rain falling now, and with snow (for sound). */
   rainOnScreen = 0;
   snowOnScreen = 0;
@@ -76,8 +79,15 @@ export class Weather {
     this.ground.height = map.height * TILE;
     this.groundImg = this.ground.getContext('2d')!.createImageData(this.ground.width, this.ground.height);
     this.groundState = new Uint8Array(map.width * map.height);
+    this.sky = cloudsOn ? new Clouds(map.width * TILE, map.height * TILE) : null;
     this.rainChanged();
   }
+
+  /** Phase 5: the clouds now (empty while the weather is off). */
+  get cloudsNow(): readonly CloudAt[] { return this.enabled && this.sky ? this.sky.now : []; }
+
+  /** Phase 5: a storm's gloom lies over the land. */
+  get storm(): boolean { return this.enabled && !!this.sky?.storm; }
 
   setMap(map: MapData, base: Uint8Array | null): void {
     this.map = map;
@@ -208,6 +218,21 @@ export class Weather {
   }
 
   private updateClouds(): void {
+    const sky = this.sky;
+    if (sky) {
+      // Phase 5: the pixel clouds move on; rain falls from the cells under their bodies.
+      const cellPx = W.cellTiles * TILE;
+      sky.update(this.t, (y) => {
+        const cy = Math.max(0, Math.min(this.ch - 1, Math.floor(y / cellPx)));
+        let sum = 0;
+        for (let cx = 0; cx < this.cw; cx++) sum += this.cellRain[cy * this.cw + cx]!;
+        return (sum / this.cw) * 100;
+      });
+      for (let cy = 0; cy < this.ch; cy++) {
+        for (let cx = 0; cx < this.cw; cx++) this.cloud[cy * this.cw + cx] = sky.storm || sky.covers((cx + 0.5) * cellPx, (cy + 0.5) * cellPx) ? 1 : 0;
+      }
+      return;
+    }
     const drift = (this.t * W.windPxPerS) / (W.cellTiles * TILE);
     const d = this.shadowImg.data;
     for (let cy = 0; cy < this.ch; cy++) {
@@ -230,14 +255,35 @@ export class Weather {
     if (this.base && this.groundTiles > 0) ctx.drawImage(this.ground, 0, 0);
   }
 
-  /** Cloud shadows and falling rain or snow: over everything on the ground. */
+  /**
+   * Cloud shadows and falling rain or snow: over everything on the ground. Phase 5: the shadows are
+   * in the terrain (ramp steps); the cloud bodies are drawn over the rain and the people (S12).
+   */
   drawSky(ctx: CanvasRenderingContext2D): void {
     if (!this.enabled) return;
-    ctx.save();
-    ctx.imageSmoothingEnabled = true;
-    const cellPx = W.cellTiles * TILE;
-    ctx.drawImage(this.shadow, W.shadowOffsetPx, W.shadowOffsetPx, this.cw * cellPx, this.ch * cellPx);
-    ctx.restore();
+    const sky = this.sky;
+    if (!sky) {
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      const cellPx = W.cellTiles * TILE;
+      ctx.drawImage(this.shadow, W.shadowOffsetPx, W.shadowOffsetPx, this.cw * cellPx, this.ch * cellPx);
+      ctx.restore();
+    } else if (!cloudDitherOn) {
+      // `?off=cloudDither`: a crisp-edged navy wash under each cloud instead of ramp steps.
+      const [ox, oy] = CONFIG.render.seasons.clouds.shadowOffsetPx;
+      for (const c of sky.now) ctx.drawImage(washSprite(c.shape), c.x + c.shape.ox + ox!, c.y + c.shape.oy + oy!);
+    }
+    this.drawFalling(ctx);
+    if (sky) {
+      for (const c of sky.now) {
+        const x = c.x + c.shape.ox, y = c.y + c.shape.oy;
+        ctx.drawImage(bodySprite(c.shape, (x + y) & 1), x, y);
+      }
+    }
+  }
+
+  /** Falling rain and snow. */
+  private drawFalling(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = `rgba(${RGBS.waterLight.join(',')},0.75)`;
     for (let k = 0; k < this.count; k++) {
       if (this.kind[k] !== Kind.Rain) continue;

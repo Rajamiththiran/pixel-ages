@@ -435,9 +435,11 @@ export class Renderer {
       this.season.update(dt);
       this.light.update(dt, v.playing);
       this.weather.update(now, dt, vr, this.season.weights[3]!, v.playing);
+      // Seasons Phase 5: cloud shadows step the ground down where the clouds are now.
+      this.terrain.setClouds(this.weather.cloudsNow, this.weather.storm);
       this.effects.update(now, dt, vr, CONFIG.render.f8.weather.windPxPerS);
       this.people.setNight(this.light.darkness, this.camps.fireGroup);
-    }
+    } else this.terrain.setClouds([], false);   // setup: no clouds
     // Seasons Phase 1b: the season each key shows (painted in setup, held at the fast speeds); Phase 3a:
     // the front field the keys follow, and the year (each year's front differs a little).
     if (seasonRampsOn) {
