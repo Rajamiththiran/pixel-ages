@@ -31,6 +31,10 @@ import { HeldRain } from '../src/render/heldRain';
 import { Clouds, Mask, bodyStep, cloudiness, makeCloud } from '../src/render/clouds';
 import { PUDDLE_DARK, PUDDLE_LIGHT, shadeWord } from '../src/render/materials';
 import { Fall, Weather } from '../src/render/weather';
+import { GroundMark } from '../src/render/materials';
+import { Mist } from '../src/render/mist';
+import { mistAt } from '../src/render/light';
+import { scenarioG } from '../src/presets/scenarios';
 import { yearLabel } from '../src/ui/runControls';
 import { ticksPerSecondAt } from '../src/shared/speeds';
 import { FrontFields, FrontKind } from '../src/render/seasonFront';
@@ -283,7 +287,7 @@ const MOCK_NIGHT_MUL = [0.2, 0.252, 0.42], MOCK_NIGHT_ADD = [10, 13.5, 40];   //
 // The mockup's ramp rule (seasons-render.js rampFrom): the warm light of step 4.
 const WARM = [281, 235, 105], WARM_MIX = 0.372;
 // Ramps the mockup lists by hand rather than building from one colour.
-const LISTED = new Set<SeasonRampName>(['fruitSu', 'snowDust', 'snowFull', 'waterSpring', 'waterWinter', 'ice', 'iceRim', 'cloud', 'cloudStorm', 'precip']);   // listed in full by the mockup
+const LISTED = new Set<SeasonRampName>(['fruitSu', 'snowDust', 'snowFull', 'waterSpring', 'waterWinter', 'ice', 'iceRim', 'cloud', 'cloudStorm', 'precip', 'mist']);   // listed in full by the mockup
 
 describe('seasons Phase 1b: the seasonal ramps are the mockup ramps', () => {
   it('ramps built from one colour follow the rule: step 0 = shadowOf(step 2), 1 halfway, 4 the warm light, 3 halfway', () => {
@@ -1728,5 +1732,115 @@ describe('seasons Phase 6: rain and snowfall', () => {
     l.setLook(new Array<number>(KEYS).fill(LookState.Winter)); l.flush();
     l.setClouds([{ shape, x: 901, y: 300 }], false, true); l.flush();
     expect(shade().some((v) => v >= 16)).toBe(false);         // winter: no puddles
+  });
+});
+
+// ---------- Phase 7: weather over years ----------
+
+describe('seasons Phase 7: drought, wet years, mist, storms, paths through snow', () => {
+  /** A layer on Scenario A in `state`, every tile given ground state `ground` (0 none, 1 drought, 2 wet). */
+  function grounded(state: number, ground: number): { l: TerrainLayer; m: MapData; marks: Uint8Array } {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(state));
+    l.flush();
+    l.setGround(new Uint8Array(m.width * m.height).fill(ground));
+    l.flush();
+    return { l, m, marks: (l as unknown as { groundMarks: Uint8Array }).groundMarks };
+  }
+
+  it('water stays water: no mark on a water pixel, nor on woods, rock, paths or fields', () => {
+    for (const g of [1, 2]) {
+      const { l, marks } = grounded(LookState.Summer, g);
+      const mat = (l as unknown as { mat: MatBuf }).mat;
+      let n = 0;
+      for (let p = 0; p < marks.length; p++) {
+        if (marks[p] === GroundMark.None) continue;
+        n++;
+        const r = mat.role[p]!;
+        expect(r === Role.Grass || r === Role.Desert || isGroundRole(r), `role ${r}`).toBe(true);
+      }
+      expect(n, `ground ${g}`).toBeGreaterThan(100);
+    }
+  });
+
+  it('a drought cracks open land in patches (sand body, crack lines); a wet year leaves puddles; neither otherwise', () => {
+    const dry = grounded(LookState.Summer, 1).marks, wet = grounded(LookState.Summer, 2).marks, none = grounded(LookState.Summer, 0).marks;
+    const count = (a: Uint8Array, ...k: number[]): number => a.reduce((n, v) => n + (k.includes(v) ? 1 : 0), 0);
+    expect(count(dry, GroundMark.CrackLine)).toBeGreaterThan(50);
+    expect(count(dry, GroundMark.CrackBody, GroundMark.CrackLight)).toBeGreaterThan(count(dry, GroundMark.CrackLine) * 3);
+    expect(count(dry, GroundMark.PuddleLight, GroundMark.PuddleDark)).toBe(0);
+    expect(count(wet, GroundMark.PuddleLight, GroundMark.PuddleDark)).toBeGreaterThan(50);
+    expect(count(wet, GroundMark.CrackLine, GroundMark.CrackBody, GroundMark.CrackLight)).toBe(0);
+    expect(count(none, 1, 2, 3, 4, 5)).toBe(0);
+    // Patches: far less than all the open land cracks.
+    expect(count(dry, 1, 2, 3)).toBeLessThan(dry.length * 0.6);
+  });
+
+  it('cracks take the season\'s sand and puddles the water ramp; none in setup or in winter', () => {
+    const sand = new Set<string>(RAMP_HEX[Mat.Sand]!), water = new Set<string>(RAMP_HEX[Mat.Water]!);
+    const hexAt = (l: TerrainLayer, p: number): string => { const d = imageOf(l); return '#' + [d[p * 4]!, d[p * 4 + 1]!, d[p * 4 + 2]!].map((v) => v.toString(16).padStart(2, '0')).join(''); };
+    const dry = grounded(LookState.Summer, 1), wet = grounded(LookState.Summer, 2);
+    for (let p = 0; p < dry.marks.length; p++) if (dry.marks[p] !== GroundMark.None) expect(sand.has(hexAt(dry.l, p))).toBe(true);
+    for (let p = 0; p < wet.marks.length; p++) if (wet.marks[p] !== GroundMark.None) expect(water.has(hexAt(wet.l, p))).toBe(true);
+    for (const state of [LookState.Painted, LookState.Winter]) {
+      const g = grounded(state, 1);
+      const plain = grounded(state, 0);
+      expect(fnv(imageOf(g.l)), `state ${state}`).toBe(fnv(imageOf(plain.l)));
+    }
+  });
+
+  it('trampled ground round homes is only dusted under deep snow', () => {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter));
+    l.setCover(255, 0);
+    l.flush();
+    const w = m.width * TILE, x0 = 1000, y0 = 300;
+    const mask = new Uint8Array(w * m.height * TILE);
+    for (let y = y0; y < y0 + 10; y++) for (let x = x0; x < x0 + 10; x++) mask[y * w + x] = 1;
+    l.setTrample(mask);
+    l.flush();
+    const dust = new Set<string>(SEASON_HEX.snowDust), full = new Set<string>(SEASON_HEX.snowFull);
+    const d = imageOf(l);
+    let dusted = 0;
+    for (let y = y0; y < y0 + 10; y++) for (let x = x0; x < x0 + 10; x++) {
+      const p = y * w + x, h = '#' + [d[p * 4]!, d[p * 4 + 1]!, d[p * 4 + 2]!].map((v) => v.toString(16).padStart(2, '0')).join('');
+      if (dust.has(h)) dusted++;
+      expect(full.has(h)).toBe(false);
+    }
+    expect(dusted).toBeGreaterThan(50);
+  });
+
+  it('dawn mist thickens late in the night and clears with the dawn; none by day', () => {
+    const L = CONFIG.render.f8.light;
+    expect(mistAt(0.2)).toBe(0);                               // day
+    expect(mistAt(1 - L.dusk - 0.001)).toBeGreaterThan(0.9);    // just before dawn
+    expect(mistAt(1 - L.dusk / 2)).toBeCloseTo(0.5, 1);         // half way through dawn
+    expect(mistAt(1 - L.nightShare - L.dusk + 0.01)).toBe(0);   // early night
+    const m = scenarioG().map;
+    const mist = new Mist(m);
+    mist.update(0, m.rain, 0);
+    expect(mist.showing).toBe(false);
+    mist.update(1, m.rain, 0);
+    expect(mist.showing).toBe(true);
+  });
+
+  it('a storm blows when the lanes are told so (S9), and a dev sky overrides it', () => {
+    const s = new Clouds(1280, 720, null);
+    expect(s.storm).toBe(false);
+    s.stormy = true;
+    expect(s.storm).toBe(true);
+    s.update(0, () => 50);
+    expect(s.now.length).toBeGreaterThan(8);                   // every lane carries a storm cloud
+    expect(s.now.every((c) => c.shape.storm && c.shape.rainy)).toBe(true);
+    const clear = new Clouds(1280, 720, 'mist');
+    clear.stormy = true;
+    clear.update(0, () => 50);
+    expect(clear.now.length).toBe(0);
   });
 });

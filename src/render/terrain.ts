@@ -12,7 +12,7 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  FieldPos, GroundRole, KEYS, heldOn, PUDDLE_DARK, PUDDLE_LIGHT, isGroundRole, isWaterRole, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, colourAt, type Look as SeasonLook, type MatBuf, type MatTile,
+  FieldPos, GroundMark, GroundRole, KEYS, droughtOn, heldOn, snowPathsOn, wetYearOn, PUDDLE_DARK, PUDDLE_LIGHT, isGroundRole, isWaterRole, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, colourAt, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
 import { MoistureField, cellNoise } from './moisture';
 import { WinterField } from './winter';
@@ -356,6 +356,35 @@ function puddleShape(x: number, y: number): boolean {
   if (hash01(cx, cy, RNC.salt + 6) >= RNC.puddleShare) return false;
   const dx = (x - (cx * cw! + (cw! - 1) / 2)) / rx!, dy = (y - (cy * ch! + (ch! - 1) / 2)) / ry!;
   return dx * dx + dy * dy <= 1;
+}
+
+/** Phase 6: puddles stand in hollows (a tile lower than a neighbour), and on flat land in some tiles. */
+function puddlyTile(map: MapData, tx: number, ty: number): boolean {
+  const mw = map.width, e = map.elevation[ty * mw + tx]!;
+  let higher = false, lower = false;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    const nx = tx + dx, ny = ty + dy;
+    if (nx < 0 || ny < 0 || nx >= mw || ny >= map.height) continue;
+    const f = map.elevation[ny * mw + nx]!;
+    if (f > e) higher = true; else if (f < e) lower = true;
+  }
+  return higher || (!lower && hash01(tx, ty, RNC.salt + 5) < RNC.puddleFlatShare);
+}
+
+const DRC = CONFIG.render.seasons.drought;
+
+/** Phase 7: drought patches (the mockup's clustered noise above patchAbove). */
+function droughtPatch(x: number, y: number): boolean {
+  const [c0, c1] = DRC.patchCellPx, [w0, w1] = DRC.patchWeights;
+  return w0! * cellNoise(x, y, c0!, DRC.salt) + w1! * cellNoise(x, y, c1!, DRC.salt + 1) > DRC.patchAbove;
+}
+
+/** Phase 7: the mockup's crack pattern: two sets of broken diagonal lines. */
+function crackLine(x: number, y: number): boolean {
+  const [e0, e1] = DRC.crackEvery, [s0, s1] = DRC.crackShare;
+  const a = (((x + 2 * y) % e0!) + e0!) % e0! === 0 && hash01(x >> 2, y >> 1, DRC.salt + 2) < s0!;
+  const b = (((2 * x - y) % e1!) + e1!) % e1! === 0 && hash01(x >> 1, y >> 2, DRC.salt + 3) < s1!;
+  return a || b;
 }
 
 /** Phase 6: ground a puddle can stand on (open ground, paths, fields; not woods, bushes, rock or fire). */
@@ -879,6 +908,9 @@ export class TerrainLayer {
   private gloom = false;
   private raining = true;          // Phase 6: rain clouds wet the ground (off at the held speeds)
   private cloudsStale = false;     // Phase 6: winter came or went: the next move recomputes whole cloud boxes
+  // Phase 7: the marks years-long weather leaves per pixel (materials.ts GroundMark), and the per-tile state they come from.
+  private groundMarks: Uint8Array | null = null;
+  private groundStates: Uint8Array | null = null;
   private rects: number[] = [];                       // x, y, w, h of each rectangle to upload
   private readonly rectImgs = new Map<number, ImageData>();   // small images for those uploads, by size
 
@@ -1065,19 +1097,8 @@ export class TerrainLayer {
     // Winter came or went somewhere: rain's wet ground and puddles inside a zone may change, not only at its edges.
     const full = this.cloudsStale;
     this.cloudsStale = false;
-    const map = this.map, mw = map.width;
-    // Phase 6: puddles stand in hollows (a tile lower than a neighbour), and on flat land in some tiles.
-    const puddly = (tx: number, ty: number): boolean => {
-      const e = map.elevation[ty * mw + tx]!;
-      let higher = false, lower = false;
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-        const nx = tx + dx, ny = ty + dy;
-        if (nx < 0 || ny < 0 || nx >= mw || ny >= map.height) continue;
-        const f = map.elevation[ny * mw + nx]!;
-        if (f > e) higher = true; else if (f < e) lower = true;
-      }
-      return higher || (!lower && hash01(tx, ty, RNC.salt + 5) < RNC.puddleFlatShare);
-    };
+    const map = this.map;
+    const puddly = (tx: number, ty: number): boolean => puddlyTile(map, tx, ty);
     const nearOf = (x0: number, y0: number, x1: number, y1: number): number[] => {
       const near: number[] = [];
       boxes.forEach((b, k) => { if (b[0] < x1 && b[2] > x0 && b[1] < y1 && b[3] > y0) near.push(k); });
@@ -1181,6 +1202,62 @@ export class TerrainLayer {
     }
     this.rects.length = 0;
     if (this.rectImgs.size > 64) this.rectImgs.clear();
+  }
+
+  /**
+   * Phase 7: the years-long weather per tile (weather.ts: 0 none, 1 drought, 2 wet year, by the shown
+   * rain against the painted rain). Tiles whose state changed get their marks (cracked sand, puddles)
+   * and are recoloured in place.
+   */
+  setGround(states: Uint8Array): void {
+    const look = this.look, mat = this.mat;
+    if (!look || !mat || (!droughtOn && !wetYearOn)) return;
+    if (!this.groundMarks) {
+      this.groundMarks = new Uint8Array(mat.w * mat.h);
+      this.groundStates = new Uint8Array(states.length);
+      look.ground = this.groundMarks;
+    }
+    const w = this.map.width;
+    let any = false;
+    for (let i = 0; i < states.length; i++) {
+      if (states[i] === this.groundStates![i]) continue;
+      this.groundStates![i] = states[i]!;
+      this.groundTile(i);
+      this.store.commit(i % w, Math.floor(i / w));
+      any = true;
+    }
+    if (any) this.wholeImage = true;
+  }
+
+  /** Phase 7: the marks of tile i's pixels: cracks on open dry land in patches, puddles on open wet land. */
+  private groundTile(i: number): void {
+    const mat = this.mat!, marks = this.groundMarks!, st = this.groundStates![i]!;
+    const w = this.map.width, tx = i % w, ty = (i - tx) / w;
+    const puddly = st === 2 && puddlyTile(this.map, tx, ty);
+    for (let oy = 0; oy < TILE; oy++) {
+      const y = ty * TILE + oy;
+      for (let ox = 0; ox < TILE; ox++) {
+        const x = tx * TILE + ox, p = y * mat.w + x, role = mat.role[p]!;
+        let m: number = GroundMark.None;
+        // Open ground only (mockup: not paths, banks, rock or woods).
+        if (st !== 0 && (role === Role.Grass || role === Role.Desert || isGroundRole(role))) {
+          if (st === 1 && droughtOn && droughtPatch(x, y)) {
+            m = crackLine(x, y) ? GroundMark.CrackLine : hash01(x, y, DRC.salt + 4) < DRC.bodyLightShare ? GroundMark.CrackLight : GroundMark.CrackBody;
+          } else if (st === 2 && wetYearOn && puddly && puddleShape(x, y)) {
+            m = puddleShape(x - 1, y - 1) ? GroundMark.PuddleDark : GroundMark.PuddleLight;
+          }
+        }
+        marks[p] = m;
+      }
+    }
+  }
+
+  /** Phase 7: trampled ground round homes (1 per pixel), which snow only dusts; null for none. */
+  setTrample(mask: Uint8Array | null): void {
+    const look = this.look;
+    if (!look || !snowPathsOn) return;
+    look.trample = mask;
+    this.coverFull = true;
   }
 
   /**
@@ -1376,6 +1453,7 @@ export class TerrainLayer {
       const old = !fade && this.fadeWanted[i] === 1 && this.fades.size < GR.fadeMaxTiles ? store.read(tx, ty) : null;
       this.fadeWanted[i] = 0;
       drawTilePixels(this.map, i, data, imgW, this.time, this.extras);
+      if (this.groundMarks) this.groundTile(i);   // Phase 7: its roles may have changed
       this.dirty[i] = 0;
       if (fade) {
         // Redrawn while fading (a neighbour changed, water moved): the newest look is the new one.

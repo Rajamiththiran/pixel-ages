@@ -169,12 +169,12 @@ export function washSprite(c: CloudShape): HTMLCanvasElement {
 /** A cloud on the map now: its shape and whole-pixel position. */
 export interface CloudAt { readonly shape: CloudShape; readonly x: number; readonly y: number }
 
-/** A forced sky (dev): a cloudy sky, rain, a storm, or snowfall (flakes wherever it falls). */
-export type ForcedSky = 'clouds' | 'rain' | 'storm' | 'snowfall';
+/** A forced sky (dev): a cloudy sky, rain, a storm, snowfall (flakes wherever it falls), or a clear sky with dawn mist. */
+export type ForcedSky = 'clouds' | 'rain' | 'storm' | 'snowfall' | 'mist';
 
-/** Dev builds: `?weather=clouds|rain|storm|snowfall`. */
+/** Dev builds: `?weather=clouds|rain|storm|snowfall|mist`. */
 export function parseWeather(q: string | null): ForcedSky | null {
-  return q === 'clouds' || q === 'rain' || q === 'storm' || q === 'snowfall' ? q : null;
+  return q === 'clouds' || q === 'rain' || q === 'storm' || q === 'snowfall' || q === 'mist' ? q : null;
 }
 
 const weatherFromUrl = (): ForcedSky | null =>
@@ -206,8 +206,11 @@ export class Clouds {
     this.forced = forced;
   }
 
+  /** Phase 7: a storm blows now (weather over years, S9); a dev sky overrides it. */
+  stormy = false;
+
   /** A storm is on (the storm ramp, every slot, the gloom, rain everywhere). */
-  get storm(): boolean { return this.forced === 'storm'; }
+  get storm(): boolean { return this.forced === 'storm' || (this.forced === null && this.stormy); }
 
   /**
    * Moves the clouds to drift time `t` (seconds of wind); `rainAt(y)` is the shown rain (0–100) of
@@ -226,11 +229,13 @@ export class Clouds {
         const seed = k * 7919 + g;
         const y = (0.04 + 0.92 * hash01(k, g, CC.salt + 8)) * this.ph;
         this.ys[k] = y;
-        const rain = f === 'storm' || f === 'rain' || f === 'snowfall' ? 100 : f === 'clouds' ? (CC.dryRain + CC.wetRain) / 2 : rainAt(y);
+        // A storm (dev, or Phase 7's) fills every lane with big storm clouds as they come: none pops.
+        const storm = this.storm;
+        const rain = storm || f === 'rain' || f === 'snowfall' ? 100 : f === 'clouds' ? (CC.dryRain + CC.wetRain) / 2 : rainAt(y);
         const { share, size } = cloudiness(rain);
-        const show = f === 'storm' || hash01(k, g, CC.salt + 9) < share;
-        const rainy = f === 'storm' || f === 'rain' || f === 'snowfall' || (f === null && rain >= W.rainAbove && hash01(k, g, CC.salt + 10) < CC.rainyShare);
-        this.shapes[k] = show ? makeCloud(seed, f === 'storm' ? CC.stormSize : size, f === 'storm', rainy) : null;
+        const show = f !== 'mist' && (storm || hash01(k, g, CC.salt + 9) < share);
+        const rainy = storm || f === 'rain' || f === 'snowfall' || (f === null && rain >= W.rainAbove && hash01(k, g, CC.salt + 10) < CC.rainyShare);
+        this.shapes[k] = show ? makeCloud(seed, storm ? CC.stormSize : size, storm, rainy) : null;
       }
       const shape = this.shapes[k];
       if (!shape) continue;

@@ -769,6 +769,8 @@ function startRun(): void {
       renderer.updateFields(f.people, f.year, f.month, seasonShow(f) >= 1 && !f.timelapse);
       // Seasons Phase 2c: a planned Harsh winters event lays deeper snow (owner decision S5).
       renderer.harshWinter = runSetup0.events.some((e) => e.kind === 'harshWinters' && f.year >= e.startYear && f.year < e.startYear + e.lengthYears);
+      // Seasons Phase 7 (S9): storms come more often while a scheduled Wet period runs.
+      renderer.wetPeriod = runSetup0.events.some((e) => e.kind === 'wetPeriod' && f.year >= e.startYear && f.year < e.startYear + e.lengthYears);
       // Seasons Phase 4 (mockup D): the held look names its season, Summer, with a caption under the year.
       const held = heldOn && seasonLook(f) === 'held';
       const note = held && seasonNoteOn ? heldNote(f) : null;

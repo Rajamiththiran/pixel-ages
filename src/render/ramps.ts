@@ -97,6 +97,8 @@ export const SEASON_HEX = {
   cloudStorm: ['#3c4058', '#4c526a', '#626880', '#7c8296', '#969cae'],
   // Phase 6: falling rain (steps 0–1) and snowflakes (steps 3–4) (mockup E).
   precip: ['#5d9cc9', '#82c4d6', '#c4c2d3', '#dcdee6', '#eef2f4'],
+  // Phase 7: dawn mist (mockup E).
+  mist: ['#8c94aa', '#a8b0c0', '#c2c8d2', '#d8dce2', '#eceef0'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type SeasonRampName = keyof typeof SEASON_HEX;

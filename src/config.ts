@@ -1007,6 +1007,34 @@ export const CONFIG = {
         puddles: true, puddleScale: 1.5, puddleCellPx: [6, 4], puddleShare: 0.22, puddleRadiusPx: [2.4, 1.2], puddleFlatShare: 0.5,
         salt: 221,
       },
+      // Phase 7: weather over years (mockup E). Owner decisions S7–S10 were not answered: the plan's
+      // recommendations. Drought (`?off=drought`): open land of tiles far drier than painted (f8.weather.
+      // droughtBelow) cracks in clustered patches (noise of cells patchCellPx, weights patchWeights, above
+      // patchAbove): the season's sand at step 1 (bodyLightShare of it step 2), cracks at step 0, the mockup's
+      // pattern (lines every crackEvery px, crackShare of their stretches); water never shrinks (S7). Wet
+      // year (`?off=wetYear`): tiles far wetter (wetAbove) get the rain's puddles (Phase 6's ovals), opaque.
+      // Both replace the F8 translucent cracks and puddles. Spring meltwater is colour only (S8: the spring
+      // water ramp of Phase 1b).
+      drought: { on: true, patchCellPx: [12, 4], patchWeights: [0.6, 0.4], patchAbove: 0.58, bodyLightShare: 0.3, crackEvery: [7, 9], crackShare: [0.7, 0.6], salt: 231 },
+      wetYear: { on: true },
+      // Storms (S9: high shown rain, more likely in a scheduled Wet period): each year, with chance
+      // maxChance × (map's mean shown rain − rainFrom) ÷ (rainFull − rainFrom) (0 below rainFrom), plus
+      // wetBonus while a Wet period runs, a storm blows for `months` from a hashed month: storm clouds as they
+      // come, rain everywhere and the gloom.
+      storm: { on: true, rainFrom: 60, rainFull: 90, maxChance: 0.5, wetBonus: 0.35, months: 1, salt: 241 },
+      // Dawn mist (S10, recommendation c: dawns in spring and autumn, denser where the shown rain is high;
+      // under the people, as ground fog). The mockup's bands: density = max(lowWeight × low, near water) ×
+      // band; low = (1 − height ÷ lowBelow) × (1 − px to water ÷ lowReachPx) (low land only near water: a flat
+      // map is all low land), near = 1 − px to water ÷ reachPx, band = ½ + ½ sin(y ÷ bandPx + noise(cells
+      // bandNoiseCellPx) × bandNoiseAmp); × the dawn strength × (rainBase + rainGain × rain ÷ 100).
+      // Above thick a mist pixel (step 4 above thicker, else 3), from thin to thick dithered (Bayer × ditherGain).
+      // It thickens over the last riseShare of the night and clears over the dawn. `?off=mist`; dev `?weather=mist`.
+      mist: {
+        on: true, lowBelow: 0.45, lowWeight: 0.8, reachPx: 60, lowReachPx: 120, bandPx: 7, bandNoiseCellPx: [70, 26], bandNoiseAmp: 7,
+        thick: 0.62, thicker: 0.8, thin: 0.4, ditherGain: 3.2, rainBase: 0.75, rainGain: 0.5, riseShare: 0.4, levels: 16, salt: 251,
+      },
+      // Snow with paths showing (`?off=snowPaths`): trampled ground round homes is only dusted under snow.
+      snowPaths: { on: true },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,

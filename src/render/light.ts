@@ -27,6 +27,19 @@ export function darknessAt(phase: number): number {
   return 1 - (p - dayEnd - L.dusk - L.nightShare) / L.dusk;
 }
 
+/**
+ * Seasons Phase 7: how thick dawn mist is (0–1) at `phase` 0–1 of the day: it thickens over the last
+ * `riseShare` of the night and clears as the dawn steps fall (mockup E).
+ */
+export function mistAt(phase: number): number {
+  const p = ((phase % 1) + 1) % 1;
+  const nightStart = 1 - L.nightShare - L.dusk, dawnStart = 1 - L.dusk;
+  const rise = CONFIG.render.seasons.mist.riseShare * L.nightShare;
+  if (p >= dawnStart) return 1 - (p - dawnStart) / L.dusk;
+  if (p >= dawnStart - rise && p >= nightStart) return (p - (dawnStart - rise)) / rise;
+  return 0;
+}
+
 /** A soft round light, drawn additively. Built once per radius and colour. */
 const glows = new Map<string, HTMLCanvasElement>();
 export function glowSprite(radius: number, colour: string): HTMLCanvasElement {
@@ -56,12 +69,15 @@ export class DayNight {
    * runs on `holdCatchUp` times faster until full daylight (never a pop, never a race through an evening).
    */
   hold = false;
+  /** Seasons Phase 7: dawn mist's thickness now (0–1). */
+  mist = 0;
 
   /** Advances the day while the world plays. */
   update(dtMs: number, playing: boolean): void {
     if (playing && this.hold) {
       if (darknessAt(this.clockMs / L.dayMs) > 0) this.clockMs += dtMs * L.holdCatchUp;
     } else if (playing) this.clockMs += dtMs;
+    this.mist = this.enabled ? mistAt(this.clockMs / L.dayMs) : 0;
     this.darkness = this.enabled ? darknessAt(this.clockMs / L.dayMs) : 0;
   }
 

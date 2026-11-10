@@ -12,6 +12,7 @@ import { TintClass, tintClass } from './season';
 import { Clouds, bodySprite, cloudDitherOn, cloudsOn, rainFramesOn, washSprite, type CloudAt } from './clouds';
 import { nightMultiplyAdd } from './light';
 import { seasonRampRgb } from './ramps';
+import { droughtOn, wetYearOn } from './materials';
 
 const RC = CONFIG.render.seasons.rain;
 
@@ -47,6 +48,10 @@ export class Weather {
   private readonly ground: HTMLCanvasElement;  // cracks and puddles, full resolution
   private readonly groundImg: ImageData;
   private groundState: Uint8Array;             // per tile: 0 none, 1 cracks, 2 puddles
+  /** Phase 7: bumped when any tile's ground state changes (the terrain draws it into the land). */
+  groundVersion = 0;
+  /** Phase 7: the mean shown rain over the land (0–100), for the storm's chance. */
+  meanRain = 0;
   private groundTiles = 0;                     // tiles with cracks or puddles (nothing to draw at 0)
   private lastUpdate = -Infinity;
   private t = 0;                               // seconds of drift
@@ -136,9 +141,16 @@ export class Weather {
     this.updateGround();
   }
 
+  /** Phase 7: per tile, 0 none, 1 far drier than painted, 2 far wetter (open land only). */
+  get groundStates(): Uint8Array { return this.groundState; }
+
   private updateGround(): void {
     const m = this.map;
     const base = this.base;
+    let sum = 0, land = 0;
+    const r = this.rainSource ?? m.rain;
+    for (let i = 0; i < r.length; i++) if (m.ground[i] !== Ground.Water && m.wall[i] === WallType.None) { sum += r[i]!; land++; }
+    this.meanRain = land > 0 ? sum / land : 0;
     if (!base) return;
     const rain = this.rainSource ?? m.rain;
     const d = this.groundImg.data;
@@ -156,14 +168,15 @@ export class Weather {
       if (st === this.groundState[i]) continue;
       this.groundTiles += (st !== 0 ? 1 : 0) - (this.groundState[i] !== 0 ? 1 : 0);
       this.groundState[i] = st;
+      this.groundVersion++;
       const tx = i % m.width, ty = (i - tx) / m.width;
       for (let oy = 0; oy < TILE; oy++) {
         for (let ox = 0; ox < TILE; ox++) {
           const x = tx * TILE + ox, y = ty * TILE + oy;
           const o = (y * imgW + x) * 4;
           d[o + 3] = 0;
-          if (st === 1 && isCrack(x, y)) { d[o] = RGBS.darkWood[0]; d[o + 1] = RGBS.darkWood[1]; d[o + 2] = RGBS.darkWood[2]; d[o + 3] = 150; }
-          if (st === 2 && isPuddle(x, y)) { d[o] = RGBS.waterLight[0]; d[o + 1] = RGBS.waterLight[1]; d[o + 2] = RGBS.waterLight[2]; d[o + 3] = 200; }
+          if (st === 1 && !droughtOn && isCrack(x, y)) { d[o] = RGBS.darkWood[0]; d[o + 1] = RGBS.darkWood[1]; d[o + 2] = RGBS.darkWood[2]; d[o + 3] = 150; }
+          if (st === 2 && !wetYearOn && isPuddle(x, y)) { d[o] = RGBS.waterLight[0]; d[o + 1] = RGBS.waterLight[1]; d[o + 2] = RGBS.waterLight[2]; d[o + 3] = 200; }
         }
       }
       minX = Math.min(minX, tx); maxX = Math.max(maxX, tx); minY = Math.min(minY, ty); maxY = Math.max(maxY, ty);

@@ -79,6 +79,13 @@ export const frontOn: boolean = seasonRampsOn && SC.front.on && !styleOff('front
 export const heldOn: boolean = seasonRampsOn && SC.held.on && !styleOff('held');
 export const seasonNoteOn: boolean = heldOn && SC.held.note.on && !styleOff('seasonNote');
 
+/** Phase 7 switches: drought cracks and wet-year puddles in the land, dawn mist, storms, paths through snow. */
+export const droughtOn: boolean = seasonRampsOn && SC.drought.on && !styleOff('drought');
+export const wetYearOn: boolean = seasonRampsOn && SC.wetYear.on && !styleOff('wetYear');
+export const mistOn: boolean = seasonRampsOn && SC.mist.on && !styleOff('mist');
+export const stormOn: boolean = seasonRampsOn && SC.storm.on && !styleOff('storm');
+export const snowPathsOn: boolean = seasonRampsOn && SC.snow.on && !styleOff('snow') && SC.snowPaths.on && !styleOff('snowPaths');
+
 /** Phase 2d switch: dry grass on high ground, spring flowers, autumn leaf litter. */
 export const groundOn: boolean = seasonRampsOn && SC.ground.on && !styleOff('groundDetail');
 
@@ -432,6 +439,9 @@ export interface Look {
   cold: Uint8Array | null;
   // Phase 5: how many ramp steps each pixel drops under a cloud's shadow (or a storm's gloom), 0–3; null without clouds.
   shade: Uint8Array | null;
+  // Phase 7: what years-long weather left on each pixel (GroundMark), and trampled ground (1) that snow only dusts.
+  ground: Uint8Array | null;
+  trample: Uint8Array | null;
   ice: Uint8Array | null;
   snowLine: number;
   iceLine: number;
@@ -439,7 +449,7 @@ export interface Look {
 
 export function createLook(state: LookState = LookState.Painted): Look {
   const t = lookTables();
-  return { tables: t, span, shown: new Int8Array(KEYS).fill(state), cover: coverTables(), cold: null, ice: null, snowLine: 0, iceLine: 0, shade: null };
+  return { tables: t, span, shown: new Int8Array(KEYS).fill(state), cover: coverTables(), cold: null, ice: null, snowLine: 0, iceLine: 0, shade: null, ground: null, trample: null };
 }
 
 const SN = CONFIG.render.seasons.snow;
@@ -457,9 +467,11 @@ function coverAt(buf: MatBuf, look: Look, role: number, p: number, x: number, y:
   }
   const cold = look.cold;
   if (!cold || look.snowLine <= 0 || cold[p] === 255) return Cover.None;
-  if (look.snowLine >= 255) return Cover.Snow;   // a full line covers all the land, its dithered edge too
   const v = cold[p]! + (bayer(x, y) - 0.5) * EDGE;
-  return v < look.snowLine ? Cover.Snow : v < look.snowLine + DUST ? Cover.Dust : Cover.None;
+  // A full line covers all the land, its dithered edge too.
+  const k = look.snowLine >= 255 || v < look.snowLine ? Cover.Snow : v < look.snowLine + DUST ? Cover.Dust : Cover.None;
+  // Phase 7: people tread the snow round their homes down to a dusting (paths and roads are dusted anyway).
+  return k === Cover.Snow && look.trample && look.trample[p] !== 0 ? Cover.Dust : k;
 }
 
 /** Is pixel q water that is not frozen? */
@@ -513,12 +525,42 @@ function colourOf(buf: MatBuf, look: Look, tag: number, role: number, rank: numb
     role = altRole; tag = alt;
     c = t[role * look.span + tag]!;
   }
+  if (look.ground) { const gm = look.ground[p]!; if (gm !== 0) { const o = groundWords()[st * 8 + gm]!; if (o !== 0) c = o; } }
   if (st === LookState.Winter) {
     const k = coverAt(buf, look, role, p, x, y);
     if (k !== Cover.None) { const cc = look.cover[k]![role * look.span + tag]!; if (cc !== 0) c = cc; }
   }
   if (look.shade) { const d = look.shade[p]!; if (d !== 0) c = shadeWord(c, d); }
   return c;
+}
+
+// ---------- Phase 7: what years-long weather leaves on the land ----------
+
+/** A pixel's mark from a drought (cracked sand: body light, body, crack line) or a wet year (puddle: light, dark). */
+export const GroundMark = { None: 0, CrackLight: 1, CrackBody: 2, CrackLine: 3, PuddleLight: 4, PuddleDark: 5 } as const;
+
+let gwords: Uint32Array | null = null;
+
+/**
+ * The colour word of each mark in each state (index state × 8 + mark), 0 where it leaves the pixel as
+ * it is: drought cracks in the season's sand (the mockup's SAND[season]: body steps 2 and 1, crack
+ * lines step 0); wet-year puddles on the water ramp (steps 4 and 3). Not in setup (the painted map)
+ * nor in winter (the snow and the cold decide then).
+ */
+function groundWords(): Uint32Array {
+  if (gwords) return gwords;
+  gwords = new Uint32Array(STATES * 8);
+  for (let st = 0; st < STATES; st++) {
+    if (st === LookState.Painted || st === LookState.Winter) continue;
+    const season = st === LookState.Held ? 1 : st - 1;
+    const sand = SAND[season]!;
+    gwords[st * 8 + GroundMark.CrackLight] = packRgba(rampColour(sand, 2));
+    gwords[st * 8 + GroundMark.CrackBody] = packRgba(rampColour(sand, 1));
+    gwords[st * 8 + GroundMark.CrackLine] = packRgba(rampColour(sand, 0));
+    gwords[st * 8 + GroundMark.PuddleLight] = packRgba(tagRgb(Mat.Water * 8 + 4));
+    gwords[st * 8 + GroundMark.PuddleDark] = packRgba(tagRgb(Mat.Water * 8 + 3));
+  }
+  return gwords;
 }
 
 /** Phase 6: shade values past the ramp-step drops: a puddle there, on the water ramp's step 4 or 3. */
@@ -579,7 +621,7 @@ export function resolveTile(buf: MatBuf, look: Look, px: Uint32Array, tx: number
  * map: keys follow the front and the trees, not a lattice.
  */
 export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, dirty: Uint8Array): void {
-  const { tag, role, rank, moist, alt, altRole } = buf, n = buf.w * buf.h, span = look.span, shade = look.shade;
+  const { tag, role, rank, moist, alt, altRole } = buf, n = buf.w * buf.h, span = look.span, shade = look.shade, ground = look.ground, gw = groundWords();
   // The three moisture tables each key shows, picked once (a late-game map changes keys often:
   // a function call per pixel here was 9% of a frame, measured).
   const byRank: Uint32Array[] = [];
@@ -593,7 +635,8 @@ export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, dirty: Ui
     if (look.shown[r] === LookState.Winter) { const x = p % buf.w; px[p] = colourAt(buf, look, p, x, (p - x) / buf.w); continue; }
     const t = byRank[r * CLASSES + moist[p]!]!;
     const c = t[role[p]! * span + g]!;
-    const col = c !== ALT ? c : alt[p] === NO_TAG ? 0 : t[altRole[p]! * span + alt[p]!]!;
+    let col = c !== ALT ? c : alt[p] === NO_TAG ? 0 : t[altRole[p]! * span + alt[p]!]!;
+    if (ground) { const gm = ground[p]!; if (gm !== 0) { const o = gw[look.shown[r]! * 8 + gm]!; if (o !== 0) col = o; } }
     px[p] = shade && shade[p] !== 0 ? shadeWord(col, shade[p]!) : col;
   }
 }
