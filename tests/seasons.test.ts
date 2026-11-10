@@ -27,6 +27,8 @@ import { crownKind, evergreenChance } from '../src/render/terrain';
 import { MoistureField, tileWetness } from '../src/render/moisture';
 import { SeasonDriver, frontAt, parsePin, twoLooksAt } from '../src/render/seasonLook';
 import { DayNight } from '../src/render/light';
+import { HeldRain } from '../src/render/heldRain';
+import { yearLabel } from '../src/ui/runControls';
 import { ticksPerSecondAt } from '../src/shared/speeds';
 import { FrontFields, FrontKind } from '../src/render/seasonFront';
 import { nightOf } from '../src/render/light';
@@ -809,12 +811,22 @@ describe('seasons Phase 2b: fields through the year', () => {
     }
   });
 
-  it('the held look and setup show the fields gold', () => {
-    const m = plantMap(Plant.Farmland, 0);
-    for (const state of [LookState.Held, LookState.Painted]) {
-      const crop = new Set(RAMP_HEX[Mat.Crop]!);
-      expect(fieldsIn(m, new Uint8Array(m.width * m.height), state).hex.every((h) => crop.has(h))).toBe(true);
+  it('setup shows the fields gold; the held look half gold and half green (Phase 4, mockup D)', () => {
+    const m = plantMap(Plant.Farmland, 0, 30, 30);
+    const crop = new Set<string>(RAMP_HEX[Mat.Crop]!), green = new Set<string>(SEASON_HEX.cropGreen);
+    expect(fieldsIn(m, new Uint8Array(m.width * m.height), LookState.Painted).hex.every((h) => crop.has(h))).toBe(true);
+    const held = fieldsIn(m, new Uint8Array(m.width * m.height), LookState.Held).hex;
+    // Each tile is one stage: its centre row's ridge pixel (odd row) tells which.
+    let gold = 0, greens = 0;
+    for (let ty = 0; ty < m.height; ty++) {
+      for (let tx = 0; tx < m.width; tx++) {
+        const h = held[(ty * TILE + 3) * m.width * TILE + tx * TILE + 3]!;
+        if (green.has(h)) greens++; else if (crop.has(h)) gold++;
+      }
     }
+    expect(gold + greens).toBe(m.width * m.height);
+    expect(gold / (gold + greens)).toBeGreaterThan(0.3);
+    expect(gold / (gold + greens)).toBeLessThan(0.7);
   });
 });
 
@@ -1428,5 +1440,60 @@ describe('seasons Phase 3b: a speed for watching the seasons', () => {
     expect(dn.darkness).toBe(0);
     expect((steps * 1000) / 60).toBeLessThan(((L.nightShare + 2 * L.dusk) * L.dayMs) / L.holdCatchUp + 100);
     expect(biggest).toBeLessThan(0.1);                 // a gradual dawn, not a pop
+  });
+});
+
+// ---------- Phase 4: the fast-forward look ----------
+
+describe('seasons Phase 4: the held fast-forward look', () => {
+  /** Plays `years` of screen time at Fly (8 years a second, 60 frames a second) through a HeldRain; returns the lowest rain shown. */
+  function playFly(h: HeldRain, rain: (year: number) => number, years: number, t0: number): { low: number; t: number } {
+    const n = h.shown.length, now = new Uint8Array(n);
+    let low = 255, t = t0, ms = 0;
+    const perFrame = (ticksPerSecondAt(8) / 60);
+    while (t < t0 + years * 12) {
+      t += perFrame; ms += 1000 / 60;
+      now.fill(rain(Math.floor(t / 12)));
+      h.update(now, t, ms);
+      low = Math.min(low, h.shown[0]!);
+    }
+    return { low, t };
+  }
+
+  it('a single dry year at Fly does not reach the screen; a drought of three years does', () => {
+    const wet = 60, dry = 24;   // a strong drought: 40% of the usual rain
+    const one = new HeldRain(new Uint8Array(4).fill(wet));
+    const a = playFly(one, (y) => (y === 5 ? dry : wet), 12, 0);
+    expect(a.low).toBeGreaterThan(wet * CONFIG.render.f8.weather.droughtBelow + 4);   // no cracks, the grass about normal
+    const three = new HeldRain(new Uint8Array(4).fill(wet));
+    const b = playFly(three, (y) => (y >= 5 && y < 8 ? dry : wet), 12, 0);
+    expect(b.low).toBeLessThan(wet * CONFIG.render.f8.weather.droughtBelow);          // cracks and dry ramps show
+    expect(three.shown[0]).toBeGreaterThan(50);              // and the land recovers after it
+  });
+
+  it('the year note: drought or wet when enough of the land is, on the average', () => {
+    const base = new Uint8Array(10).fill(50);
+    const land = (): boolean => true;
+    const h = new HeldRain(base);
+    expect(h.note(base, land)).toBeNull();
+    h.snap(Array.from({ length: 10 }, (_, i) => (i < 3 ? 20 : 50)), 0);   // 30% far drier than painted
+    expect(h.note(base, land)).toBe('drought');
+    h.snap(Array.from({ length: 10 }, (_, i) => (i < 2 ? 20 : 50)), 0);   // 20%: below the share
+    expect(h.note(base, land)).toBeNull();
+    h.snap(new Uint8Array(10).fill(80), 0);
+    expect(h.note(base, land)).toBe('wet');
+  });
+
+  it('the held look keeps the grass moisture: summer ramps by class (mockup D: dry grass breaks through)', () => {
+    for (let s = 0; s < 5; s++) {
+      expect(rgbOf(lookColour(LookState.Held, Moist.Dry, Role.Grass, stepTag(Mat.Grass, s)))).toBe(SEASON_HEX.grassSuDry[s]);
+      expect(rgbOf(lookColour(LookState.Held, Moist.Lush, Role.Grass, stepTag(Mat.Grass, s)))).toBe(SEASON_HEX.grassSuLush[s]);
+      expect(rgbOf(lookColour(LookState.Held, Moist.Normal, Role.Grass, stepTag(Mat.Grass, s)))).toBe(RAMP_HEX[Mat.Grass]![s]);
+    }
+  });
+
+  it('the bar names the held season, summer', () => {
+    expect(yearLabel(1240, 10, true)).toBe('Year 1,240 · Summer');
+    expect(yearLabel(1240, 10)).toBe('Year 1,240 · Winter');
   });
 });

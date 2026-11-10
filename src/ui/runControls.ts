@@ -21,13 +21,22 @@ export interface BottomBarHandlers {
 
 export interface BottomBarApi {
   setFps(fps: number, frameMs?: number): void;
+  /**
+   * Seasons Phase 4 (mockup D): `held` (the fast-forward look) names the held season, Summer, in the
+   * year; `note` is the caption under it ("season held at Fly", "drought year"); `warn` shows it in
+   * the warning colour. An empty note hides the line.
+   */
+  setSeason(held: boolean, note: string, warn: boolean): void;
   setSetupMode(text: string): void;
   setRunMode(): void;
   update(f: Frame): void;
 }
 
-export const yearLabel = (year: number, month: number): string =>
-  `Year ${year.toLocaleString('en-US')} · ${SEASON_NAMES[CONFIG.seasonOfMonth[month]!]}`;
+export const yearLabel = (year: number, month: number, held = false): string =>
+  `Year ${year.toLocaleString('en-US')} · ${SEASON_NAMES[held ? HELD_SEASON : CONFIG.seasonOfMonth[month]!]}`;
+
+/** The season the held fast-forward look shows (mockup D: summer). */
+const HELD_SEASON = 1;
 
 /** Writes text only when it changed: at 8× the frame comes every tick, and a rewrite relays out the bar. */
 const setText = (el: HTMLElement, t: string): void => { if (el.textContent !== t) el.textContent = t; };
@@ -44,6 +53,10 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
   const speedBtns = SPEEDS.map((v) => h('button', { text: speedRow(v).label, title: `${speedTitle(v)} (${speedKey(v)})`, 'aria-pressed': 'false' }));
   const step = h('button', { text: 'Step', title: 'Advance one month (.)' });
   const yearbox = h('span', { class: 'yearbox' });
+  // Seasons Phase 4: the caption under the year (mockup D), hidden while empty.
+  const yearnote = h('span', { class: 'yearnote' });
+  yearnote.style.display = 'none';
+  let heldSeason = false;
   const speedLabel = h('span', { class: trayOn ? 'mode rate' : 'mode' });
   const slider = h('input', { type: 'range', min: 0, max: 0, value: 0, step: 1, title: 'Timeline: drag to view any past year' });
   const back = h('button', { class: 'primary', text: 'Back to now' });
@@ -75,7 +88,7 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
     h('div', { class: 'bb-speed', role: 'group', 'aria-label': 'Speed' }, ...speedBtns),
     step,
     h('div', { class: 'sep' }),
-    yearbox,
+    h('div', { class: 'yearwrap' }, yearbox, yearnote),
     speedLabel,
     h('div', { class: 'sep' }),
     h('div', { class: 'grow' }, trayOn ? h('div', { class: 'bb-track' }, fill, slider) : slider),
@@ -103,6 +116,7 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
     slider.value = '0';
     setFill();
     yearbox.textContent = yearLabel(0, 0);
+    setSeason(false, '', false);
     speedLabel.textContent = '';
     back.style.display = 'none';
     mode.textContent = text;
@@ -126,7 +140,7 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
     });
     step.disabled = f.playing;
     if (!dragging) {
-      setText(yearbox, yearLabel(f.year, f.month));
+      setText(yearbox, yearLabel(f.year, f.month, heldSeason));
       slider.max = String(f.liveYear);
       slider.value = String(f.year);
       setFill();
@@ -139,8 +153,17 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
     back.style.display = f.isPast ? '' : 'none';
   }
 
+  function setSeason(held: boolean, note: string, warn: boolean): void {
+    heldSeason = held;
+    setText(yearnote, note);
+    yearnote.style.display = note ? '' : 'none';
+    yearnote.classList.toggle('warn', warn);
+    if (last && !dragging) setText(yearbox, yearLabel(last.year, last.month, held));
+  }
+
   setSetupMode('');
   return {
+    setSeason,
     // F8: the frame's drawing time beside the fps (the 60 fps budget is 16.7 ms).
     setFps: (v, ms) => { fps.textContent = ms === undefined ? `${v} fps` : `${v} fps · ${ms.toFixed(1)} ms`; fps.title = 'Frames per second and the average time one frame takes to draw'; },
     setSetupMode, setRunMode, update,

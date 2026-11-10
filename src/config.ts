@@ -864,6 +864,7 @@ export const CONFIG = {
         // springSprouts (else bare furrows), summer gold below summerGold (else green), autumn gold below
         // autumnGold (else stubble), winter stubble below winterStubble (else bare).
         springSprouts: 0.55, summerGold: 0.3, autumnGold: 0.4, winterStubble: 0.4,
+        heldGold: 0.5,           // Phase 4: in the held fast-forward look, blocks below this are gold, the rest green (mockup D: half and half)
         sproutShare: 0.8,        // ridge pixels in even columns that carry a sprout (mockup)
         // The harvest (render only, from the simulation's farmers): each autumn month a farmland tile
         // with a Farm worker on it or next to it is cut this much further (1 = done), reset each spring;
@@ -946,6 +947,21 @@ export const CONFIG = {
         edgeShare: 0.035,
         yearJitter: 0.12, yearJitterCellPx: 160,
         salt: 191,
+      },
+      // Phase 4: the held fast-forward look (mockup D) at Trot, Ride, Fly and in the time-lapse: summer
+      // ramps, deciduous green, fields half green and half gold (fields.heldGold), snow on the peaks
+      // only, no rain or snow falling (the clouds stay: owner decision S21, the plan's recommendation).
+      // Only years-long weather breaks it: the grass moisture, drought cracks and puddles follow each
+      // tile's rain averaged over rainYears of screen time (at Fly a year lasts 125 ms and would only
+      // flash), stepped at most every stepMs. Off: `?off=held` (the held look of Phase 1b).
+      // `note` (`?off=seasonNote`): the caption under the year: "season held at Fly", or "drought year"
+      // / "wet year" (owner decision S11, the plan's recommendation) while a scheduled Drought or Wet
+      // period of at least minEventYears runs, or landShare of the land is that dry or wet on the
+      // average (rain ÷ painted rain below f8.weather.droughtBelow, above wetAbove).
+      held: {
+        on: true,
+        rainYears: 2, stepMs: 100,
+        note: { on: true, landShare: 0.25, minEventYears: 3 },
       },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"

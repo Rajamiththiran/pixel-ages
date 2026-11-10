@@ -13,7 +13,7 @@ import {
   Mat, rampTag, rampsOn, seasonRampRgb, styleOff, tagCount, tagRgb, tagValid, type SeasonRampName,
 } from './ramps';
 import { RGBS, type RGB } from './palette';
-import { FIELD_CLASSES, Stage, stageOf } from './fields';
+import { FIELD_CLASSES, Stage, heldStageOf, stageOf } from './fields';
 
 const TILE = CONFIG.map.tilePx;
 const TILE_PX = TILE * TILE;
@@ -71,6 +71,13 @@ export const fieldsOn: boolean = seasonRampsOn && SC.fields.on && !styleOff('fie
 
 /** Phase 3a switch: a season arrives as the seeded front (seasonFront.ts), not the plain Bayer dissolve. */
 export const frontOn: boolean = seasonRampsOn && SC.front.on && !styleOff('front');
+
+/**
+ * Phase 4 switches: the held fast-forward look of mockup D (fields half green and half gold, the grass
+ * moisture following years-long rain, no falling rain or snow), and the caption under the year.
+ */
+export const heldOn: boolean = seasonRampsOn && SC.held.on && !styleOff('held');
+export const seasonNoteOn: boolean = heldOn && SC.held.note.on && !styleOff('seasonNote');
 
 /** Phase 2d switch: dry grass on high ground, spring flowers, autumn leaf litter. */
 export const groundOn: boolean = seasonRampsOn && SC.ground.on && !styleOff('groundDetail');
@@ -275,9 +282,10 @@ export function lookColour(state: LookState, cls: number, role: number, tag: num
   if (isGroundRole(role)) return groundColour(state, role, tag);
   if (state === LookState.Painted) return tagRgb(tag);
   const held = state === LookState.Held;
-  // The held fast-forward look (seasons brief D): summer, normal moisture, gold fields.
+  // The held fast-forward look (seasons brief D): summer, gold fields, normal moisture; Phase 4: the
+  // moisture of years-long rain, and fields half green and half gold.
   const season = held ? 1 : state - 1;
-  const c = held ? Moist.Normal : cls;
+  const c = held && !heldOn ? Moist.Normal : cls;
   const winter = season === 3;
   // Phase 2a: trees and bushes.
   if (isDeciduous(role) && g === Mat.Forest && winter) return ALT;
@@ -289,6 +297,7 @@ export function lookColour(state: LookState, cls: number, role: number, tag: num
   // Phase 2b: fields through their stages; a harvested part is stubble in autumn, its sheaves gold.
   const field = fieldRoleParts(role);
   if (field && g === Mat.Crop) {
+    if (held && heldOn) return stageColour(field.sheaf ? Stage.Gold : heldStageOf(field.cls), field.pos, step);
     if (held) return tagRgb(tag);
     const stage = field.sheaf ? (season === 2 ? Stage.Gold : stageOf(field.cls, season))
       : field.cut && season === 2 ? Stage.Stubble : stageOf(field.cls, season);

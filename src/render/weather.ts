@@ -54,6 +54,8 @@ export class Weather {
   private readonly kind = new Uint8Array(W.maxDrops);
   private count = 0;
   enabled = true;
+  /** Seasons Phase 4: rain and snow fall (off in the held fast-forward look; the clouds still drift). */
+  falling = true;
   /** Share of visible cells with rain falling now, and with snow (for sound). */
   rainOnScreen = 0;
   snowOnScreen = 0;
@@ -178,7 +180,7 @@ export class Weather {
         const c = cy * this.cw + cx;
         const rain = this.cellRain[c]! * 100;
         const dens = this.cloud[c]!;
-        if (dens <= 0 || rain < W.rainAbove) continue;
+        if (dens <= 0 || rain < W.rainAbove || !this.falling) continue;
         const snow = winter > 0.5 && this.cellCold[c] === 1;
         if (snow) snowy++; else rainy++;
         // Expected drops this frame; the fraction is drawn by chance (visual only).

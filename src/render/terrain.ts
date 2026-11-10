@@ -12,7 +12,7 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  FieldPos, GroundRole, KEYS, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
+  FieldPos, GroundRole, KEYS, heldOn, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
 import { MoistureField, cellNoise } from './moisture';
 import { WinterField } from './winter';
@@ -1130,10 +1130,11 @@ export class TerrainLayer {
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     };
-    // Phase 1b: grass moisture follows the rain (only while a season shows; painted and held ignore it),
-    // and ranks that show a new state are recoloured, one pixel in 16 per rank, without redrawing.
+    // Phase 1b: grass moisture follows the rain (only while a season shows; painted ignores it, and held
+    // until Phase 4, whose held look follows years-long rain),
+    // and keys that show a new state are recoloured without redrawing.
     if (this.look && this.mat && this.moisture) {
-      if (this.moistureDirty && this.rain && this.look.shown.some((s) => s !== LookState.Painted && s !== LookState.Held)) {
+      if (this.moistureDirty && this.rain && this.look.shown.some((s) => s !== LookState.Painted && (heldOn || s !== LookState.Held))) {
         this.moistureDirty = false;
         // Colours only (no shadow changes): recolour in place, then the whole image goes up.
         this.moisture.update(this.map, this.rain, this.mat, (i) => { store.commit(i % w, Math.floor(i / w)); this.wholeImage = true; });

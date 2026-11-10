@@ -23,10 +23,12 @@ import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
 import { SeasonDriver } from './seasonLook';
 import type { SeasonMode } from './speedLook';
-import { fieldsOn, iceOn, roofsOn, seasonRampsOn } from './materials';
+import { fieldsOn, heldOn, iceOn, roofsOn, seasonRampsOn } from './materials';
 import { FieldState } from './fields';
 import { ScreenClock } from './screenClock';
 import { RainEase } from './rainEase';
+import { HeldRain } from './heldRain';
+import { isWaterTile } from './terrainDetail';
 import { DayNight, NightPass, nightLevel, nightOn } from './light';
 import { Weather } from './weather';
 import { Effects, Particle, type View } from './effects';
@@ -106,6 +108,12 @@ export class Renderer {
   readonly clock = new ScreenClock();
   /** Speeds plan Phase 5: the rain the screen draws, sliding over the year (run mode only). */
   private rainEase: RainEase | null = null;
+  // Seasons Phase 4: while the look is held, the land and the weather's cracks and puddles draw rain
+  // averaged over years (heldRain.ts), not the year's. `climateNote`: the year's caption (S11).
+  private heldRain: HeldRain | null = null;
+  private heldActive = false;
+  private baseRain: Uint8Array | null = null;
+  climateNote: 'drought' | 'wet' | null = null;
   private gradualOn = false;
 
   /** The rain the screen draws in a run (dev checks), or null. */
@@ -186,6 +194,7 @@ export class Renderer {
       this.weather.rainSource = this.rainEase.shown;
     }
     this.terrain.setRain(this.rainEase?.shown ?? map.rain);
+    if (this.heldActive && this.heldRain) { this.heldRain.snap(map.rain, this.clock.t); this.pushRain(); }
     this.rain.invalidate();
     this.rebuildAnimals();
   }
@@ -216,6 +225,11 @@ export class Renderer {
     this.season.enabled = running;
     this.animals.lively = running;
     this.rainEase = running ? new RainEase(this.view.map.rain) : null;
+    this.heldRain = running && heldOn ? new HeldRain(this.view.map.rain) : null;
+    this.heldActive = false;
+    this.baseRain = base ? base.rain : null;
+    this.climateNote = null;
+    this.weather.falling = true;
     this.weather.rainSource = this.rainEase?.shown ?? null;
     this.weather.setMap(this.view.map, base ? base.rain : null);
     this.effects.clear();
@@ -243,6 +257,15 @@ export class Renderer {
     this.seasonLook = look;
     this.season.show = seasonRampsOn ? (look === 'held' ? 0 : 1) : seasonShow;
     this.light.hold = holdDay;
+    // Phase 4: entering or leaving the held look switches the rain the land and the weather draw.
+    const held = look === 'held' && this.heldRain !== null;
+    if (held !== this.heldActive) {
+      this.heldActive = held;
+      this.weather.falling = !held;
+      if (held) this.heldRain!.snap(this.rainEase?.shown ?? this.view.map.rain, year * CONFIG.time.ticksPerYear + month);
+      else this.climateNote = null;
+      this.pushRain();
+    }
     this.clock.sync(year * CONFIG.time.ticksPerYear + month, monthsPerSecond, jump);
     if (jump) {
       this.season.setMonth(this.clock.monthOfYear, true);
@@ -278,6 +301,12 @@ export class Renderer {
     if (this.rainEase) {
       const snap = jump || !this.gradualOn;
       this.rainEase.set(this.view.map.rain, this.clock.t, snap);
+      if (this.heldActive && this.heldRain) {
+        // Phase 4: the held look follows its years-long average (a jump in time starts it afresh).
+        if (jump) { this.heldRain.snap(this.view.map.rain, this.clock.t); this.pushRain(); }
+        this.rain.invalidate();
+        return;
+      }
       this.weather.rainSource = this.rainEase.shown;
       this.terrain.setRain(this.rainEase.shown);
       if (!snap) return;   // the slide redraws as it goes (drawFrame)
@@ -286,6 +315,14 @@ export class Renderer {
     this.weather.rainChanged();
   }
   invalidateElevation(): void { this.elevation.invalidate(); }
+
+  /** Phase 4: gives the land and the weather the rain they draw now (the held average, or the year's). */
+  private pushRain(): void {
+    const rain = this.heldActive && this.heldRain ? this.heldRain.shown : this.rainEase?.shown ?? this.view.map.rain;
+    this.weather.rainSource = this.rainEase || this.heldActive ? rain : null;
+    this.weather.rainChanged();
+    this.terrain.setRain(rain);
+  }
   setHeat(kind: HeatLayer, data: Uint8Array): void { this.heat.set(kind, data, this.view.map.width, this.view.map.height); }
   setTerritory(data: Uint8Array): void { this.territoryFill.set(data, this.view.map.width, this.view.map.height); }
 
@@ -385,7 +422,15 @@ export class Renderer {
     this.terrain.animate(now);
     if (v.running) {
       this.clock.advance(dt);
-      if (this.rainEase?.update(this.clock.t, now)) { this.rain.invalidate(); this.weather.rainChanged(); this.terrain.setRain(this.rainEase.shown); }
+      if (this.rainEase?.update(this.clock.t, now)) {
+        this.rain.invalidate();
+        if (!this.heldActive) { this.weather.rainChanged(); this.terrain.setRain(this.rainEase.shown); }
+      }
+      if (this.heldActive && this.heldRain?.update(this.view.map.rain, this.clock.t, now)) {
+        this.pushRain();
+        const m = this.view.map;
+        this.climateNote = this.baseRain ? this.heldRain.note(this.baseRain, (i) => !isWaterTile(m, i)) : null;
+      }
       this.season.setMonth(this.clock.monthOfYear);
       this.season.update(dt);
       this.light.update(dt, v.playing);

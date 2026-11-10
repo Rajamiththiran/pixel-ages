@@ -19,7 +19,7 @@ export type Stage = (typeof Stage)[keyof typeof Stage];
 
 // A block's hash falls between these (sorted) thresholds; every hash in one interval gives the same
 // stage in every season, so the interval is the block's field class (at most 5).
-const BOUNDS = [...new Set([FC.springSprouts, FC.summerGold, FC.autumnGold, FC.winterStubble])].sort((a, b) => a - b);
+const BOUNDS = [...new Set([FC.springSprouts, FC.summerGold, FC.autumnGold, FC.winterStubble, FC.heldGold])].sort((a, b) => a - b);
 /** How many field classes there are. */
 export const FIELD_CLASSES = BOUNDS.length + 1;
 
@@ -40,6 +40,12 @@ export function stageOf(cls: number, season: number): Stage {
     case 2: return h < FC.autumnGold ? Stage.Gold : Stage.Stubble;
     default: return h < FC.winterStubble ? Stage.Stubble : Stage.Bare;
   }
+}
+
+/** Phase 4: a field's stage in the held fast-forward look: gold or green, half and half (mockup D). */
+export function heldStageOf(cls: number): Stage {
+  const h = cls === 0 ? 0 : BOUNDS[cls - 1]!;
+  return h < FC.heldGold ? Stage.Gold : Stage.Green;
 }
 
 /** How many of a tile's pixel columns are cut in row `ly`, at harvest progress `cut` (0–255). */

@@ -12,7 +12,8 @@ import {
 } from './shared/ids';
 import type { FounderGroup, Intervention, LogEntry, MapData, PlannedEvent, RunSetup, YearStats } from './shared/types';
 import type { Frame, GroupView, HeatLayer, Speed } from './shared/protocol';
-import { DEFAULT_SPEED, speedForKey, stepSpeed } from './shared/speeds';
+import { DEFAULT_SPEED, speedForKey, speedRow, stepSpeed } from './shared/speeds';
+import { heldOn, seasonNoteOn } from './render/materials';
 import { ERA_NAMES } from './shared/discoveries';
 import { logCsv, statsCsv } from './shared/csv';
 import type { MapLine } from './render/overlays';
@@ -211,6 +212,21 @@ function setMoving(id: number | null): void {
   const g = setup.founders.find((f) => f.id === id);
   setBanner(g ? `Click the map to move ${g.name} (Esc to cancel)` : null);
   syncView();
+}
+
+/**
+ * Seasons Phase 4: the caption under the year while the look is held (owner decision S11): "drought
+ * year" / "wet year" while a scheduled Drought or Wet period of some years runs or enough of the land
+ * is that dry or wet on the years-long average; otherwise which speed holds the season.
+ */
+function heldNote(f: { year: number; speed: number; timelapse: boolean }): { text: string; warn: boolean } {
+  const min = CONFIG.render.seasons.held.note.minEventYears;
+  const ev = runSetup?.events.find((e) => (e.kind === 'drought' || e.kind === 'wetPeriod') && e.lengthYears >= min
+    && f.year >= e.startYear && f.year < e.startYear + e.lengthYears);
+  const climate = ev ? (ev.kind === 'drought' ? 'drought' : 'wet') : renderer.climateNote;
+  if (climate === 'drought') return { text: 'drought year', warn: true };
+  if (climate === 'wet') return { text: 'wet year', warn: false };
+  return { text: f.timelapse ? 'season held in the time-lapse' : `season held at ${speedRow(f.speed).label}`, warn: false };
 }
 
 // ---------- maps / files ----------
@@ -753,6 +769,10 @@ function startRun(): void {
       renderer.updateFields(f.people, f.year, f.month, seasonShow(f) >= 1 && !f.timelapse);
       // Seasons Phase 2c: a planned Harsh winters event lays deeper snow (owner decision S5).
       renderer.harshWinter = runSetup0.events.some((e) => e.kind === 'harshWinters' && f.year >= e.startYear && f.year < e.startYear + e.lengthYears);
+      // Seasons Phase 4 (mockup D): the held look names its season, Summer, with a caption under the year.
+      const held = heldOn && seasonLook(f) === 'held';
+      const note = held && seasonNoteOn ? heldNote(f) : null;
+      bottom.setSeason(held, note?.text ?? '', note?.warn ?? false);
       renderer.setGroups(f.groups, f.relations, walkerSprite);
       view.runGroups = f.groups.map((g) => ({
         name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup,
