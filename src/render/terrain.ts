@@ -12,12 +12,12 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  FieldPos, GroundRole, KEYS, heldOn, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, colourAt, type Look as SeasonLook, type MatBuf, type MatTile,
+  FieldPos, GroundRole, KEYS, heldOn, PUDDLE_DARK, PUDDLE_LIGHT, isGroundRole, isWaterRole, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, colourAt, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
 import { MoistureField, cellNoise } from './moisture';
 import { WinterField } from './winter';
 import { FrontFields } from './seasonFront';
-import { Mask, cloudDitherOn, type CloudAt } from './clouds';
+import { Mask, cloudDitherOn, puddlesOn, wetGroundOn, type CloudAt } from './clouds';
 import { fieldClass, rowCut } from './fields';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
 import { buildCrowns, canopyDistance, crownColourAt, crownPixelAt, inTreeShadow, type CrownPixel } from './crowns';
@@ -347,6 +347,22 @@ function crownRole(map: MapData, c: CrownPixel, px: number, py: number): Role {
 
 const FC = CONFIG.render.seasons.fields;
 const CC = CONFIG.render.seasons.clouds;
+const RNC = CONFIG.render.seasons.rain;
+
+/** Phase 6: a puddle oval at (x, y) (mockup: a few small ovals per cell of puddleCellPx). */
+function puddleShape(x: number, y: number): boolean {
+  const [cw, ch] = RNC.puddleCellPx, [rx, ry] = RNC.puddleRadiusPx;
+  const cx = Math.floor(x / cw!), cy = Math.floor(y / ch!);
+  if (hash01(cx, cy, RNC.salt + 6) >= RNC.puddleShare) return false;
+  const dx = (x - (cx * cw! + (cw! - 1) / 2)) / rx!, dy = (y - (cy * ch! + (ch! - 1) / 2)) / ry!;
+  return dx * dx + dy * dy <= 1;
+}
+
+/** Phase 6: ground a puddle can stand on (open ground, paths, fields; not woods, bushes, rock or fire). */
+function puddleRole(role: number): boolean {
+  return role === Role.Grass || role === Role.Desert || role === Role.Mark || role === Role.Bank || role === Role.Beach
+    || fieldRoleParts(role) !== null || isGroundRole(role);
+}
 // Phase 2c: how far past the snow line a moved line can change a pixel (dusting, dithered edge), 0–255.
 const SNOW_EDGE = CONFIG.render.seasons.snow.edgeShare * 255;
 const SNOW_DUST = CONFIG.render.seasons.snow.dustShare * 255;
@@ -861,6 +877,8 @@ export class TerrainLayer {
   private shade: Uint8Array | null = null;
   private stamped: CloudAt[] = [];
   private gloom = false;
+  private raining = true;          // Phase 6: rain clouds wet the ground (off at the held speeds)
+  private cloudsStale = false;     // Phase 6: winter came or went: the next move recomputes whole cloud boxes
   private rects: number[] = [];                       // x, y, w, h of each rectangle to upload
   private readonly rectImgs = new Map<number, ImageData>();   // small images for those uploads, by size
 
@@ -966,6 +984,7 @@ export class TerrainLayer {
     if (!painted && (k !== this.keysKind || y !== this.keysYear)) this.rekey(k, y);
     for (let r = 0; r < look.shown.length; r++) {
       if (look.shown[r] === states[r]) continue;
+      if (look.shown[r] === LookState.Winter || states[r] === LookState.Winter) this.cloudsStale = true;
       look.shown[r] = states[r]!;
       this.keysDirty[r] = 1;
       this.anyKeysDirty = true;
@@ -1027,10 +1046,10 @@ export class TerrainLayer {
    * steps on a world-fixed checker; only pixels whose drop changed are recoloured, so a ground pixel
    * changes only as a shadow's edge passes it.
    */
-  setClouds(clouds: readonly CloudAt[], gloom: boolean): void {
+  setClouds(clouds: readonly CloudAt[], gloom: boolean, rain = true): void {
     const mat = this.mat, look = this.look;
     if (!mat || !look || !cloudDitherOn) return;
-    const same = gloom === this.gloom && clouds.length === this.stamped.length
+    const same = gloom === this.gloom && rain === this.raining && clouds.length === this.stamped.length
       && clouds.every((c, k) => c.shape === this.stamped[k]!.shape && c.x === this.stamped[k]!.x && c.y === this.stamped[k]!.y);
     if (same) return;
     const w = mat.w, h = mat.h;
@@ -1043,49 +1062,97 @@ export class TerrainLayer {
     };
     const boxes = clouds.map(box);
     const g = gloom ? 1 : 0;
+    // Winter came or went somewhere: rain's wet ground and puddles inside a zone may change, not only at its edges.
+    const full = this.cloudsStale;
+    this.cloudsStale = false;
+    const map = this.map, mw = map.width;
+    // Phase 6: puddles stand in hollows (a tile lower than a neighbour), and on flat land in some tiles.
+    const puddly = (tx: number, ty: number): boolean => {
+      const e = map.elevation[ty * mw + tx]!;
+      let higher = false, lower = false;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = tx + dx, ny = ty + dy;
+        if (nx < 0 || ny < 0 || nx >= mw || ny >= map.height) continue;
+        const f = map.elevation[ny * mw + nx]!;
+        if (f > e) higher = true; else if (f < e) lower = true;
+      }
+      return higher || (!lower && hash01(tx, ty, RNC.salt + 5) < RNC.puddleFlatShare);
+    };
+    const nearOf = (x0: number, y0: number, x1: number, y1: number): number[] => {
+      const near: number[] = [];
+      boxes.forEach((b, k) => { if (b[0] < x1 && b[2] > x0 && b[1] < y1 && b[3] > y0) near.push(k); });
+      return near;
+    };
+    /** Recomputes pixel (x, y)'s shade from the clouds in `near`; true if it changed (and is recoloured). */
+    const one = (x: number, y: number, near: number[]): boolean => {
+      const odd = (x + y) & 1;
+      let d = 0, wet = 0, pud = 0;
+      for (let j = 0; j < near.length; j++) {
+        const k = near[j]!, b = boxes[k]!;
+        if (x < b[0] || y < b[1] || x >= b[2] || y >= b[3]) continue;
+        const s = clouds[k]!.shape, m = s.mask[(y - b[1]) * s.w + (x - b[0])]!;
+        const v = m & Mask.Core ? 1 + odd : m & Mask.In ? odd : 0;
+        if (v > d) d = v;
+        if (rain && s.rainy) { if (m & Mask.Wet) wet = 1; if (m & Mask.Puddle) pud = 1; }
+      }
+      const p = y * w + x;
+      let v = Math.min(3, d + g * odd);
+      if (wet || pud) {
+        // Phase 6 (mockup E): rain wets open land a step darker, and puddles stand; not where winter shows.
+        const role = mat.role[p]!;
+        if (!isWaterRole(role) && look.shown[mat.rank[p]!] !== LookState.Winter) {
+          if (pud && puddlesOn && puddleRole(role) && puddleShape(x, y) && puddly(Math.floor(x / TILE), Math.floor(y / TILE))) {
+            v = puddleShape(x - 1, y - 1) ? PUDDLE_DARK : PUDDLE_LIGHT;
+          } else if (wet && wetGroundOn) v = Math.min(3, v + 1);
+        }
+      }
+      if (v === shade[p]) return false;
+      shade[p] = v;
+      if (mat.tag[p] !== NO_TAG) this.px[p] = colourAt(mat, look, p, x, y);
+      return true;
+    };
     /** Recomputes the shade in a rectangle; true if a pixel changed. */
     const redo = (x0: number, y0: number, x1: number, y1: number): boolean => {
       x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(w, x1); y1 = Math.min(h, y1);
       if (x0 >= x1 || y0 >= y1) return false;
-      const near: number[] = [];
-      boxes.forEach((b, k) => { if (b[0] < x1 && b[2] > x0 && b[1] < y1 && b[3] > y0) near.push(k); });
+      const near = nearOf(x0, y0, x1, y1);
       let any = false;
-      for (let y = y0; y < y1; y++) {
-        for (let x = x0; x < x1; x++) {
-          const odd = (x + y) & 1;
-          let d = 0;
-          for (let j = 0; j < near.length; j++) {
-            const k = near[j]!, b = boxes[k]!;
-            if (x < b[0] || y < b[1] || x >= b[2] || y >= b[3]) continue;
-            const s = clouds[k]!.shape, m = s.mask[(y - b[1]) * s.w + (x - b[0])];
-            const v = m === Mask.Core ? 1 + odd : m === Mask.Rim ? odd : 0;
-            if (v > d) d = v;
-          }
-          const v = Math.min(3, d + g * odd), p = y * w + x;
-          if (v === shade[p]) continue;
-          shade[p] = v;
-          any = true;
-          if (mat.tag[p] !== NO_TAG) this.px[p] = colourAt(mat, look, p, x, y);
-        }
-      }
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (one(x, y, near)) any = true;
       return any;
     };
-    if (gloom !== this.gloom) {
-      // The storm came or went: every pixel.
+    if (gloom !== this.gloom || rain !== this.raining) {
+      // The storm came or went (or rain stopped wetting): every pixel.
       this.gloom = gloom;
       redo(0, 0, w, h);
       this.wholeImage = true;
     } else {
       // Each cloud once, over where it was and where it is now (clouds keep their shape while crossing);
       // a cloud that came or went, over its one box. Only those boxes are uploaded.
-      const before = new Map(this.stamped.map((c) => [c.shape, box(c)] as const));
+      const before = new Map(this.stamped.map((c) => [c.shape, c] as const));
       const todo: [number, number, number, number][] = [];
       clouds.forEach((c, k) => {
-        const b = boxes[k]!, o = before.get(c.shape);
+        const b = boxes[k]!, was = before.get(c.shape);
         before.delete(c.shape);
-        todo.push(o ? [Math.min(b[0], o[0]), Math.min(b[1], o[1]), Math.max(b[2], o[2]), Math.max(b[3], o[3])] : b);
+        if (!was) { todo.push(b); return; }
+        if (was.x === c.x && was.y === c.y) return;
+        const o = box(was);
+        const u: [number, number, number, number] = [Math.min(b[0], o[0]), Math.min(b[1], o[1]), Math.max(b[2], o[2]), Math.max(b[3], o[3])];
+        if (full || c.x !== was.x + 1 || c.y !== was.y) { todo.push(u); return; }
+        // One pixel with the wind: inside the shape nothing changes (the checker is fixed to the world),
+        // so only its outlines can: a pixel whose mask value differs from the one to its right (the cloud
+        // moved that one onto it). A whole box each move was ~20% of a frame with rain's wider zones (measured).
+        const near = nearOf(u[0], u[1], u[2], u[3]), e = c.shape.edges;
+        let any = false;
+        for (let j = 0; j < e.length; j += 2) {
+          const x = b[0] + e[j]! - 1, y = b[1] + e[j + 1]!;   // the pixel left of each mask edge: it saw the edge's right side before
+          if (x >= 0 && y >= 0 && x < w && y < h && one(x, y, near)) any = true;
+        }
+        if (any) {
+          const x0 = Math.max(0, u[0]), y0 = Math.max(0, u[1]);
+          this.rects.push(x0, y0, Math.min(w, u[2]) - x0, Math.min(h, u[3]) - y0);
+        }
       });
-      for (const o of before.values()) todo.push(o);
+      for (const o of before.values()) todo.push(box(o));
       for (const r of todo) {
         if (!redo(r[0], r[1], r[2], r[3])) continue;
         const x0 = Math.max(0, r[0]), y0 = Math.max(0, r[1]);
@@ -1093,6 +1160,7 @@ export class TerrainLayer {
       }
     }
     this.stamped = clouds.slice();
+    this.raining = rain;
   }
 
   /**
@@ -1113,6 +1181,18 @@ export class TerrainLayer {
     }
     this.rects.length = 0;
     if (this.rectImgs.size > 64) this.rectImgs.clear();
+  }
+
+  /**
+   * Phase 6: what falls at map pixel (px, py) (weather.ts Fall): snow where the land shows winter (where
+   * snow can lie), nothing on water showing winter, rain anywhere else.
+   */
+  fallAt(px: number, py: number): number {
+    const mat = this.mat, look = this.look;
+    if (!mat || !look || px < 0 || py < 0 || px >= mat.w || py >= mat.h) return 0;
+    const p = py * mat.w + px;
+    if (look.shown[mat.rank[p]!] !== LookState.Winter) return 0;
+    return isWaterRole(mat.role[p]!) ? 2 : 1;
   }
 
   /** Phase 2c: is map pixel (px, py) under snow now? (A building there wears it on its roof.) */

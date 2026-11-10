@@ -9,7 +9,14 @@ import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
 import { RGBS } from './palette';
 import { TintClass, tintClass } from './season';
-import { Clouds, bodySprite, cloudDitherOn, cloudsOn, washSprite, type CloudAt } from './clouds';
+import { Clouds, bodySprite, cloudDitherOn, cloudsOn, rainFramesOn, washSprite, type CloudAt } from './clouds';
+import { nightMultiplyAdd } from './light';
+import { seasonRampRgb } from './ramps';
+
+const RC = CONFIG.render.seasons.rain;
+
+/** Phase 6: what falls at a map pixel: rain, snow (land showing winter), or nothing (frozen water). */
+export const Fall = { Rain: 0, Snow: 1, None: 2 } as const;
 
 const W = CONFIG.render.f8.weather;
 const TILE = CONFIG.map.tilePx;
@@ -57,6 +64,12 @@ export class Weather {
   enabled = true;
   /** Seasons Phase 4: rain and snow fall (off in the held fast-forward look; the clouds still drift). */
   falling = true;
+  // Phase 6: the cached particle image, what it was drawn for, and a count of cloud moves.
+  private precipCanvas: HTMLCanvasElement | null = null;
+  private precipImg: ImageData | null = null;
+  private precipKey = '';
+  private precipAny = false;
+  private skyVersion = 0;
   /** Seasons Phase 5: pixel clouds (null with `?off=clouds`: the F8 noise wash). */
   readonly sky: Clouds | null;
   /** Share of visible cells with rain falling now, and with snow (for sound). */
@@ -193,6 +206,7 @@ export class Weather {
         if (dens <= 0 || rain < W.rainAbove || !this.falling) continue;
         const snow = winter > 0.5 && this.cellCold[c] === 1;
         if (snow) snowy++; else rainy++;
+        if (rainFramesOn) continue;   // Phase 6: the clouds carry their own rain (drawPrecip)
         // Expected drops this frame; the fraction is drawn by chance (visual only).
         let n = dens * (rain / 100) * W.dropsPerCellPerS * dt * (snow ? 0.6 : 1) * (playing ? 1 : 0.4);
         while (n > 0 && this.count < W.maxDrops) {
@@ -222,6 +236,7 @@ export class Weather {
     if (sky) {
       // Phase 5: the pixel clouds move on; rain falls from the cells under their bodies.
       const cellPx = W.cellTiles * TILE;
+      this.skyVersion++;
       sky.update(this.t, (y) => {
         const cy = Math.max(0, Math.min(this.ch - 1, Math.floor(y / cellPx)));
         let sum = 0;
@@ -229,7 +244,7 @@ export class Weather {
         return (sum / this.cw) * 100;
       });
       for (let cy = 0; cy < this.ch; cy++) {
-        for (let cx = 0; cx < this.cw; cx++) this.cloud[cy * this.cw + cx] = sky.storm || sky.covers((cx + 0.5) * cellPx, (cy + 0.5) * cellPx) ? 1 : 0;
+        for (let cx = 0; cx < this.cw; cx++) this.cloud[cy * this.cw + cx] = sky.storm || sky.covers((cx + 0.5) * cellPx, (cy + 0.5) * cellPx, rainFramesOn) ? 1 : 0;
       }
       return;
     }
@@ -282,8 +297,121 @@ export class Weather {
     }
   }
 
-  /** Falling rain and snow. */
+  /**
+   * Phase 6 (mockup E): rain and snow from the raining clouds (everywhere in a storm), each spot playing
+   * 3 frames of frameMs: a streak stepping down then a splash, or a flake stepping down. `fall(x, y)`
+   * says what falls at a pixel. `nightQ`: drawn after the night pass, at nightMix of the night
+   * (owner decision S13), so they read in the dark. Opaque, no randomness: a capture repeats.
+   */
+  drawPrecip(ctx: CanvasRenderingContext2D, view: { x: number; y: number; w: number; h: number }, nowMs: number, nightQ: number, fall: (x: number, y: number) => number): void {
+    const sky = this.sky;
+    if (!this.enabled || !this.falling || !sky || !rainFramesOn) return;
+    const frame = Math.floor(nowMs / RC.frameMs);
+    // The particles only change when their frame steps, the clouds move, the view moves or the night
+    // deepens: drawn once into an image then, and that image is drawn each screen frame (thousands of
+    // single-pixel rects every screen frame cost ~20 ms in a storm, measured).
+    const vx = Math.floor(view.x) - 8, vy = Math.floor(view.y) - 8, vw = Math.ceil(view.w) + 16, vh = Math.ceil(view.h) + 16;
+    const key = `${frame}|${vx}|${vy}|${vw}|${vh}|${this.skyVersion}|${Math.round(nightQ * 32)}`;
+    if (key !== this.precipKey) {
+      this.precipKey = key;
+      this.paintPrecip(this.precipPixels({ x: vx, y: vy, w: vw, h: vh }, frame, fall), vx, vy, vw, vh, nightQ);
+    }
+    if (this.precipCanvas && this.precipAny) ctx.drawImage(this.precipCanvas, vx, vy);
+  }
+
+  /** Into the cached image: pixels per precip ramp step (x, y pairs), the view's top-left (vx, vy). */
+  private paintPrecip(out: number[][], vx: number, vy: number, vw: number, vh: number, nightQ: number): void {
+    if (!this.precipCanvas || this.precipCanvas.width !== vw || this.precipCanvas.height !== vh) {
+      this.precipCanvas = document.createElement('canvas');
+      this.precipCanvas.width = vw; this.precipCanvas.height = vh;
+      this.precipImg = this.precipCanvas.getContext('2d')!.createImageData(vw, vh);
+    }
+    const img = this.precipImg!, px = new Uint32Array(img.data.buffer);
+    px.fill(0);
+    const ramp = seasonRampRgb('precip');
+    const nm = nightQ > 0 ? nightMultiplyAdd(nightQ) : null;
+    let any = false;
+    for (let st = 0; st < 5; st++) {
+      const pts = out[st]!;
+      if (pts.length === 0) continue;
+      any = true;
+      const c = ramp[st]!;
+      // S13: half-way between the colour and its night colour.
+      const col = nm ? c.map((v, i) => Math.round(v + (Math.min(255, (v * nm.mul[i]!) / 255 + nm.add[i]!) - v) * RC.nightMix)) : c;
+      const word = ((255 << 24) | (col[2]! << 16) | (col[1]! << 8) | col[0]!) >>> 0;
+      for (let k = 0; k < pts.length; k += 2) {
+        const x = pts[k]! - vx, y = pts[k + 1]! - vy;
+        if (x >= 0 && y >= 0 && x < vw && y < vh) px[y * vw + x] = word;
+      }
+    }
+    this.precipAny = any;
+    if (any) this.precipCanvas.getContext('2d')!.putImageData(img, 0, 0);
+  }
+
+  /**
+   * Phase 6: the particle pixels of animation frame `frame` within `view`, per precip ramp step (x, y
+   * pairs): rain streaks and splashes on steps 1 and 0, flakes on 4 and 3.
+   */
+  precipPixels(view: { x: number; y: number; w: number; h: number }, frame: number, fall: (x: number, y: number) => number): number[][] {
+    const sky = this.sky!;
+    const step = RC.streakPx, flakeStep = RC.snowStepPx;
+    const snowAll = sky.forced === 'snowfall';
+    const out: number[][] = [[], [], [], [], []];
+    let budget = RC.maxParticles;
+    const x0 = view.x, y0v = view.y, x1 = view.x + view.w, y1 = view.y + view.h;
+    /**
+     * One spot; `rainOk`: it may rain here (rain is sparser than snow: the first share of the spots);
+     * `open`: a storm's spot, which lies anywhere: none is drawn under a cloud's body.
+     */
+    const spot = (x: number, y: number, ph: number, pair: number, len: number, rainOk: boolean, open = false): void => {
+      if (x < x0 || y < y0v || x > x1 || y > y1 || budget <= 0) return;
+      if (open && sky.covers(x, y)) return;
+      const what = snowAll ? Fall.Snow : fall(x, y);
+      if (what === Fall.None || (what === Fall.Rain && !rainOk)) return;
+      budget--;
+      const p = (ph + frame) % 3;
+      if (what === Fall.Snow) {
+        const fy = y + p * flakeStep, fx = x + (p === 1 ? 1 : 0);
+        out[4]!.push(fx, fy);
+        if (pair) out[3]!.push(fx + 1, fy);
+        return;
+      }
+      if (p === 2) { out[1]!.push(x - 1, y + 2 * step, x + 1, y + 2 * step, x, y + 2 * step - 1); return; }   // the splash
+      const sy = y + p * step;
+      for (let s = 0; s < len; s++) out[s === 0 ? 1 : 0]!.push(x - (s >> 1), sy + s);
+    };
+    if (sky.storm) {
+      // Rain everywhere, from world-fixed spots (cells of 32 px); thinned evenly when the view holds more
+      // than maxParticles (zoomed out), never cut off part of the way down.
+      const C = 32, cells = (Math.floor(x1 / C) - Math.floor(x0 / C) + 1) * (Math.floor(y1 / C) - Math.floor(y0v / C) + 1);
+      const n = Math.min(Math.round(C * C * RC.stormDensity), Math.floor(RC.maxParticles / cells));
+      for (let cy = Math.floor(y0v / C); cy * C < y1; cy++) {
+        for (let cx = Math.floor(x0 / C); cx * C < x1; cx++) {
+          for (let k = 0; k < n; k++) {
+            spot(cx * C + Math.floor(hash01(cx * 64 + k, cy, RC.salt + 7) * C), cy * C + Math.floor(hash01(cx * 64 + k, cy, RC.salt + 8) * C),
+              Math.floor(hash01(cx * 64 + k, cy, RC.salt + 9) * 3), 0, RC.stormStreakPx, true, true);
+          }
+        }
+      }
+    } else {
+      const rainShare = RC.rainDensity / RC.snowDensity;
+      for (const c of sky.now) {
+        const s = c.shape;
+        if (!s.rainy) continue;
+        const n = s.spots.length / 4, rainN = Math.round(n * rainShare);
+        for (let k = 0; k < n; k++) {
+          const o = k * 4;
+          // Rain uses the first rainDensity ÷ snowDensity of the spots; snow all of them (mockup densities).
+          spot(c.x + s.spots[o]!, c.y + s.spots[o + 1]!, s.spots[o + 2]!, s.spots[o + 3]!, RC.streakPx, k < rainN);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Falling rain and snow (the F8 particles; with Phase 6's frames, drawPrecip instead). */
   private drawFalling(ctx: CanvasRenderingContext2D): void {
+    if (rainFramesOn) return;
     ctx.fillStyle = `rgba(${RGBS.waterLight.join(',')},0.75)`;
     for (let k = 0; k < this.count; k++) {
       if (this.kind[k] !== Kind.Rain) continue;

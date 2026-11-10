@@ -29,7 +29,8 @@ import { SeasonDriver, frontAt, parsePin, twoLooksAt } from '../src/render/seaso
 import { DayNight } from '../src/render/light';
 import { HeldRain } from '../src/render/heldRain';
 import { Clouds, Mask, bodyStep, cloudiness, makeCloud } from '../src/render/clouds';
-import { shadeWord } from '../src/render/materials';
+import { PUDDLE_DARK, PUDDLE_LIGHT, shadeWord } from '../src/render/materials';
+import { Fall, Weather } from '../src/render/weather';
 import { yearLabel } from '../src/ui/runControls';
 import { ticksPerSecondAt } from '../src/shared/speeds';
 import { FrontFields, FrontKind } from '../src/render/seasonFront';
@@ -282,7 +283,7 @@ const MOCK_NIGHT_MUL = [0.2, 0.252, 0.42], MOCK_NIGHT_ADD = [10, 13.5, 40];   //
 // The mockup's ramp rule (seasons-render.js rampFrom): the warm light of step 4.
 const WARM = [281, 235, 105], WARM_MIX = 0.372;
 // Ramps the mockup lists by hand rather than building from one colour.
-const LISTED = new Set<SeasonRampName>(['fruitSu', 'snowDust', 'snowFull', 'waterSpring', 'waterWinter', 'ice', 'iceRim', 'cloud', 'cloudStorm']);   // listed in full by the mockup
+const LISTED = new Set<SeasonRampName>(['fruitSu', 'snowDust', 'snowFull', 'waterSpring', 'waterWinter', 'ice', 'iceRim', 'cloud', 'cloudStorm', 'precip']);   // listed in full by the mockup
 
 describe('seasons Phase 1b: the seasonal ramps are the mockup ramps', () => {
   it('ramps built from one colour follow the rule: step 0 = shadowOf(step 2), 1 halfway, 4 the warm light, 3 halfway', () => {
@@ -1506,7 +1507,7 @@ describe('seasons Phase 5: pixel clouds', () => {
   it('a cloud is a cluster of discs: a core inside its rim; the body lit top-left, dark underneath (mockup)', () => {
     const c = makeCloud(12, 1, false);
     let core = 0, rim = 0;
-    for (let k = 0; k < c.mask.length; k++) { if (c.mask[k] === Mask.Core) core++; else if (c.mask[k] === Mask.Rim) rim++; }
+    for (let k = 0; k < c.mask.length; k++) { const m = c.mask[k]!; if (m & Mask.Core) core++; else if (m & Mask.In) rim++; }
     expect(core).toBeGreaterThan(300);
     expect(rim).toBeGreaterThan(100);
     // The top row of the cloud is its lit rim (step 4); the bottom row its underside (step 1).
@@ -1575,7 +1576,7 @@ describe('seasons Phase 5: pixel clouds', () => {
       const lx = x - (cx + shape.ox + ox!), ly = y - (y0 + shape.oy + oy!);
       if (lx < 0 || ly < 0 || lx >= shape.w || ly >= shape.h) return 0;
       const mk = shape.mask[ly * shape.w + lx], odd = (x + y) & 1;
-      return mk === Mask.Core ? 1 + odd : mk === Mask.Rim ? odd : 0;
+      return mk! & Mask.Core ? 1 + odd : mk! & Mask.In ? odd : 0;
     };
     let prev = new Uint32Array(imageOf(l).slice().buffer);
     let changed = 0;
@@ -1622,5 +1623,110 @@ describe('seasons Phase 5: pixel clouds', () => {
     }
     expect(evenChanged).toBe(0);
     expect(oddChanged).toBeGreaterThan(after.length / 4);
+  });
+});
+
+// ---------- Phase 6: rain and snowfall ----------
+
+describe('seasons Phase 6: rain and snowfall', () => {
+  const RNC = CONFIG.render.seasons.rain;
+  /** A weather with a forced sky, its clouds placed. */
+  function forcedWeather(kind: 'rain' | 'snowfall' | 'storm'): Weather {
+    const m = createMap(160, 90);
+    const w = new Weather(m);
+    (w as unknown as { sky: Clouds }).sky = new Clouds(160 * TILE, 90 * TILE, kind);
+    w.update(0, 16, { x: 0, y: 0, w: 1280, h: 720 }, 0, true);
+    return w;
+  }
+  const view = { x: 0, y: 0, w: 1280, h: 720 };
+  const lit = (out: number[][]): Set<number> => {
+    const s = new Set<number>();
+    for (const pts of out) for (let k = 0; k < pts.length; k += 2) s.add(pts[k + 1]! * 10000 + pts[k]!);
+    return s;
+  };
+
+  it('rain plays in frames: the same three frames over and over, no pixel flashing more than three times a second', () => {
+    const w = forcedWeather('rain');
+    const n = Math.round(1000 / RNC.frameMs);   // the frames in a second
+    const frames = Array.from({ length: n }, (_, f) => lit(w.precipPixels(view, f, () => Fall.Rain)));
+    expect(frames[0]!.size).toBeGreaterThan(200);
+    expect([...frames[3]!].sort()).toEqual([...frames[0]!].sort());   // a 3-frame cycle
+    // A flash: lit, then unlit the next frame (a pixel two drops keep lit is steady, not flashing).
+    const all = new Set<number>(frames.flatMap((f) => [...f]));
+    let most = 0;
+    for (const p of all) {
+      let flashes = 0;
+      for (let f = 0; f < n; f++) if (frames[f]!.has(p) && !frames[(f + 1) % n]!.has(p)) flashes++;
+      most = Math.max(most, flashes);
+    }
+    expect(most).toBeLessThanOrEqual(3);
+    // Rain on the two rain steps only; flakes on the two light steps only.
+    const raw = w.precipPixels(view, 0, () => Fall.Rain);
+    expect(raw[3]!.length + raw[4]!.length).toBe(0);
+    const snow = forcedWeather('snowfall').precipPixels(view, 0, () => Fall.Snow);
+    expect(snow[0]!.length + snow[1]!.length).toBe(0);
+    expect(snow[4]!.length).toBeGreaterThan(100);
+  });
+
+  it('a flake steps down two pixels a frame; nothing falls on frozen water', () => {
+    const w = forcedWeather('rain');
+    const a = w.precipPixels(view, 0, () => Fall.Snow)[4]!, b = w.precipPixels(view, 3, () => Fall.Snow)[4]!;
+    expect(a).toEqual(b);
+    expect(w.precipPixels(view, 0, () => Fall.None).every((pts) => pts.length === 0)).toBe(true);
+  });
+
+  it('a storm rains everywhere, thinned evenly when zoomed out, never under a cloud body', () => {
+    const w = forcedWeather('storm');
+    const out = w.precipPixels(view, 0, () => Fall.Rain);
+    const sky = (w as unknown as { sky: Clouds }).sky;
+    let top = 0, bottom = 0;
+    for (let k = 0; k < out[1]!.length; k += 2) { if (out[1]![k + 1]! < 360) top++; else bottom++; }
+    expect(bottom).toBeGreaterThan(top / 2);                 // not cut off part of the way down
+    expect(top + bottom).toBeLessThanOrEqual(RNC.maxParticles * 3);
+    // The spots: each streak's lead pixel (step 1 in frames 0 and 1 of its cycle) is never under a body.
+    expect(sky.now.length).toBeGreaterThan(0);
+    const leads = w.precipPixels(view, 0, () => Fall.Rain)[1]!;
+    let under = 0;
+    for (let k = 0; k < leads.length; k += 2) if (sky.covers(leads[k]!, leads[k + 1]!)) under++;
+    expect(under).toBeLessThan(leads.length / 2 / 10);   // splash pixels sit beside their spot and may touch a body's edge
+  });
+
+  it('at the held speeds nothing falls', () => {
+    const w = forcedWeather('rain');
+    w.falling = false;
+    let drawn = 0;
+    const ctx = { drawImage: () => { drawn++; } } as unknown as CanvasRenderingContext2D;
+    w.drawPrecip(ctx, view, 0, 0, () => Fall.Rain);
+    expect(drawn).toBe(0);
+  });
+
+  it('a raining cloud wets the land a step darker and puddles stand in it; not at the held speeds, not in winter', () => {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(LookState.Summer));
+    l.flush();
+    const shade = (): Uint8Array => (l as unknown as { shade: Uint8Array }).shade;
+    const shape = makeCloud(9, 1.2, false, true);
+    const cloud = [{ shape, x: 900, y: 300 }];
+    l.setClouds(cloud, false, true); l.flush();
+    const s = shade();
+    const puddles = s.reduce((n, v) => n + (v === PUDDLE_LIGHT || v === PUDDLE_DARK ? 1 : 0), 0);
+    const dry = makeCloud(9, 1.2, false, false);
+    const l2 = new TerrainLayer(m, true);
+    l2.setRain(m.rain); l2.setLook(new Array<number>(KEYS).fill(LookState.Summer)); l2.flush();
+    l2.setClouds([{ shape: dry, x: 900, y: 300 }], false, true); l2.flush();
+    const s2 = (l2 as unknown as { shade: Uint8Array }).shade;
+    const darker = (a: Uint8Array): number => a.reduce((n, v) => n + (v > 0 && v < 16 ? v : 0), 0);
+    expect(puddles).toBeGreaterThan(10);
+    expect(darker(s)).toBeGreaterThan(darker(s2));           // wet ground: more steps down than the shadow alone
+    l.setClouds(cloud, false, false); l.flush();              // held: rain stops wetting
+    expect(shade().some((v) => v >= 16)).toBe(false);
+    expect(darker(shade())).toBe(darker(s2));
+    l.setClouds(cloud, false, true); l.flush();
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter)); l.flush();
+    l.setClouds([{ shape, x: 901, y: 300 }], false, true); l.flush();
+    expect(shade().some((v) => v >= 16)).toBe(false);         // winter: no puddles
   });
 });

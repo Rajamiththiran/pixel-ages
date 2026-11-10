@@ -521,6 +521,10 @@ function colourOf(buf: MatBuf, look: Look, tag: number, role: number, rank: numb
   return c;
 }
 
+/** Phase 6: shade values past the ramp-step drops: a puddle there, on the water ramp's step 4 or 3. */
+export const PUDDLE_LIGHT = 16;
+export const PUDDLE_DARK = 32;
+
 // ---------- Phase 5: cloud shadows, as ramp steps ----------
 
 let rampOf: Map<number, { ramp: number[]; step: number }> | null = null;
@@ -535,6 +539,7 @@ const fastIn = new Uint32Array(4 << FAST_BITS), fastOut = new Uint32Array(4 << F
  */
 export function shadeWord(c: number, d: number): number {
   if (c === 0 || c === ALT) return c;
+  if (d >= PUDDLE_LIGHT) return packRgba(tagRgb(Mat.Water * 8 + (d === PUDDLE_LIGHT ? 4 : 3)));   // mockup: puddles are opaque water
   // A small direct-mapped cache in front of the map: a storm shades every pixel, and a season step
   // then looks up a million colours (a Map lookup each was ~7% of a frame, measured).
   const slot = (Math.min(3, d) << FAST_BITS) | (Math.imul(c, 0x9e3779b1) >>> (32 - FAST_BITS));

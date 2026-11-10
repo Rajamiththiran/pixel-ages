@@ -280,6 +280,9 @@ export class Renderer {
   /** Seasons Phase 2c: a planned Harsh winters event runs this year (deeper, lower snow). */
   set harshWinter(on: boolean) { this.seasonDriver.harsh = on; }
 
+  /** Seasons Phase 6: what falls at map pixel (x, y): rain, snow or nothing (weather.ts Fall). */
+  private readonly fallAt = (x: number, y: number): number => this.terrain.fallAt(x, y);
+
   /** Seasons Phase 2c: does snow lie at map pixel (x, y)? (A building there wears it.) */
   private readonly snowOnRoof = (x: number, y: number): boolean => this.terrain.snowAt(Math.floor(x), Math.floor(y));
 
@@ -436,7 +439,7 @@ export class Renderer {
       this.light.update(dt, v.playing);
       this.weather.update(now, dt, vr, this.season.weights[3]!, v.playing);
       // Seasons Phase 5: cloud shadows step the ground down where the clouds are now.
-      this.terrain.setClouds(this.weather.cloudsNow, this.weather.storm);
+      this.terrain.setClouds(this.weather.cloudsNow, this.weather.storm, this.weather.falling);
       this.effects.update(now, dt, vr, CONFIG.render.f8.weather.windPxPerS);
       this.people.setNight(this.light.darkness, this.camps.fireGroup);
     } else this.terrain.setClouds([], false);   // setup: no clouds
@@ -525,7 +528,10 @@ export class Renderer {
         this.effects.drawSky(ctx, now, 'plain');
         this.drawDioramaNight(ctx, nightQ, layer.glowCanvas);
         this.effects.drawSky(ctx, now, 'glow');
+        // Seasons Phase 6 (owner decision S13): rain and snow after the night pass, at half its strength.
+        this.weather.drawPrecip(ctx, vr, now, nightQ, this.fallAt);
       } else {
+        this.weather.drawPrecip(ctx, vr, now, 0, this.fallAt);
         this.effects.drawSky(ctx, now);
         if (!nightOn) this.drawNight(ctx, vr);
       }

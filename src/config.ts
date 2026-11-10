@@ -982,6 +982,30 @@ export const CONFIG = {
         dryRain: 20, wetRain: 80, shareDry: 0.15, shareWet: 0.8, sizeDry: 0.9, sizeWet: 1.25, stormSize: 1.5,
         shadowOffsetPx: [28, 20],
         rimPx: [3, 3], undersidePx: [2, 4], bandPx: [3, 7],
+        // Phase 6: a cloud over land with rain at least f8.weather.rainAbove rains with this chance per pass.
+        rainyShare: 0.6,
+      },
+      // Phase 6: rain and snowfall (mockup E). Each raining cloud carries particle spots (inside the cloud
+      // grown to spotScale, shifted down-right by the shadow offset less spotShiftPx, never under its own
+      // body), snowDensity per pixel; rain uses the first rainDensity ÷ snowDensity of them; a storm rains
+      // everywhere at stormDensity. A spot plays 3 frames of frameMs (2 flashes a second, under the readme's
+      // 3): a streak of streakPx (stormStreakPx in a storm) stepping 3 px down, lead pixel precip-1, tail
+      // precip-0, then a 3-pixel splash; a flake (precip-4, flakePairShare in pairs with precip-3) steps
+      // snowStepPx down a frame, only where the land shows winter. At most maxParticles. No alpha and no
+      // Math.random. At night they are drawn after the night pass at nightMix of the night (owner decision
+      // S13, the plan's recommendation), so they still read. Off: `?off=rainFrames` (the F8 particles).
+      // Wet ground: land under a raining cloud grown to wetScale drops one more ramp step (`?off=wetGround`).
+      // Puddles: under it grown to puddleScale, small ovals (cells puddleCellPx, puddleShare of them, radii
+      // puddleRadiusPx) of the opaque water ramp on open ground, in hollows (tiles lower than a neighbour)
+      // and on flat land in puddleFlatShare of the tiles; not in winter (`?off=puddles`).
+      rain: {
+        frames: true, frameMs: 167,
+        rainDensity: 0.006, stormDensity: 0.012, snowDensity: 0.008,
+        spotScale: 1.4, spotShiftPx: 6, streakPx: 3, stormStreakPx: 5, snowStepPx: 2, flakePairShare: 0.2,
+        maxParticles: 4000, nightMix: 0.5,
+        wetGround: true, wetScale: 1.6,
+        puddles: true, puddleScale: 1.5, puddleCellPx: [6, 4], puddleShare: 0.22, puddleRadiusPx: [2.4, 1.2], puddleFlatShare: 0.5,
+        salt: 221,
       },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
