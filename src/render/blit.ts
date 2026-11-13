@@ -6,7 +6,12 @@
 import { spritePixels, type SpritePixels as Pixels } from './sprites';
 import { contactOn, shadowsOn, spriteShadow } from './shadows';
 import { nightOn } from './light';
-import { PALETTE } from './palette';
+import { ALL_LINEAGE, PALETTE, SKIN_COLORS, darken } from './palette';
+import { lineageShade, styleOff } from './ramps';
+import { CONFIG } from '../config';
+
+/** Visual fixes C switch (?off=nightPeople): lineage and skin go dark with the land, as before. */
+const nightPeopleOn: boolean = CONFIG.render.fixes.nightPeople.on && !styleOff('nightPeople');
 
 const SHADOW = 0xff000000;               // opaque black: a shadow mask pixel (ShadowPass colours it)
 
@@ -16,7 +21,15 @@ const pack = (hex: string): number => {
   const v = parseInt(hex.slice(1), 16);
   return ((255 << 24) | ((v & 255) << 16) | (v & 0xff00) | ((v >> 16) & 255)) >>> 0;
 };
-const EMISSIVE = new Set([pack(PALETTE.fireOrange), pack(PALETTE.fireYellow)]);
+// Visual fixes C: the mockup's other exceptions, lineage (both sets, with their shade and dark
+// variant) and skin, keep their day colour too, so people stay readable at night.
+const EMISSIVE = new Set([
+  pack(PALETTE.fireOrange), pack(PALETTE.fireYellow),
+  ...(nightPeopleOn ? [...ALL_LINEAGE.flatMap((c) => [c, darken(c), lineageShade(c)]), ...SKIN_COLORS].map(pack) : []),
+]);
+
+/** Does a sprite colour (#rrggbb) keep its day colour at night? (Tests.) */
+export const keepsDayColour = (hex: string): boolean => EMISSIVE.has(pack(hex));
 
 /** A sprite's emissive pixels: (dx, dy) pairs and their colours. */
 interface Glow { at: Int16Array; colour: Uint32Array }

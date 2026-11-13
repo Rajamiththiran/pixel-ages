@@ -10,7 +10,7 @@ import { hash01 } from '../shared/hash';
 import { N8 } from '../shared/grid';
 import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
-import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
+import { Mat, rampRgb, rampShift, rampTag, rampsOn, styleOff } from './ramps';
 import {
   FieldPos, GroundMark, GroundRole, KEYS, droughtOn, heldOn, snowPathsOn, wetYearOn, PUDDLE_DARK, PUDDLE_LIGHT, isGroundRole, isWaterRole, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, colourAt, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
@@ -25,7 +25,7 @@ import { occlusionOn, shadowsOn } from './shadows';
 import { HazardMark, Look, Mark, lookLevel } from '../shared/protocol';
 import {
   PeakKind, SALT as DETAIL_SALT, applyDesertDetail, applyFoam, applyGrassDetail, applyWetEdge, blend, computeDepth, copy,
-  edgeDistance, forestCrown, forestFloor, grad, isWaterTile, mix, mountainPeak, peakKind, peakShadowAt, scale, shade, waterPixel,
+  edgeDistance, edgeSource, edgesOn, forestCrown, forestFloor, grad, isWaterTile, mix, mountainPeak, narrowWater, naturalTile, peakKind, peakShadowAt, scale, setClearedMask, shade, shoreFieldAt, shoreTile, waterPixel,
 } from './terrainDetail';
 
 const R = CONFIG.render;
@@ -72,13 +72,15 @@ export interface TileExtras {
   fields?: Uint8Array | null;    // Seasons Phase 2b: harvest per tile (0–255); given, farmland is drawn on the mockup's rows
   ponds?: Uint8Array | null;     // Seasons Phase 2c: still water small enough to freeze through (per tile, 1)
   keys?: Uint8Array | null;      // Seasons Phase 3a: each pixel's key in the current front (null: its Bayer key)
+  cleared?: Uint8Array | null;   // Visual fixes F: tiles under a settlement (per tile, 1): trodden earth, no crowns
 }
 
 // What the pixel being drawn turned out to be, for shadows and occlusion (phase 3).
 let onCrown = false;
 let onPeak = false;
 let crownsReady = false;
-let onMark = false;            // a line, pit or ruin pixel of a mark (seasons Phase 1a role)
+let onMark = false;
+let pondNear = false;           // visual fixes G: a pond (still water that freezes through) beside the tile being drawn            // a line, pit or ruin pixel of a mark (seasons Phase 1a role)
 
 // Per-tile scratch, reused so drawing allocates nothing.
 const nb = new Uint8Array(8);
@@ -141,7 +143,13 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
   }
   const beachGround = !water && wall === WallType.None && (ground === Ground.Grassland || ground === Ground.Desert);
   const sea = wall === WallType.Sea;
-  const corners = sea ? 0 : riverCorners(map, tx, ty, !water);
+  let corners = sea ? 0 : riverCorners(map, tx, ty, !water);
+  // Visual fixes G: a lake or pond tile, or land beside one, draws its shore along the smooth water
+  // field (shoreField) instead of tile edges and rounded corners; rivers, streams and the sea keep theirs.
+  const shore = shoreTile(map, tx, ty);
+  pondNear = false;
+  if (shore && !water && ex.ponds) for (let k = 0; k < 8; k++) { const [dx, dy] = N8[k]!; const nx = tx + dx, ny = ty + dy; if (nx >= 0 && ny >= 0 && nx < width && ny < height && ex.ponds[ny * width + nx] === 1) pondNear = true; }
+  if (shore) corners = water ? 0 : corners & RIVER_BEND ? corners : 0;
   // A rounded-off water corner shows bank: mud along rivers and streams, sand round lakes.
   const cornerLand = river || (water && narrowWater(map, ex.depth, tx, ty)) ? BANK : RGBS.sand;
   // F8: stumps where the forest is well below its painted density (cut, burned or grazed away).
@@ -162,6 +170,13 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
   // Seasons Phase 2d: flowers and leaf litter on the ground (the litter by the wood's deciduous share).
   const details = groundOn && mat !== null;
   const leafShare = details && nearForest && ground !== Ground.Mountain ? Math.max(0, 1 - evergreenChance(map.elevation[i]!)) : 0;
+  // Visual fixes F: a settlement's tile is trodden earth, ragged where it meets uncleared land.
+  const cleared = clearingsOn && ex.cleared != null && ex.cleared[i] === 1 && !water && wall === WallType.None;
+  if (cleared) clearedSides(ex.cleared!, width, height, tx, ty);
+  // Visual fixes G: a natural land tile frays into its natural neighbours (edgeSource).
+  const soft = edgesOn && !water && naturalTile(map, i);
+  let shoreBeach = false;        // the land pixel being drawn lies within beachPx of the smooth shore
+  const shoreRole = (water ? ex.ponds?.[i] === 1 : pondNear) ? Role.Pond : Role.Lake;
 
   /**
    * One land pixel into `out`; returns its role. Seasons Phase 2a draws it a second time without
@@ -172,15 +187,23 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
     onPeak = false;
     onFruitSpeck = false;
     onFlower = false;
-    landPixel(map, ground, plant, dens, kind, crowns && nearForest, stumps ? painted : -1, px, py, out);
-    let role: number = landRole(ground, plant);
+    onBush = false;
+    // Visual fixes G: near a border between natural land tiles the pixel may show its neighbour's ground and plants.
+    let g0 = ground, p0 = plant, d0 = dens, k0 = kind, st0 = stumps ? painted : -1;
+    if (soft) {
+      const j = edgeSource(map, px, py);
+      if (j !== i) { g0 = map.ground[j]!; p0 = map.plantType[j]!; d0 = map.plantDensity[j]! / 255; k0 = peakKind(map, j); st0 = -1; }
+    }
+    landPixel(map, g0, p0, d0, k0, crowns && nearForest, st0, px, py, out);
+    let role: number = landRole(g0, p0);
     if (treesOn) {
       onTree = onCrown && crownsReady && crownPixelAt(px, py, cp);
       if (onTree) role = crownRole(map, cp, px, py);
-      else if (role === Role.Fruit) role = fruitRole(px, py, dens);
+      else if (role === Role.Fruit) role = fruitRole(px, py, d0);
       else if (role === Role.Forest && bareWood) role = Role.FloorBare;
     }
     if (role === Role.Farm && fieldCut >= 0) role = fieldHere;
+    if (cleared && !onCrown && earthPixel(ox, oy, px, py, out)) role = Role.Mark;
     if (resShare > 0 && hash01(px, py, SALT.resource + res) < resShare) copy(RESOURCE_COLOR[res]!, out);
     if (look !== 0) soilPixel(look, plant, px, py, out);
     if (tileMarks !== 0) {
@@ -194,7 +217,7 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
       else shade(out, R.marks.burnDark, DR.burnSteps);
       role = Role.Fire;
     }
-    if (beachGround && hasLake && edgeDistance(ox, oy, nbLake) < F8.beachPx) { copy(RGBS.sand, out); role = Role.Beach; }
+    if (beachGround && hasLake && (shore ? shoreBeach : edgeDistance(ox, oy, nbLake) < F8.beachPx)) { copy(RGBS.sand, out); role = Role.Beach; }
     if (shaded) shadeHeight(map, px, py, out);
     if (hasEdge) applyWetEdge(edge, out);
     if (occlude && !onCrown) occludePixel(px, py, out);
@@ -215,7 +238,25 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
       onTree = false;
       let role: number;   // a Role, or a field role (materials.ts fieldRole)
 
-      if (water && !corner) {
+      if (shore) {
+        // Visual fixes G: the shore where the water field crosses one half; d is px into the water.
+        const d = (shoreFieldAt(map, px, py) - 0.5) * TILE;
+        shoreBeach = false;
+        if (d >= 0) {
+          waterPixel(map, ex.depth, px, py, false, time.waterStep, out);
+          applyFoam(Math.floor(d), px, py, time.waterStep, out);
+          role = shoreRole;
+        } else if (water) {
+          // Land inside a water tile: sand round a lake, a mud bank along a stream (as the old corners).
+          copy(cornerLand, out);
+          applyWetEdge(Math.min(2, Math.floor(-d)), out);
+          if (ditherOn) applyTexture(px, py, out);
+          role = cornerLand === BANK ? Role.Bank : Role.Beach;
+        } else {
+          shoreBeach = -d < F8.beachPx;
+          role = land(ox, oy, px, py, Math.floor(-d), true);
+        }
+      } else if (water && !corner) {
         if (river) riverPixel(map, tx, ty, px, py, time.riverStep, out);
         else waterPixel(map, ex.depth, px, py, wall === WallType.Sea, time.waterStep, out);
         if (hasEdge) applyFoam(edge, px, py, time.waterStep, out);
@@ -478,6 +519,8 @@ function litterRole(px: number, py: number, edge: boolean, share: number): numbe
 function fruitRole(px: number, py: number, dens: number): Role {
   if (onFruitSpeck) return Role.FruitSpeck;
   const h = hash01(px, py, TRS.salt + 14);
+  // Visual fixes B: the bushes already thin out with density, so a bush is twig and blossom alike.
+  if (bushesOn) dens = 1;
   return h < TRS.twigShare * dens ? Role.FruitTwig : h < (TRS.twigShare + TRS.blossomShare) * dens ? Role.FruitBlossom : Role.Fruit;
 }
 
@@ -506,19 +549,6 @@ function riverCorners(map: MapData, x: number, y: number, land: boolean): number
   };
   corner(-1, -1, 1); corner(1, -1, 2); corner(-1, 1, 4); corner(1, 1, 8);
   return bits;
-}
-
-/** A stream: Water ground with land within one tile everywhere around it (no wide water near). */
-function narrowWater(map: MapData, depth: Uint8Array, x: number, y: number): boolean {
-  const i = y * map.width + x;
-  if (map.wall[i] !== WallType.None || depth[i]! > 1) return false;
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const nx = x + dx, ny = y + dy;
-      if (nx >= 0 && ny >= 0 && nx < map.width && ny < map.height && depth[ny * map.width + nx]! > 1) return false;
-    }
-  }
-  return true;
 }
 
 /** Is (ox, oy) outside the quarter circle that rounds one of the flagged corners? */
@@ -657,16 +687,135 @@ function markPixel(
   if (m & Mark.Canal && onLine(Mark.Canal, false, true)) { copy(RGBS.waterLight, out); onMark = true; }
   if (m & Mark.Road) {
     if (onLine(Mark.Road | Mark.Path, true, false)) { mix(out, RGBS.stoneLight, R.marks.roadBlend, out); onMark = true; }
+  } else if (m & Mark.Path && pathPatchesOn && walkedArea(map, marks, i)) {
+    // Visual fixes B: a tile with paths on three sides, or round a corner, lies inside a walked area:
+    // worn patches, not a cross of lines (a block of such tiles drew a lattice, the doc's "debug grid").
+    if (cellNoise(px, py, FP.cellPx, FP.salt) > FP.above) { mix(out, RGBS.sand, R.marks.pathBlend, out); onMark = true; }
   } else if (m & Mark.Path && onLine(Mark.Path | Mark.Road, false, false)) { mix(out, RGBS.sand, R.marks.pathBlend, out); onMark = true; }
   if (m & Mark.Quarry) {
     const d2 = (ox - mid - 0.5) ** 2 + (oy - mid - 0.5) ** 2;
     if (d2 <= R.marks.pitRadius2) { copy(d2 <= 1 ? RGBS.ink : RGBS.mountainDark, out); onMark = true; }
   }
-  if (m & Mark.Ruin) {
+  if (m & Mark.Ruin && ruinsOn) {
+    if (ruinPixel(ox, oy, px, py, out)) onMark = true;
+  } else if (m & Mark.Ruin) {
     const ring = (ox === 1 || ox === TILE - 2) && oy >= 1 && oy <= TILE - 2
       || (oy === 1 || oy === TILE - 2) && ox >= 1 && ox <= TILE - 2;
     if (ring && hash01(px, py, SALT.ruin) > R.marks.ruinGap) { copy(RGBS.stone, out); onMark = true; }
   }
+}
+
+// ---------- visual fixes B: ruins and fruit bushes ----------
+
+const FR = R.fixes.ruins;
+/** Visual fixes B: ruins as trodden ground with rubble, not a ring per tile (?off=ruins). */
+export const ruinsOn: boolean = FR.on && !styleOff('ruins');
+
+/**
+ * One pixel of a ruin tile: the ground a step darker in noise patches (trodden), rubble in small
+ * clusters, and on some tiles one short broken wall stub. True where it drew rubble or wall.
+ */
+function ruinPixel(ox: number, oy: number, px: number, py: number, o: RGB): boolean {
+  const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
+  // The stub: horizontal or vertical, at a hashed spot inside the tile, its lit end first.
+  if (hash01(tx, ty, FR.salt) < FR.stubShare) {
+    const across = hash01(tx, ty, FR.salt + 1) < 0.5;
+    const a = 1 + Math.floor(hash01(tx, ty, FR.salt + 2) * (TILE - 2 - FR.stubPx));
+    const b = 1 + Math.floor(hash01(tx, ty, FR.salt + 3) * (TILE - 2));
+    const along = across ? ox : oy, side = across ? oy : ox;
+    if (side === b && along >= a && along < a + FR.stubPx) {
+      copy(along === a ? RGBS.stoneLight : RGBS.stone, o);
+      return true;
+    }
+    // Its shadow, one row under a horizontal stub.
+    if (across && oy === b + 1 && along >= a && along < a + FR.stubPx) shade(o, FR.darkMult, -1);
+    // Rubble fallen from it: a few stones within rubblePx of the stub, none further out (a field of
+    // old camps would otherwise be grey noise).
+    const da = along < a ? a - along : along >= a + FR.stubPx ? along - (a + FR.stubPx - 1) : 0;
+    if (Math.max(da, Math.abs(side - b)) <= FR.rubblePx && hash01(px, py, FR.salt + 4) < FR.rubbleShare) {
+      copy(hash01(px, py, FR.salt + 6) < FR.rubbleLight ? RGBS.stoneLight : RGBS.stone, o);
+      return true;
+    }
+  }
+  if (cellNoise(px, py, FR.cellPx, FR.salt + 7) > FR.darkAbove) shade(o, FR.darkMult, -1);
+  return false;
+}
+
+const FP = R.fixes.paths;
+/** Visual fixes B: walked areas as worn patches (?off=pathPatches). */
+export const pathPatchesOn: boolean = FP.on && !styleOff('pathPatches');
+
+/**
+ * Is path tile i inside a walked area: paths or roads on at least minLinks of its four sides, or on
+ * two sides round a corner (a 2 × 2 block of path tiles drew a square of lines)? A straight run stays a line.
+ */
+function walkedArea(map: MapData, marks: Uint8Array, i: number): boolean {
+  const at = (dx: number, dy: number): number => (linked(map, marks, i, dx, dy, Mark.Path | Mark.Road, false) ? 1 : 0);
+  const w = at(-1, 0), e = at(1, 0), n = at(0, -1), s = at(0, 1);
+  const links = w + e + n + s;
+  return links >= FP.minLinks || (links === 2 && w + e === 1);
+}
+
+const FB = R.fixes.bushes;
+/** Visual fixes B: fruit bushes as clumps with their fruit on them (?off=bushes). */
+export const bushesOn: boolean = FB.on && !styleOff('bushes');
+let onBush = false;            // landPixel drew a bush pixel (visual fixes B)
+
+/**
+ * A fruit-bush pixel: the front-most bush (one may stand in each cell, more with density) covering
+ * (px, py) as a small round clump, lit top-left and shaded bottom-right, with berries on its lower
+ * side; false where no bush covers it (the meadow between).
+ */
+function bushPixel(px: number, py: number, dens: number, o: RGB): boolean {
+  const c = FB.cellPx, reach = Math.ceil(FB.rMax);
+  let bestY = -1, bestX = 0, bdx = 0, bdy = 0, bestR = 0;
+  for (let cy = Math.floor((py - reach) / c); cy <= Math.floor((py + reach) / c); cy++) {
+    for (let cx = Math.floor((px - reach) / c); cx <= Math.floor((px + reach) / c); cx++) {
+      if (hash01(cx, cy, FB.salt) >= FB.base + (1 - FB.base) * dens) continue;
+      const bx = cx * c + Math.floor(hash01(cx, cy, FB.salt + 1) * c);
+      const by = cy * c + Math.floor(hash01(cx, cy, FB.salt + 2) * c);
+      const r = FB.rMin + hash01(cx, cy, FB.salt + 3) * (FB.rMax - FB.rMin);
+      const dx = px - bx, dy = py - by;
+      if (dx * dx + dy * dy > r * r) continue;
+      if (by > bestY || (by === bestY && bx > bestX)) { bestY = by; bestX = bx; bdx = dx; bdy = dy; bestR = r; }
+    }
+  }
+  if (bestY < 0) return false;
+  const n = (bdx + bdy) / bestR;
+  copy(RGBS.fruitBush, o);
+  // The body is fruit-bush green (grass-1): a lit step would match the meadow, so only the far side darkens.
+  if (n >= D.treeShadowAbove) shade(o, FB.shadeMult, -1);
+  if (n > FB.berryAbove && hash01(px, py, FB.salt + 4) < FB.berryShare) { copy(RGBS.fruit, o); onFruitSpeck = true; }
+  return true;
+}
+
+// ---------- visual fixes F: clearings ----------
+
+const FCL = R.fixes.clearings;
+/** Visual fixes F switch (?off=clearings): huts stand on the land as it is. */
+export const clearingsOn: boolean = FCL.on && !styleOff('clearings');
+const sideOpen = new Uint8Array(8);   // per N8 neighbour: 1 where the land beyond is not cleared
+
+/** Which neighbours of a cleared tile are not cleared (the earth's edge frays toward them). */
+function clearedSides(mask: Uint8Array, w: number, h: number, tx: number, ty: number): void {
+  for (let k = 0; k < 8; k++) {
+    const [dx, dy] = N8[k]!;
+    const nx = tx + dx, ny = ty + dy;
+    sideOpen[k] = nx >= 0 && ny >= 0 && nx < w && ny < h && mask[ny * w + nx] !== 1 ? 1 : 0;
+  }
+}
+
+/**
+ * One pixel of a cleared tile: trodden earth (sand-1, with mud in small patches and a few light
+ * grains), except near an uncleared side, where the land keeps 2 in 3 of the edge pixels, then 1
+ * in 3, so the clearing has a ragged edge. False where the land stays.
+ */
+function earthPixel(ox: number, oy: number, px: number, py: number, o: RGB): boolean {
+  const d = edgeDistance(ox, oy, sideOpen);
+  if (d < FCL.edgePx && hash01(px, py, FCL.salt) < (FCL.edgePx - d) / (FCL.edgePx + 1)) return false;
+  if (cellNoise(px, py, FCL.mudCellPx, FCL.salt + 1) > FCL.mudAbove) copy(rampRgb(Mat.Wood, 1), o);
+  else copy(rampRgb(Mat.Sand, hash01(px, py, FCL.salt + 2) < FCL.grainShare ? 2 : 1), o);
+  return true;
 }
 
 function speck(px: number, py: number, salt: number, share: number): boolean {
@@ -736,6 +885,17 @@ function landPixel(
       forestFloor(dens, out);
       break;
     case Plant.FruitBushes:
+      if (bushesOn) {
+        // Bushes on a meadow: the ground between them is grass, as Plant.Grass at half the density.
+        onBush = bushPixel(px, py, dens, out);
+        if (!onBush) {
+          copy(out, tmp);
+          grad(tmp, RGBS.grassLight, dens / 2, out);
+          // Blades but no flowers: the grass's red flowers would read as berries off the bushes.
+          applyGrassDetail(px, py, (ground === Ground.Grassland ? D.tuftBase : 0) + D.tuftGrassBonus * dens / 2, false, out);
+        }
+        break;
+      }
       copy(out, tmp);
       grad(tmp, RGBS.fruitBush, dens, out);
       if (speck(px, py, SALT.fruit, R.fruitSpeck * dens)) { copy(RGBS.fruit, out); onFruitSpeck = true; }
@@ -760,7 +920,7 @@ function landRole(ground: number, plant: number): Role {
   if (onPeak) return Role.Peak;
   switch (plant) {
     case Plant.Forest: return Role.Forest;
-    case Plant.FruitBushes: return Role.Fruit;
+    case Plant.FruitBushes: return bushesOn && !onBush ? (ground === Ground.Desert ? Role.Desert : Role.Grass) : Role.Fruit;
     case Plant.Farmland: return Role.Farm;
   }
   return ground === Ground.Mountain ? Role.Mountain : ground === Ground.Desert ? Role.Desert : Role.Grass;
@@ -960,6 +1120,24 @@ export class TerrainLayer {
   get crossing(): Uint8Array | null { return this.extras.crossing; }
 
   /** Run-mode layers (all null in setup). */
+  /**
+   * Visual fixes F: the tiles a settlement stands on (sorted). Tiles that changed, and their
+   * neighbours (crowns overhang one tile), are redrawn.
+   */
+  setCleared(tiles: readonly number[]): void {
+    if (!clearingsOn) return;
+    const n = this.map.width * this.map.height;
+    let mask = this.extras.cleared ?? null;
+    if (!mask || mask.length !== n) { mask = new Uint8Array(n); this.extras.cleared = mask; setClearedMask(mask); }
+    const next = new Uint8Array(n);
+    for (const i of tiles) if (i >= 0 && i < n) next[i] = 1;
+    for (let i = 0; i < n; i++) {
+      if (mask[i] === next[i]) continue;
+      mask[i] = next[i]!;
+      this.markWithNeighbours(i);
+    }
+  }
+
   setRunLayers(marks: Uint8Array | null, hazards: Uint8Array | null, look: Uint8Array | null, base: MapData | null): void {
     this.extras.marks = marks;
     this.extras.hazards = hazards;

@@ -41,6 +41,32 @@ export const SPRITES: Record<string, SpriteDef> = {
       '........',
     ],
   },
+  // Visual fixes F: two more huts, picked by a hash of the tile, so a village is not one sprite in rows:
+  // a smaller hut with its door off-centre, and one with a patched roof.
+  hut_b: {
+    w: 8, h: 8, rows: [
+      '........',
+      '...WW...',
+      '..WYYW..',
+      '.WYYYYW.',
+      '.WYKYYW.',
+      '.WYKYYW.',
+      '..WWWW..',
+      '........',
+    ],
+  },
+  hut_c: {
+    w: 8, h: 8, rows: [
+      '...WW...',
+      '..WYMW..',
+      '.WYYYYW.',
+      'WYYwYYYW',
+      'WYYKKYMW',
+      'WYYKKYYW',
+      '.WWWWWW.',
+      '........',
+    ],
+  },
   house: {
     w: 16, h: 16, rows: [
       '................',

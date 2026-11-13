@@ -7,7 +7,7 @@ import { Ground, Plant, WallType } from '../shared/ids';
 import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
-import { Mat, rampMix, rampRgb, rampShift, rampsOn } from './ramps';
+import { Mat, rampMix, rampRgb, rampShift, rampsOn, styleOff } from './ramps';
 import { ditherOn, mixGrad } from './dither';
 
 const D = CONFIG.render.detail;
@@ -226,6 +226,151 @@ export interface Crown { x: number; y: number; r: number; tone: number }
  * The tree of crown cell (cx, cy): one possible crown per cell, on forest tiles only, existing
  * with a chance that grows with density. False when the cell has none.
  */
+// Visual fixes F: tiles a settlement stands on (per tile, 1), where no tree grows; null outside a run.
+let clearedMask: Uint8Array | null = null;
+export function setClearedMask(mask: Uint8Array | null): void { clearedMask = mask; }
+
+// ---------- visual fixes G: soft land edges ----------
+
+const FE = CONFIG.render.fixes.edges;
+/** Visual fixes G switch (?off=edges): land and lake shores keep their tile edges. */
+export const edgesOn: boolean = FE.on && !styleOff('edges');
+
+/** Smooth value noise in [0, 1) on cells of `cell` px (smoothstep between hashed corners). */
+export function valueNoise(x: number, y: number, cell: number, salt: number): number {
+  const fx = x / cell, fy = y / cell;
+  const x0 = Math.floor(fx), y0 = Math.floor(fy);
+  const ax = fx - x0, ay = fy - y0;
+  const sx = ax * ax * (3 - 2 * ax), sy = ay * ay * (3 - 2 * ay);
+  const a = hash01(x0, y0, salt), b = hash01(x0 + 1, y0, salt), c = hash01(x0, y0 + 1, salt), d = hash01(x0 + 1, y0 + 1, salt);
+  return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
+}
+
+/** Natural land: no wall, no water, no field, not cleared. Its ground and plants may fray into a neighbour's. */
+export function naturalTile(map: MapData, i: number): boolean {
+  return map.wall[i] === WallType.None && map.ground[i] !== Ground.Water && map.plantType[i] !== Plant.Farmland
+    && (clearedMask === null || clearedMask[i] !== 1);
+}
+
+/** Is tile (x, y) natural land drawn differently from tile i (ground, plants or their density)? */
+function differs(map: MapData, i: number, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= map.width || y >= map.height) return false;
+  const j = y * map.width + x;
+  if (j === i || !naturalTile(map, j)) return false;
+  return map.ground[j] !== map.ground[i] || map.plantType[j] !== map.plantType[i] || map.plantDensity[j] !== map.plantDensity[i];
+}
+
+/** A pixel's offset along one axis: noise up to ± ampPx plus ± jitterPx of grain, held within reachPx. */
+function edgeShift(px: number, py: number, salt: number): number {
+  const n = Math.round((valueNoise(px, py, FE.cellPx, salt) - 0.5) * 2 * FE.ampPx);
+  const j = Math.floor(hash01(px, py, salt + 2) * (2 * FE.jitterPx + 1)) - FE.jitterPx;
+  return Math.max(-FE.reachPx, Math.min(FE.reachPx, n + j));
+}
+
+/**
+ * Visual fixes G: the tile whose ground and plants pixel (px, py) shows. Within reachPx of a border
+ * between two natural land tiles, the pixel looks up the tile under a small noise offset, so the
+ * border frays instead of running straight along the grid; anywhere else, its own tile.
+ */
+export function edgeSource(map: MapData, px: number, py: number): number {
+  const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
+  const i = ty * map.width + tx;
+  if (!edgesOn) return i;
+  const ox = px - tx * TILE, oy = py - ty * TILE, r = FE.reachPx;
+  if (ox >= r && ox < TILE - r && oy >= r && oy < TILE - r) return i;
+  if (!naturalTile(map, i)) return i;
+  // Only the neighbours on the near sides can be reached; when none of them is natural land that looks
+  // different, the offset changes nothing (the same picture, no noise worked out).
+  const ddx = ox < r ? -1 : ox >= TILE - r ? 1 : 0, ddy = oy < r ? -1 : oy >= TILE - r ? 1 : 0;
+  if (!differs(map, i, tx + ddx, ty) && !differs(map, i, tx, ty + ddy) && !differs(map, i, tx + ddx, ty + ddy)) return i;
+  const sx = Math.floor((px + edgeShift(px, py, FE.salt)) / TILE), sy = Math.floor((py + edgeShift(px, py, FE.salt + 1)) / TILE);
+  if ((sx === tx && sy === ty) || sx < 0 || sy < 0 || sx >= map.width || sy >= map.height) return i;
+  const j = sy * map.width + sx;
+  return naturalTile(map, j) ? j : i;
+}
+
+// ---------- visual fixes G: lake and pond shores ----------
+
+/** A stream: Water ground with land within one tile everywhere around it (no wide water near). */
+export function narrowWater(map: MapData, depth: Uint8Array, x: number, y: number): boolean {
+  const i = y * map.width + x;
+  if (map.wall[i] !== WallType.None || depth[i]! > 1) return false;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < map.width && ny < map.height && depth[ny * map.width + nx]! > 1) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Open water on the ground: a lake, a pond or a stream (not a River or Sea wall). A pond's arm tips
+ * count as narrow water, so streams are in too: their banks come out smooth as well (mud, not sand).
+ */
+export function lakeTileAt(map: MapData, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= map.width || y >= map.height) return false;
+  const j = y * map.width + x;
+  return map.wall[j] === WallType.None && map.ground[j] === Ground.Water;
+}
+
+/**
+ * Visual fixes G: is tile (tx, ty) on a shore drawn along the smooth water field? Open ground water
+ * with land beside it, or land (no wall) beside such water. River and Sea walls keep their tile edges.
+ */
+export function shoreTile(map: MapData, tx: number, ty: number): boolean {
+  if (!edgesOn) return false;
+  const i = ty * map.width + tx;
+  if (map.wall[i] !== WallType.None) return false;
+  const water = isWaterTile(map, i);
+  if (water && !lakeTileAt(map, tx, ty)) return false;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const x = tx + dx, y = ty + dy;
+      if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue;
+      if (water ? !isWaterTile(map, y * map.width + x) : lakeTileAt(map, x, y)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The water field at a pixel of a shore tile: 1 on water tiles (every kind, so a river running into
+ * a lake gets no beach across its mouth), 0 on land, bilinear between tile centres and wobbled a
+ * little. The shore is where it crosses one half: a pond of a few tiles comes out round, not a plus.
+ */
+export function shoreFieldAt(map: MapData, px: number, py: number): number {
+  const fx = (px + 0.5) / TILE - 0.5, fy = (py + 0.5) / TILE - 0.5;
+  const x0 = Math.floor(fx), y0 = Math.floor(fy), ax = fx - x0, ay = fy - y0;
+  const at = (x: number, y: number): number =>
+    x >= 0 && y >= 0 && x < map.width && y < map.height && isWaterTile(map, y * map.width + x) ? 1 : 0;
+  const f = (at(x0, y0) * (1 - ax) + at(x0 + 1, y0) * ax) * (1 - ay) + (at(x0, y0 + 1) * (1 - ax) + at(x0 + 1, y0 + 1) * ax) * ay;
+  return f + (valueNoise(px, py, FE.shoreCellPx, FE.salt + 5) - 0.5) * FE.shoreNoise;
+}
+
+/**
+ * Every pixel's water (1) or land (0) as the terrain draws it: by tile, except along lake shores
+ * (shoreTile), where the smooth field decides. The snow and ice orders use it (winter.ts).
+ */
+export function shoreWaterMask(map: MapData, out: Uint8Array): void {
+  const pw = map.width * TILE;
+  for (let ty = 0; ty < map.height; ty++) {
+    for (let tx = 0; tx < map.width; tx++) {
+      const i = ty * map.width + tx;
+      const shore = shoreTile(map, tx, ty);
+      const v = isWaterTile(map, i) ? 1 : 0;
+      for (let oy = 0; oy < TILE; oy++) {
+        const py = ty * TILE + oy;
+        for (let ox = 0; ox < TILE; ox++) {
+          const px = tx * TILE + ox;
+          out[py * pw + px] = shore ? (shoreFieldAt(map, px, py) >= 0.5 ? 1 : 0) : v;
+        }
+      }
+    }
+  }
+}
+
 export function crownIn(map: MapData, cx: number, cy: number, out: Crown): boolean {
   const c = D.treeCell;
   const tx = cx * c + Math.floor(hash01(cx, cy, SALT.tree) * c);
@@ -233,8 +378,10 @@ export function crownIn(map: MapData, cx: number, cy: number, out: Crown): boole
   const tileX = Math.floor(tx / TILE);
   const tileY = Math.floor(ty / TILE);
   if (tileX < 0 || tileY < 0 || tileX >= map.width || tileY >= map.height) return false;
-  const ti = tileY * map.width + tileX;
+  // Visual fixes G: a tree near a forest's edge stands by the frayed edge, so a clearing is not a square hole.
+  const ti = edgeSource(map, tx, ty);
   if (map.plantType[ti] !== Plant.Forest || map.wall[ti] !== WallType.None) return false;
+  if (clearedMask !== null && clearedMask[ti] === 1) return false;
   const dens = map.plantDensity[ti]! / 255;
   if (hash01(cx, cy, SALT.tree + 2) >= D.treeBase + (1 - D.treeBase) * dens) return false;
   out.x = tx; out.y = ty;

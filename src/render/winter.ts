@@ -9,7 +9,7 @@ import { CONFIG } from '../config';
 import { Ground, WallType } from '../shared/ids';
 import { hash01 } from '../shared/hash';
 import type { MapData } from '../shared/types';
-import { isWaterTile } from './terrainDetail';
+import { isWaterTile, shoreWaterMask } from './terrainDetail';
 
 const TILE = CONFIG.map.tilePx;
 const SN = CONFIG.render.seasons.snow;
@@ -52,6 +52,9 @@ function sortByValue(values: Uint8Array): [Int32Array, Int32Array] {
   return [order, start];
 }
 
+/** Neighbours, the four sides first (a smooth shore's water pixel belongs to the water beside it). */
+const NEAR = [[0, -1], [-1, 0], [1, 0], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]] as const;
+
 /** One map's snow and ice orders, per pixel. */
 export class WinterField {
   readonly cold: Uint8Array;     // land: 0 snows first … 254 last; water NEVER
@@ -64,6 +67,8 @@ export class WinterField {
   iceList: Int32Array = new Int32Array(0);
   iceStart: Int32Array = new Int32Array(257);
   private readonly water: Uint8Array;
+  // Visual fixes G: each pixel's water as the terrain draws it (smooth shores).
+  private readonly waterPx: Uint8Array;
   private ready = false;
   /** Phase 3a: the cold front's share of the land per pixel (seasonFront.ts): snow lies first where winter came first. Null: the 2c order. */
   arrival: Float32Array | null = null;
@@ -76,6 +81,7 @@ export class WinterField {
     this.ice = new Uint8Array(this.pw * this.ph).fill(NEVER);
     this.ponds = new Uint8Array(w * h);
     this.water = new Uint8Array(w * h);
+    this.waterPx = new Uint8Array(this.pw * this.ph);
   }
 
   /** Tiles changed: true (and worked out again on the next `ensure`) when water came or went. */
@@ -93,6 +99,7 @@ export class WinterField {
     if (this.ready) return false;
     this.ready = true;
     for (let i = 0; i < this.w * this.h; i++) this.water[i] = isWaterTile(map, i) ? 1 : 0;
+    shoreWaterMask(map, this.waterPx);
     this.snowOrder(map);
     this.iceOrder(map);
     [this.coldList, this.coldStart] = sortByValue(this.cold);
@@ -108,10 +115,9 @@ export class WinterField {
     const hist = new Uint32Array(BINS);
     let land = 0;
     for (let py = 0; py < ph; py++) {
-      const ty = Math.floor(py / TILE);
       for (let px = 0; px < pw; px++) {
         const p = py * pw + px;
-        if (this.water[ty * this.w + Math.floor(px / TILE)]) { raw[p] = -1; continue; }
+        if (this.waterPx[p]) { raw[p] = -1; continue; }
         if (this.arrival) {
           const v = Math.min(1, Math.max(0, this.arrival[p]!));
           raw[p] = v;
@@ -135,6 +141,22 @@ export class WinterField {
       const v = raw[p]!;
       this.cold[p] = v < 0 ? NEVER : Math.min(254, Math.floor(below[Math.min(BINS - 1, Math.floor(v * BINS))]! * 255));
     }
+  }
+
+  /**
+   * The water tile a water pixel belongs to: its own, or (a lake's smooth shore reaching into a land
+   * tile, visual fixes G) the first water tile beside it, the four sides first; −1 for a land pixel.
+   */
+  private bodyTile(p: number): number {
+    if (!this.waterPx[p]) return -1;
+    const x = Math.floor((p % this.pw) / TILE), y = Math.floor(Math.floor(p / this.pw) / TILE);
+    const i = y * this.w + x;
+    if (this.water[i]) return i;
+    for (const [dx, dy] of NEAR) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < this.w && ny < this.h && this.water[ny * this.w + nx]) return ny * this.w + nx;
+    }
+    return -1;
   }
 
   /**
@@ -169,8 +191,7 @@ export class WinterField {
     const dist = new Uint8Array(pw * ph).fill(255);
     const queue = new Int32Array(pw * ph);
     let head = 0, tail = 0;
-    const waterPx = (p: number): boolean => this.water[Math.floor(Math.floor(p / pw) / TILE) * w + Math.floor((p % pw) / TILE)] === 1;
-    for (let p = 0; p < pw * ph; p++) if (!waterPx(p)) { dist[p] = 0; queue[tail++] = p; }
+    for (let p = 0; p < pw * ph; p++) if (!this.waterPx[p]) { dist[p] = 0; queue[tail++] = p; }
     while (head < tail) {
       const p = queue[head++]!;
       const d = dist[p]! + 1;
@@ -188,14 +209,14 @@ export class WinterField {
     // The deepest pixel of each pond, so a pond is frozen through when the line is full.
     const deepest = new Uint8Array(size.length);
     for (let p = 0; p < pw * ph; p++) {
-      const i = Math.floor(Math.floor(p / pw) / TILE) * w + Math.floor((p % pw) / TILE);
-      if (this.ponds[i] && dist[p]! > deepest[comp[i]!]!) deepest[comp[i]!] = dist[p]!;
+      const i = this.bodyTile(p);
+      if (i >= 0 && this.ponds[i] && dist[p]! > deepest[comp[i]!]!) deepest[comp[i]!] = dist[p]!;
     }
     for (let p = 0; p < pw * ph; p++) {
       const x = p % pw, y = (p - x) / pw;
-      const i = Math.floor(y / TILE) * w + Math.floor(x / TILE);
+      const i = this.bodyTile(p);
       const d = dist[p]!;
-      if (!this.water[i] || map.wall[i] === WallType.Sea) { this.ice[p] = NEVER; continue; }
+      if (i < 0 || map.wall[i] === WallType.Sea) { this.ice[p] = NEVER; continue; }
       if (this.ponds[i]) { this.ice[p] = Math.min(254, Math.floor(((d - 1) / Math.max(1, deepest[comp[i]!]!)) * 255)); continue; }
       const [a, b] = map.wall[i] === WallType.River ? IC.riverRimPx : IC.lakeRimPx;
       const rim = a! + cellNoise(x, y, IC.noiseCellPx, IC.noiseSalt) * (b! - a!);

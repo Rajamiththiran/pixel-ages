@@ -127,6 +127,9 @@
   flex: 1; min-width: 0; padding: 0 10px; font: var(--type-label); background: var(--tray-500); color: var(--cream-soft);
   border: 0; box-shadow: none; transform: none;
 }
+/* Visual fixes E: in a narrow window the panel shrinks (layout.ts sets data-narrow); four tabs still fit their words. */
+:root[data-ui="tray"][data-fit] .tabs button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-ui="tray"][data-fit][data-narrow] .tabs button { flex: 1 1 auto; padding: 0 2px; font: var(--type-caption); }
 :root[data-ui="tray"] .tabs button:hover { background: var(--tray-500); color: var(--cream); }
 :root[data-ui="tray"] .tabs button.active { background: var(--tray-400); color: var(--cream); box-shadow: inset 0 -3px 0 var(--brass); }
 :root[data-ui="tray"] .tab-body { padding: var(--space-m); font: var(--type-body); color: var(--cream-soft); }
