@@ -198,6 +198,10 @@
 :root[data-ui="tray"] .bottombar .yearbox, :root[data-ui="tray"].pixel-font .bottombar .yearbox {
   font: var(--type-year); color: var(--cream); min-width: 212px; white-space: nowrap; margin-left: var(--space-s);
 }
+/* Seasons Phase 4 (mockup D): the year box takes a caption line under the year ("season held at Fly", "drought year"). */
+:root[data-ui="tray"] .bottombar .yearwrap { display: inline-flex; flex-direction: column; justify-content: center; }
+:root[data-ui="tray"] .bottombar .yearnote { font: var(--type-caption); color: var(--cream-muted); white-space: nowrap; margin-left: var(--space-s); }
+:root[data-ui="tray"] .bottombar .yearnote.warn { color: var(--warning); }
 :root[data-ui="tray"] .bottombar .mode, :root[data-ui="tray"] .bottombar .fps { font: var(--type-caption); color: var(--cream-muted); white-space: nowrap; }
 :root[data-ui="tray"] .bottombar .rate { min-width: 92px; }
 :root[data-ui="tray"] .bottombar .grow { min-width: 120px; margin: 0 var(--space-s); }

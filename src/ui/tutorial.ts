@@ -1,7 +1,7 @@
 // First-launch tutorial (§20.8) and the About panel: plain modals.
 
 import { VERSION } from '../version';
-import { SPEEDS, speedRow } from '../shared/speeds';
+import { SPEEDS, speedKey, speedRow } from '../shared/speeds';
 import { h } from './layout';
 
 /** Credits in the About panel (names given by the owner, DECISIONS 7.5). */
@@ -21,7 +21,7 @@ const CARDS: Array<[string, string[]]> = [
     'Nothing can be changed once the run starts: you only watch. (Intervention mode, in the Run tab, is the one exception: the floods, fires, gifts and moves you make become part of the run.)',
   ]],
   ['4 · Seed & Run', [
-    `In the Run tab, pick a seed and the climate drift, then press Run ▶. Space pauses; the speed buttons, ${speedRow(SPEEDS[0]!).label} to ${speedRow(SPEEDS[SPEEDS.length - 1]!).label} (keys ${SPEEDS.join(' ')}, − and +), set how fast the years pass.`,
+    `In the Run tab, pick a seed and the climate drift, then press Run ▶. Space pauses; the speed buttons, ${speedRow(SPEEDS[0]!).label} to ${speedRow(SPEEDS[SPEEDS.length - 1]!).label} (keys ${SPEEDS.map(speedKey).join(' ')}, − and +), set how fast the years pass.`,
     'The same setup with the same seed always gives the same history, so you can change one thing and compare.',
   ]],
   ['5 · The land changes', [

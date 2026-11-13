@@ -625,6 +625,9 @@ export class TrampleLayer {
   readonly canvas: HTMLCanvasElement;
   private readonly img: ImageData;
   private key = '';
+  /** Seasons Phase 7: trampled pixels (1), which snow only dusts; bumped `version` when it changes. */
+  readonly mask: Uint8Array;
+  version = 0;
   /** Nothing drawn (no groups): the renderer skips the canvas. */
   empty = true;
 
@@ -633,6 +636,7 @@ export class TrampleLayer {
     this.canvas.width = width * TILE;
     this.canvas.height = height * TILE;
     this.img = this.canvas.getContext('2d')!.createImageData(this.canvas.width, this.canvas.height);
+    this.mask = new Uint8Array(this.canvas.width * this.canvas.height);
   }
 
   update(map: MapData, groups: ReadonlyArray<{ homeX: number; homeY: number; mode: number; population: number }>): void {
@@ -645,6 +649,8 @@ export class TrampleLayer {
     this.empty = groups.length === 0;
     const d = this.img.data;
     d.fill(0);
+    this.mask.fill(0);
+    this.version++;
     const W = this.canvas.width;
     for (const g of groups) {
       const r = radius(g);
@@ -659,6 +665,7 @@ export class TrampleLayer {
           const o = (y * W + x) * 4;
           d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2];
           d[o + 3] = Math.round(255 * T.alpha * (1 - dist * dist));
+          this.mask[y * W + x] = 1;
         }
       }
     }
@@ -669,6 +676,8 @@ export class TrampleLayer {
     this.key = '';
     this.empty = true;
     this.img.data.fill(0);
+    this.mask.fill(0);
+    this.version++;
     this.canvas.getContext('2d')!.putImageData(this.img, 0, 0);
   }
 }

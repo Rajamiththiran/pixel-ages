@@ -5,20 +5,28 @@ export const CONFIG = {
   time: {
     ticksPerYear: 12,
     // Speeds (owner, 6 Nov 2026; docs/pixel-ages-speeds-plan.md). Slow speeds let seasons and
-    // climate drift be watched; fast ones skip centuries. `speed` is the key that picks it (and
-    // the old ×-name: 8× is 16 times 1×, not 8); `label` is the button's name (owner: short and
+    // climate drift be watched; fast ones skip centuries. `speed` is its value (the old ×-name: 8× is
+    // 16 times 1×, not 8; Watch, slower than Drift's 0, is −1); `label` is the button's name (owner: short and
     // creative, set A of plan §7.2). Months per second = yearsPerSecond × ticksPerYear.
     // `seasonShow` (Phase 4, owner's choice §7.3): how much of the season shows while time runs at
     // this speed, from 1 (the full year) to 0 (the held fast-forward look, render.f8.season.heldWeights).
     // Drift (owner, 6 Nov 2026): a sixth, slowest speed on key 0, to watch seasons and climate turn.
+    // Seasons Phase 3b (owner decisions S1–S4, the plan's recommendations): a seventh, slowest speed,
+    // Watch, at which the season fronts play in full (a season 6 s, a year 24 s). `key` is the key that
+    // picks a speed (Watch's is the backquote, left of 1). `look` is the season look while time runs
+    // (seasons plan §6.3): `full` the four seasons with their fronts, `two` two looks a year (green from
+    // the spring front, winter from the winter front: S3, Walk), `held` the one calm look (S4: Trot holds).
+    // `seasonShow` now drives only the old tint (`?off=seasonRamps`) and the gradual land changes.
+    // `holdDay` (S2): the day stops at noon, so a front never plays in the dark.
     speeds: [
-      { speed: 0, label: 'Drift', yearsPerSecond: 1 / 6, seasonShow: 1 },  // 2 months a second
-      { speed: 1, label: 'Crawl', yearsPerSecond: 0.5, seasonShow: 1 },    // 6 months a second
-      { speed: 2, label: 'Walk', yearsPerSecond: 1, seasonShow: 1 },       // 12: the old 1×
-      { speed: 4, label: 'Trot', yearsPerSecond: 3, seasonShow: 0.5 },     // 36: softened
-      { speed: 6, label: 'Ride', yearsPerSecond: 5, seasonShow: 0 },       // 60: held
-      { speed: 8, label: 'Fly', yearsPerSecond: 8, seasonShow: 0 },        // 96: the old 8×; held
-    ],
+      { speed: -1, key: '`', label: 'Watch', yearsPerSecond: 1 / 24, seasonShow: 1, look: 'full', holdDay: true },  // 0.5 months a second
+      { speed: 0, key: '0', label: 'Drift', yearsPerSecond: 1 / 6, seasonShow: 1, look: 'full', holdDay: false },  // 2 months a second
+      { speed: 1, key: '1', label: 'Crawl', yearsPerSecond: 0.5, seasonShow: 1, look: 'full', holdDay: false },    // 6 months a second
+      { speed: 2, key: '2', label: 'Walk', yearsPerSecond: 1, seasonShow: 1, look: 'two', holdDay: false },        // 12: the old 1×
+      { speed: 4, key: '4', label: 'Trot', yearsPerSecond: 3, seasonShow: 0.5, look: 'held', holdDay: false },     // 36: softened tint
+      { speed: 6, key: '6', label: 'Ride', yearsPerSecond: 5, seasonShow: 0, look: 'held', holdDay: false },       // 60: held
+      { speed: 8, key: '8', label: 'Fly', yearsPerSecond: 8, seasonShow: 0, look: 'held', holdDay: false },        // 96: the old 8×; held
+    ] as { speed: -1 | 0 | 1 | 2 | 4 | 6 | 8; key: string; label: string; yearsPerSecond: number; seasonShow: number; look: 'full' | 'two' | 'held'; holdDay: boolean }[],
     defaultSpeed: 2,             // a run starts at 1 year a second, the same pace as before (owner's choice)
     maxFramesPerSecond: 30,
     maxWorkMsPerLoop: 50,
@@ -856,6 +864,7 @@ export const CONFIG = {
         // springSprouts (else bare furrows), summer gold below summerGold (else green), autumn gold below
         // autumnGold (else stubble), winter stubble below winterStubble (else bare).
         springSprouts: 0.55, summerGold: 0.3, autumnGold: 0.4, winterStubble: 0.4,
+        heldGold: 0.5,           // Phase 4: in the held fast-forward look, blocks below this are gold, the rest green (mockup D: half and half)
         sproutShare: 0.8,        // ridge pixels in even columns that carry a sprout (mockup)
         // The harvest (render only, from the simulation's farmers): each autumn month a farmland tile
         // with a Farm worker on it or next to it is cut this much further (1 = done), reset each spring;
@@ -913,6 +922,119 @@ export const CONFIG = {
         litterGold: 0.23, litterYellow: 0.23,
         salt: 181,
       },
+      // Phase 3a: the season front (mockup C; plan §6.2). Each pixel has a fixed time each front reaches
+      // it, for three fields: warm (spring and summer), autumn, and cold (winter, and the order snow
+      // lies in). A field grows from seeds, one per seedCellPx square at a hashed spot, on a grid of
+      // gridPx: a seed starts after startSpreadPx of growth × its lateness (heightWeight × height +
+      // latitudeWeight × how far north + jitterWeight × a hash, for the warm field; high and north
+      // first for the others), so the front starts in the lowland and the south (spring) or on the
+      // heights and in the north (autumn, snow) in several spots that grow and merge. A step costs
+      // stepCost × (1 + noiseAmp × (clustered noise − 0.5)) × (1 + slope × height, the warm field;
+      // × (1 + slope × lowness) the others), so the patches are lumpy and climb slowly. The times become
+      // The noise in the cost averages out over distance (patches grow round), so the arrival also gets
+      // ± edgeNoisePx of growth from clustered noise in three octaves (edgeNoiseCellPx, edgeNoiseWeights):
+      // ragged edges, as the mockup's noise term. The times become
+      // shares of the land (the front moves evenly), its edge dithered with the Bayer matrix over
+      // edgeShare. Each year the warm, autumn and cold keys shift by up to ± yearJitter / 2 of the
+      // front in patches yearJitterCellPx wide (owner decision S15: a fixed base, a little different
+      // each year). Off: `?off=front` (Phase 1b's plain Bayer dissolve).
+      front: {
+        on: true,
+        gridPx: 2, seedCellPx: 96, startSpreadPx: 360,
+        heightWeight: 0.5, latitudeWeight: 0.25, jitterWeight: 0.25,
+        stepCost: 16, noiseAmp: 1.2, noiseCellPx: [24, 8], noiseWeights: [0.6, 0.4], slope: 2,
+        edgeNoisePx: 48, edgeNoiseCellPx: [48, 16, 6], edgeNoiseWeights: [0.5, 0.3, 0.2],
+        edgeShare: 0.035,
+        yearJitter: 0.12, yearJitterCellPx: 160,
+        salt: 191,
+      },
+      // Phase 4: the held fast-forward look (mockup D) at Trot, Ride, Fly and in the time-lapse: summer
+      // ramps, deciduous green, fields half green and half gold (fields.heldGold), snow on the peaks
+      // only, no rain or snow falling (the clouds stay: owner decision S21, the plan's recommendation).
+      // Only years-long weather breaks it: the grass moisture, drought cracks and puddles follow each
+      // tile's rain averaged over rainYears of screen time (at Fly a year lasts 125 ms and would only
+      // flash), stepped at most every stepMs. Off: `?off=held` (the held look of Phase 1b).
+      // `note` (`?off=seasonNote`): the caption under the year: "season held at Fly", or "drought year"
+      // / "wet year" (owner decision S11, the plan's recommendation) while a scheduled Drought or Wet
+      // period of at least minEventYears runs, or landShare of the land is that dry or wet on the
+      // average (rain ÷ painted rain below f8.weather.droughtBelow, above wetAbove).
+      held: {
+        on: true,
+        rainYears: 2, stepMs: 100,
+        note: { on: true, landShare: 0.25, minEventYears: 3 },
+      },
+      // Phase 5: pixel clouds (mockup E). `slots` clouds travel with the wind (f8.weather.windPxPerS) across
+      // the map and marginPx beyond it; each pass a slot shows a cloud or not, by the rain under its row
+      // (shareDry of the slots where rain is dryRain or less, shareWet at wetRain or more), sized sizeDry to
+      // sizeWet. A cloud is a cluster of `puffs` discs (4–7, plus a centre disc of coreRadiusPx) spread over
+      // spreadPx, radii puffRadiusPx, squashed by aspect (the mockup's makeClouds). Owner decision S12
+      // (10 Nov 2026): the mockup's way throughout. Shadows: the ground under a cloud, offset
+      // shadowOffsetPx, drops ramp steps with a world-fixed checker (the rim: half the pixels one step; the
+      // core within coreScale: half one, half two), no translucency (`?off=cloudDither`: a crisp-edged navy
+      // wash of f8.weather.shadowAlpha instead). Bodies: opaque at every zoom, over the people (the mockup's
+      // rim: lit top-left within rimPx, underside within undersidePx, a dithered band within bandPx).
+      // A storm (dev `?weather=storm` until Phase 7): every slot, stormSize, the storm-cloud ramp, and a
+      // world-fixed checker one step down over the whole map. Off: `?off=clouds` (the F8 noise wash).
+      clouds: {
+        on: true,
+        slots: 16, marginPx: 200, salt: 211,
+        puffs: [4, 8], spreadPx: [70, 22], puffRadiusPx: [9, 21], coreRadiusPx: 16, aspect: 1.25, coreScale: 0.8,
+        dryRain: 20, wetRain: 80, shareDry: 0.15, shareWet: 0.8, sizeDry: 0.9, sizeWet: 1.25, stormSize: 1.5,
+        shadowOffsetPx: [28, 20],
+        rimPx: [3, 3], undersidePx: [2, 4], bandPx: [3, 7],
+        // Phase 6: a cloud over land with rain at least f8.weather.rainAbove rains with this chance per pass.
+        rainyShare: 0.6,
+      },
+      // Phase 6: rain and snowfall (mockup E). Each raining cloud carries particle spots (inside the cloud
+      // grown to spotScale, shifted down-right by the shadow offset less spotShiftPx, never under its own
+      // body), snowDensity per pixel; rain uses the first rainDensity ÷ snowDensity of them; a storm rains
+      // everywhere at stormDensity. A spot plays 3 frames of frameMs (2 flashes a second, under the readme's
+      // 3): a streak of streakPx (stormStreakPx in a storm) stepping 3 px down, lead pixel precip-1, tail
+      // precip-0, then a 3-pixel splash; a flake (precip-4, flakePairShare in pairs with precip-3) steps
+      // snowStepPx down a frame, only where the land shows winter. At most maxParticles. No alpha and no
+      // Math.random. At night they are drawn after the night pass at nightMix of the night (owner decision
+      // S13, the plan's recommendation), so they still read. Off: `?off=rainFrames` (the F8 particles).
+      // Wet ground: land under a raining cloud grown to wetScale drops one more ramp step (`?off=wetGround`).
+      // Puddles: under it grown to puddleScale, small ovals (cells puddleCellPx, puddleShare of them, radii
+      // puddleRadiusPx) of the opaque water ramp on open ground, in hollows (tiles lower than a neighbour)
+      // and on flat land in puddleFlatShare of the tiles; not in winter (`?off=puddles`).
+      rain: {
+        frames: true, frameMs: 167,
+        rainDensity: 0.006, stormDensity: 0.012, snowDensity: 0.008,
+        spotScale: 1.4, spotShiftPx: 6, streakPx: 3, stormStreakPx: 5, snowStepPx: 2, flakePairShare: 0.2,
+        maxParticles: 4000, nightMix: 0.5,
+        wetGround: true, wetScale: 1.6,
+        puddles: true, puddleScale: 1.5, puddleCellPx: [6, 4], puddleShare: 0.22, puddleRadiusPx: [2.4, 1.2], puddleFlatShare: 0.5,
+        salt: 221,
+      },
+      // Phase 7: weather over years (mockup E). Owner decisions S7–S10 were not answered: the plan's
+      // recommendations. Drought (`?off=drought`): open land of tiles far drier than painted (f8.weather.
+      // droughtBelow) cracks in clustered patches (noise of cells patchCellPx, weights patchWeights, above
+      // patchAbove): the season's sand at step 1 (bodyLightShare of it step 2), cracks at step 0, the mockup's
+      // pattern (lines every crackEvery px, crackShare of their stretches); water never shrinks (S7). Wet
+      // year (`?off=wetYear`): tiles far wetter (wetAbove) get the rain's puddles (Phase 6's ovals), opaque.
+      // Both replace the F8 translucent cracks and puddles. Spring meltwater is colour only (S8: the spring
+      // water ramp of Phase 1b).
+      drought: { on: true, patchCellPx: [12, 4], patchWeights: [0.6, 0.4], patchAbove: 0.58, bodyLightShare: 0.3, crackEvery: [7, 9], crackShare: [0.7, 0.6], salt: 231 },
+      wetYear: { on: true },
+      // Storms (S9: high shown rain, more likely in a scheduled Wet period): each year, with chance
+      // maxChance × (map's mean shown rain − rainFrom) ÷ (rainFull − rainFrom) (0 below rainFrom), plus
+      // wetBonus while a Wet period runs, a storm blows for `months` from a hashed month: storm clouds as they
+      // come, rain everywhere and the gloom.
+      storm: { on: true, rainFrom: 60, rainFull: 90, maxChance: 0.5, wetBonus: 0.35, months: 1, salt: 241 },
+      // Dawn mist (S10, recommendation c: dawns in spring and autumn, denser where the shown rain is high;
+      // under the people, as ground fog). The mockup's bands: density = max(lowWeight × low, near water) ×
+      // band; low = (1 − height ÷ lowBelow) × (1 − px to water ÷ lowReachPx) (low land only near water: a flat
+      // map is all low land), near = 1 − px to water ÷ reachPx, band = ½ + ½ sin(y ÷ bandPx + noise(cells
+      // bandNoiseCellPx) × bandNoiseAmp); × the dawn strength × (rainBase + rainGain × rain ÷ 100).
+      // Above thick a mist pixel (step 4 above thicker, else 3), from thin to thick dithered (Bayer × ditherGain).
+      // It thickens over the last riseShare of the night and clears over the dawn. `?off=mist`; dev `?weather=mist`.
+      mist: {
+        on: true, lowBelow: 0.45, lowWeight: 0.8, reachPx: 60, lowReachPx: 120, bandPx: 7, bandNoiseCellPx: [70, 26], bandNoiseAmp: 7,
+        thick: 0.62, thicker: 0.8, thin: 0.4, ditherGain: 3.2, rainBase: 0.75, rainGain: 0.5, riseShare: 0.4, levels: 16, salt: 251,
+      },
+      // Snow with paths showing (`?off=snowPaths`): trampled ground round homes is only dusted under snow.
+      snowPaths: { on: true },
     },
     areaOutlineAlpha: 0.55,      // §18.7 "1 px light outline"
     hoverOutlineAlpha: 0.9,
@@ -980,7 +1102,9 @@ export const CONFIG = {
         crackShare: 0.12, puddleShare: 0.06,
       },
       // Day and night (§14.2): a real-time cycle that runs while the world plays.
-      light: { dayMs: 48000, nightShare: 0.3, dusk: 0.12, maxDark: 0.5, glowRadiusPx: 7, fireGlowRadiusPx: 12 }, // glows: lit windows, fires
+      // holdCatchUp (seasons Phase 3b, S2): at a speed that holds the day (Watch) the day stops in full
+      // daylight; at dusk, night or dawn it runs this many times faster until daylight (at most ~4 s, no pop).
+      light: { dayMs: 48000, nightShare: 0.3, dusk: 0.12, maxDark: 0.5, glowRadiusPx: 7, fireGlowRadiusPx: 12, holdCatchUp: 6 }, // glows: lit windows, fires
       // People and animals (§14.3).
       people: {
         poseFrameMs: 380,        // work poses (bending, hoeing, chopping) alternate this often

@@ -101,7 +101,7 @@ describe('tiles dissolve in Bayer steps', () => {
 describe('when land and rain change gradually', () => {
   it('while a season can be read; not at the speeds that hold the look, nor in a time-lapse', () => {
     const at = (speed: number, playing = true, timelapse = false) => gradualLand({ speed, playing, timelapse, yearsPerSecond: 0 });
-    expect(SPEEDS.map((v) => at(v))).toEqual([true, true, true, true, false, false]);
+    expect(SPEEDS.map((v) => at(v))).toEqual([true, true, true, true, true, false, false]);
     expect(at(8, false)).toBe(true);          // paused (Step) at Fly
     expect(at(2, true, true)).toBe(false);    // time-lapse
   });

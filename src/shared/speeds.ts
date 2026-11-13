@@ -7,7 +7,7 @@ import { CONFIG } from '../config';
 const T = CONFIG.time;
 type Row = (typeof T.speeds)[number];
 
-/** A speed button's value: 0, 1, 2, 4, 6 or 8 (from the config table). */
+/** A speed button's value: −1 (Watch), 0, 1, 2, 4, 6 or 8 (from the config table). */
 export type Speed = Row['speed'];
 
 /** Every speed, slowest first. */
@@ -31,8 +31,11 @@ export function stepSpeed(speed: number, dir: 1 | -1): Speed {
   return SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + dir))]!;
 }
 
-/** The speed a key picks: '0' '1' '2' '4' '6' '8', else null. */
-export const speedForKey = (key: string): Speed | null => SPEEDS.find((v) => String(v) === key) ?? null;
+/** The speed a key picks: the backquote (Watch), '0' '1' '2' '4' '6' '8', else null. */
+export const speedForKey = (key: string): Speed | null => T.speeds.find((r) => r.key === key)?.speed ?? null;
+
+/** The key that picks a speed (shown in tooltips and the tutorial). */
+export const speedKey = (speed: number): string => speedRow(speed).key;
 
 /** Below half a year a second, a pace reads better in months (Drift: 1/6 year = 2 months). */
 export const inMonths = (yearsPerSecond: number): boolean => yearsPerSecond < 0.5;
@@ -40,6 +43,6 @@ export const inMonths = (yearsPerSecond: number): boolean => yearsPerSecond < 0.
 /** Tooltip text: "2 months per second", "0.5 years per second", "1 year per second". */
 export function speedTitle(speed: number): string {
   const y = yearsPerSecondAt(speed);
-  if (inMonths(y)) return `${Math.round(y * T.ticksPerYear)} months per second`;
+  if (inMonths(y)) return `${Math.round(y * T.ticksPerYear * 10) / 10} months per second`;
   return `${y} ${y === 1 ? 'year' : 'years'} per second`;
 }
