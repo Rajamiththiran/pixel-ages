@@ -11,6 +11,7 @@ import type { MapData } from '../shared/types';
 import { getSprite, type Carry } from './sprites';
 import { hash01 } from '../shared/hash';
 import { GROUP_COLORS, PALETTE, RGBS, darken } from './palette';
+import { styleOff } from './ramps';
 
 const R = CONFIG.render;
 const RT = CONFIG.render.towns;
@@ -230,7 +231,8 @@ export interface BuildingGroup {
 export type BuildingKind =
   | 'leanTo' | 'hut' | 'longhouse' | 'house' | 'stoneHouse' | 'city'
   | 'temple' | 'granary' | 'well' | 'kiln' | 'smithy' | 'scriptorium';
-interface Building { x: number; y: number; w: number; h: number; img: BuildingKind }
+// Visual fixes F: `sprite` (a hut's variant), nudged `ox`, `oy` px so 1-tile buildings don't line up.
+interface Building { x: number; y: number; w: number; h: number; img: BuildingKind; sprite: string; ox: number; oy: number }
 interface WallPiece { x: number; y: number; stone: boolean }
 
 const FOOTPRINT: Record<BuildingKind, [number, number]> = {
@@ -240,6 +242,23 @@ const FOOTPRINT: Record<BuildingKind, [number, number]> = {
 /** Buildings with a hearth inside: they smoke by day and their windows glow at night. */
 const HEARTH = new Set<BuildingKind>(['longhouse', 'house', 'stoneHouse', 'city', 'kiln', 'smithy']);
 const LIT = new Set<BuildingKind>(['hut', 'longhouse', 'house', 'stoneHouse', 'city', 'temple', 'scriptorium', 'smithy', 'kiln']);
+
+const HV = CONFIG.render.fixes.huts;
+/** Visual fixes F switch (?off=hutVariety): every hut the same sprite, on the tile grid. */
+const hutVarietyOn: boolean = HV.on && !styleOff('hutVariety');
+const HUTS = ['hut', 'hut_b', 'hut_c'] as const;
+
+/**
+ * A building as drawn: a hut takes one of three sprites by a hash of its tile, and every 1-tile
+ * building is nudged by a hashed −nudgePx…+nudgePx sideways and 0…−liftPx up, so rows break up.
+ */
+function placed(kind: BuildingKind, x: number, y: number, w: number, h: number): Building {
+  if (!hutVarietyOn || w !== 1 || h !== 1) return { x, y, w, h, img: kind, sprite: kind, ox: 0, oy: 0 };
+  const sprite = kind === 'hut' ? HUTS[Math.floor(hash01(x, y, HV.salt) * HUTS.length)]! : kind;
+  const ox = Math.floor(hash01(x, y, HV.salt + 1) * (2 * HV.nudgePx + 1)) - HV.nudgePx;
+  const oy = -Math.floor(hash01(x, y, HV.salt + 2) * (HV.liftPx + 1));
+  return { x, y, w, h, img: kind, sprite, ox, oy };
+}
 
 /** Special buildings (§14.4) and the discoveries (or chief) that bring them. */
 function specials(g: BuildingGroup): BuildingKind[] {
@@ -334,7 +353,7 @@ export class BuildingLayer {
           for (let yy = 0; yy < fh && ok; yy++) for (let xx = 0; xx < fw && ok; xx++) ok = free(x + xx, y + yy, onFields);
           if (!ok) continue;
           for (let yy = 0; yy < fh; yy++) for (let xx = 0; xx < fw; xx++) used.add((y + yy) * map.width + x + xx);
-          this.list.push({ x, y, w: fw, h: fh, img: kind });
+          this.list.push(placed(kind, x, y, fw, fh));
           farthest = Math.max(farthest, Math.sqrt(d2) + Math.max(fw, fh) - 1);
           next++;
         }
@@ -344,11 +363,22 @@ export class BuildingLayer {
     this.chimneys = [];
     this.windows = [];
     for (const b of this.list) {
-      const left = b.x * TILE, top = (b.y + b.h) * TILE - SPRITE_H[b.img];
+      const left = b.x * TILE + b.ox, top = (b.y + b.h) * TILE + b.oy - SPRITE_H[b.img];
       if (HEARTH.has(b.img)) this.chimneys.push(left + b.w * TILE * 0.7, top + 3);
-      if (LIT.has(b.img)) this.windows.push(left + (b.w * TILE) / 2, (b.y + b.h) * TILE - 4);
+      if (LIT.has(b.img)) this.windows.push(left + (b.w * TILE) / 2, (b.y + b.h) * TILE + b.oy - 4);
     }
+    // Visual fixes F: the tiles a settlement stands on are cleared (terrain.ts): no crowns, trodden earth.
+    const cleared = new Set<number>(this.plaza);
+    for (const g of groups) cleared.add(g.homeY * map.width + g.homeX);
+    for (const b of this.list) for (let yy = 0; yy < b.h; yy++) for (let xx = 0; xx < b.w; xx++) cleared.add((b.y + yy) * map.width + b.x + xx);
+    for (const [i] of this.lanes) cleared.add(i);
+    this.cleared = [...cleared].sort((a, b) => a - b);
+    this.clearedVersion++;
   }
+
+  /** Visual fixes F: tiles under buildings, plazas, lanes and homes (sorted); bumped `clearedVersion` when rebuilt. */
+  cleared: number[] = [];
+  clearedVersion = 0;
 
   /**
    * G1: a town keeps open ground for a paved plaza round its home tile and two cross lanes running
@@ -419,10 +449,10 @@ export class BuildingLayer {
   collect(push: (img: HTMLCanvasElement, x: number, y: number) => void, night = false, snowAt: ((x: number, y: number) => boolean) | null = null): void {
     for (const b of this.list) {
       const snow = snowAt !== null && snowAt((b.x + b.w / 2) * TILE, (b.y + b.h / 2) * TILE);
-      const name = `${b.img}|${night ? 1 : 0}|${snow ? 1 : 0}`;
+      const name = `${b.sprite}|${night ? 1 : 0}|${snow ? 1 : 0}`;
       let img = this.imgs.get(name);
-      if (!img) { img = getSprite(b.img, {}, false, night, snow); this.imgs.set(name, img); }
-      push(img, (b.x + b.w / 2) * TILE, (b.y + b.h) * TILE);
+      if (!img) { img = getSprite(b.sprite, {}, false, night, snow); this.imgs.set(name, img); }
+      push(img, (b.x + b.w / 2) * TILE + b.ox, (b.y + b.h) * TILE + b.oy);
     }
     for (const st of this.stalls) push(getSprite('stall', { C: st.C, D: darken(st.C) }), st.x, st.y);
     for (const w of this.walls) {
@@ -449,6 +479,8 @@ export class BuildingLayer {
     this.stalls = [];
     this.chimneys = [];
     this.windows = [];
+    this.cleared = [];
+    this.clearedVersion++;
   }
 
   /** G1: where market stalls stand (map px), for the market crowd. */

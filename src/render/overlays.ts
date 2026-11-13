@@ -5,6 +5,7 @@ import type { MapData } from '../shared/types';
 import { areaName, type AreaResult } from '../shared/areas';
 import { GROUP_COLORS, RGBS, hexToRgb, type RGB } from './palette';
 import type { HeatLayer } from '../shared/protocol';
+import { drawPixelCircle } from './pixelCircle';
 
 const TILE = CONFIG.map.tilePx;
 const R = CONFIG.render;
@@ -261,11 +262,8 @@ export function drawHoverTile(ctx: CanvasRenderingContext2D, x: number, y: numbe
 /** Faint circle showing the brush footprint. */
 export function drawBrushPreview(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
   if (size <= 1) return;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc((x + 0.5) * TILE, (y + 0.5) * TILE, (size / 2) * TILE, 0, Math.PI * 2);
-  ctx.stroke();
+  // Visual fixes D: a pixel circle, not an anti-aliased arc.
+  drawPixelCircle(ctx, (x + 0.5) * TILE, (y + 0.5) * TILE, (size / 2) * TILE, 'rgba(255, 255, 255, 0.35)');
 }
 
 /** Fog (§18.7): the selected group's unknown tiles darkened. One pixel per tile, scaled up. */

@@ -19,6 +19,7 @@ import { discoveryIcon, discoveryInText, ERA_ICONS, iconSprite, realmIcon } from
 import { isWaterTile } from './terrainDetail';
 import { glowSprite } from './light';
 import { styleOff } from './ramps';
+import { drawPixelCircle } from './pixelCircle';
 
 const E = CONFIG.render.f8.effects;
 const SM = CONFIG.render.f8.smoke;
@@ -487,11 +488,8 @@ export class Effects {
       if (t < 0) continue;                     // a burst that starts a little later (a kingdom's second ring)
       if (b.kind === 'glow') {
         ctx.globalAlpha = 1 - t;
-        ctx.strokeStyle = b.colour ?? PALETTE.fireYellow;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, 4 + t * (b.radius ?? E.eraGlowRadiusPx), 0, Math.PI * 2);
-        ctx.stroke();
+        // Visual fixes D: a 2 px pixel ring, not an anti-aliased arc.
+        drawPixelCircle(ctx, b.x, b.y, 4 + t * (b.radius ?? E.eraGlowRadiusPx), b.colour ?? PALETTE.fireYellow, 2);
       } else if (b.img) {
         ctx.globalAlpha = t < 0.75 ? 1 : (1 - t) * 4;
         const x = Math.round(b.x - b.img.width / 2), y = Math.round(b.y - b.img.height - t * E.iconRisePx);

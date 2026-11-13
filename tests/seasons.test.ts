@@ -9,7 +9,7 @@ import { Ground, Plant } from '../src/shared/ids';
 import type { MapData } from '../src/shared/types';
 import { createMap } from '../src/editor/mapState';
 import { TerrainLayer, drawTilePixels, dissolveTile, readTile, type TileExtras } from '../src/render/terrain';
-import { computeDepth } from '../src/render/terrainDetail';
+import { computeDepth, shoreWaterMask } from '../src/render/terrainDetail';
 import {
   NO_TAG, Role, createLook, createMatBuf, dissolveMat, matbufOn, readMatTile, resolveTile, sameMatLook, type MatBuf,
 } from '../src/render/materials';
@@ -60,13 +60,15 @@ const MAPS: ReadonlyArray<readonly [string, MapData, Extra]> = [
   ['H', scenarioH().map, none],
 ];
 
-// Terrain hashes taken before Phase 1a (6 Nov 2026), one per animation step in STEPS. Every later
-// phase must keep them while its own switches are off.
+// Terrain hashes, one per animation step in STEPS. Taken before Phase 1a (6 Nov 2026); every later
+// phase must keep them while its own switches are off. Retaken 13 Nov 2026 for the visual fixes
+// (docs/pixel-ages-visual-fixes-plan.md: ruins, bushes, walked areas and soft edges change the painted
+// terrain); with those switches off the 6 Nov hashes still hold (tests/visualfixesOff.test.ts).
 const GOLDEN: Record<string, string[]> = {
-  allTiles: ['c5dee6fe', 'f351a039', '9721c13d', 'a310e027'],
-  A: ['b18f65e4', '29f0b43c', '0f8e71a8', '273a6251'],
-  F: ['8f5283d2', '19478917', 'aeb0d896', '302cb3cf'],
-  H: ['4db6190d', '74ec91dd', 'b0443fcd', 'a8b4b835'],
+  allTiles: ['0e882cba', 'ef3d2ff4', 'e7fdd8b8', '572513de'],
+  A: ['8291ded1', 'cfc96e2c', '961ed371', '029e55d8'],
+  F: ['6b57aca5', '379c4614', '124aaee1', 'cf9a980c'],
+  H: ['ab2e4ab8', 'b4b47a64', '045ed32c', '6192d1c4'],
 };
 
 /** Today's colours: every rank shows the painted state. */
@@ -956,11 +958,13 @@ describe('seasons Phase 2c: where snow lies first', () => {
     let north = 0, south = 0;
     for (let x = 0; x < flat.pw; x++) { north += flat.cold[2 * flat.pw + x]!; south += flat.cold[(flat.ph - 3) * flat.pw + x]!; }
     expect(north).toBeLessThan(south);
-    // Water never snows; land shares are even (a line at 30% covers about 30% of the land).
+    // Water never snows (water as drawn: lake shores are smooth, visual fixes G); land shares are
+    // even (a line at 30% covers about 30% of the land).
+    const wet = new Uint8Array(f.cold.length);
+    shoreWaterMask(m, wet);
     let land = 0, below = 0;
     for (let p = 0; p < f.cold.length; p++) {
-      const water = m.ground[Math.floor(Math.floor(p / f.pw) / TILE) * 20 + Math.floor((p % f.pw) / TILE)] === Ground.Water;
-      if (water) { expect(f.cold[p]).toBe(NEVER); continue; }
+      if (wet[p]) { expect(f.cold[p]).toBe(NEVER); continue; }
       land++;
       if (f.cold[p]! < 0.3 * 255) below++;
     }

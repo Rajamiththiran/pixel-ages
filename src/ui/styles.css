@@ -27,6 +27,26 @@ html, body {
 
 body { min-width: 1680px; min-height: 820px; }
 
+/* Visual fixes E (?off=fit): a window down to 1600 px wide holds the whole app (the panel shrinks to
+   --panel-min), and a bigger one shows it centred, not pinned top-left above an empty band. */
+:root[data-fit] body {
+  min-width: 0; min-height: max(820px, 100vh);
+  display: flex;
+}
+:root[data-fit] .app {
+  grid-template-columns: var(--toolbar) 1280px minmax(var(--panel-min), var(--panel));
+  width: min(100%, calc(var(--toolbar) + 1280px + var(--panel)));
+  min-width: calc(var(--toolbar) + 1280px + var(--panel-min));
+  flex: 0 1 auto;
+  /* Auto margins, not justify/align-content: centred when the window is bigger, but pinned top-left when
+     it is smaller, so the overflow can be scrolled to (centring spilled the toolbar off the left edge). */
+  margin: auto;
+}
+:root[data-fit] .panel, :root[data-fit] .tab-body, :root[data-fit] .tabs button { min-width: 0; }
+:root[data-fit] .tab-body input, :root[data-fit] .tab-body select { max-width: 100%; }
+:root[data-fit] .toolbar { overflow-x: hidden; }
+:root[data-fit] .tb-group-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 button, input, select {
   font: inherit;
   color: var(--text);
