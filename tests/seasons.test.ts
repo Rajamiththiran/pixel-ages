@@ -15,7 +15,7 @@ import {
 } from '../src/render/materials';
 import { allTilesMap, scenarioA, scenarioF, scenarioH } from './fixtures';
 import { Mat, RAMP_HEX, SEASON_HEX, hexRgb, rampColours, rampTag, shadowOf, tagCount, tagRgb, tagValid, type SeasonRampName } from '../src/render/ramps';
-import { ALT, LookState, Moist, ROLES, bayerRank, isCrown, isDeciduous, lookColour } from '../src/render/materials';
+import { ALT, KEYS, LookState, Moist, ROLES, bayerKey, isCrown, isDeciduous, lookColour } from '../src/render/materials';
 import { buildCrowns, crownPixelAt } from '../src/render/crowns';
 import { FieldState, Stage, fieldClass, rowCut, stageOf } from '../src/render/fields';
 import { FieldPos, GroundRole, fieldRoleParts, isGroundRole, isWaterRole } from '../src/render/materials';
@@ -25,7 +25,19 @@ import { WallType } from '../src/shared/ids';
 import { Action } from '../src/shared/ids';
 import { crownKind, evergreenChance } from '../src/render/terrain';
 import { MoistureField, tileWetness } from '../src/render/moisture';
-import { SeasonDriver, frontAt, parsePin } from '../src/render/seasonLook';
+import { SeasonDriver, frontAt, parsePin, twoLooksAt } from '../src/render/seasonLook';
+import { DayNight } from '../src/render/light';
+import { HeldRain } from '../src/render/heldRain';
+import { Clouds, Mask, bodyStep, cloudiness, makeCloud } from '../src/render/clouds';
+import { PUDDLE_DARK, PUDDLE_LIGHT, shadeWord } from '../src/render/materials';
+import { Fall, Weather } from '../src/render/weather';
+import { GroundMark } from '../src/render/materials';
+import { Mist } from '../src/render/mist';
+import { mistAt } from '../src/render/light';
+import { scenarioG } from '../src/presets/scenarios';
+import { yearLabel } from '../src/ui/runControls';
+import { ticksPerSecondAt } from '../src/shared/speeds';
+import { FrontFields, FrontKind } from '../src/render/seasonFront';
 import { nightOf } from '../src/render/light';
 import { GROUP_COLORS, PALETTE, usePalette, type RGB } from '../src/render/palette';
 
@@ -275,7 +287,7 @@ const MOCK_NIGHT_MUL = [0.2, 0.252, 0.42], MOCK_NIGHT_ADD = [10, 13.5, 40];   //
 // The mockup's ramp rule (seasons-render.js rampFrom): the warm light of step 4.
 const WARM = [281, 235, 105], WARM_MIX = 0.372;
 // Ramps the mockup lists by hand rather than building from one colour.
-const LISTED = new Set<SeasonRampName>(['fruitSu', 'snowDust', 'snowFull', 'waterSpring', 'waterWinter', 'ice', 'iceRim']);
+const LISTED = new Set<SeasonRampName>(['fruitSu', 'snowDust', 'snowFull', 'waterSpring', 'waterWinter', 'ice', 'iceRim', 'cloud', 'cloudStorm', 'precip', 'mist']);   // listed in full by the mockup
 
 describe('seasons Phase 1b: the seasonal ramps are the mockup ramps', () => {
   it('ramps built from one colour follow the rule: step 0 = shadowOf(step 2), 1 halfway, 4 the warm light, 3 halfway', () => {
@@ -385,49 +397,52 @@ describe('seasons Phase 1b: each material takes the ramp of its season', () => {
   });
 });
 
-describe('seasons Phase 1b: a season arrives rank by rank, each pixel once', () => {
-  it('spring starts at month 0 and reaches every rank over its front', () => {
+describe('seasons Phase 1b: a season arrives key by key, each pixel once', () => {
+  it('spring starts at month 0 and reaches every key over its front', () => {
     const fr = CONFIG.render.seasons.fronts;
-    expect(frontAt(0)).toEqual({ from: LookState.Winter, to: LookState.Spring, level: 0 });
-    expect(frontAt(fr[0]!.months / 2).level).toBe(8);
-    expect(frontAt(fr[0]!.months).level).toBe(16);
-    expect(frontAt(2.9)).toEqual({ from: LookState.Winter, to: LookState.Spring, level: 16 });
-    expect(frontAt(3)).toEqual({ from: LookState.Spring, to: LookState.Summer, level: 0 });
+    expect(frontAt(0)).toEqual({ from: LookState.Winter, to: LookState.Spring, level: 0, kind: FrontKind.Warm });
+    expect(frontAt(fr[0]!.months / 2).level).toBe(KEYS / 2);
+    expect(frontAt(fr[0]!.months).level).toBe(KEYS);
+    expect(frontAt(2.9)).toEqual({ from: LookState.Winter, to: LookState.Spring, level: KEYS, kind: FrontKind.Warm });
+    expect(frontAt(3)).toEqual({ from: LookState.Spring, to: LookState.Summer, level: 0, kind: FrontKind.Warm });
+    expect(frontAt(6.5).kind).toBe(FrontKind.Autumn);
     expect(frontAt(11.99).to).toBe(LookState.Winter);
+    expect(frontAt(11.99).kind).toBe(FrontKind.Cold);
   });
 
-  it('over two years each rank changes exactly once per season', () => {
+  it('over two years each key changes exactly once per season', () => {
     const d = new SeasonDriver(null);
-    const changes = new Array<number>(16).fill(0);
-    let prev = Array.from(d.update(0, 0, 1, true, true));
+    const changes = new Array<number>(KEYS).fill(0);
+    let prev = Array.from(d.update(0, 0, 'full', true, true));
     for (let t = 0.01; t < 24; t += 0.01) {
-      const now = Array.from(d.update(t * 1000, t % 12, 1, true, false));
+      const now = Array.from(d.update(t * 1000, t % 12, 'full', true, false));
       now.forEach((s, r) => { if (s !== prev[r]) changes[r]!++; });
       prev = now;
     }
-    expect(changes).toEqual(new Array(16).fill(8));
+    expect(changes).toEqual(new Array(KEYS).fill(8));
   });
 
   it('setup shows the painted map; the fast speeds hold one look; a change of mode dissolves rank by rank', () => {
     const d = new SeasonDriver(null);
-    expect([...d.update(0, 4.5, 1, false, false)].every((s) => s === LookState.Painted)).toBe(true);
-    expect([...d.update(10, 4.5, 1, true, true)].every((s) => s === LookState.Summer)).toBe(true);   // a jump snaps
+    expect([...d.update(0, 4.5, 'full', false, false)].every((s) => s === LookState.Painted)).toBe(true);
+    expect([...d.update(10, 4.5, 'full', true, true)].every((s) => s === LookState.Summer)).toBe(true);   // a jump snaps
     const ms = CONFIG.render.seasons.modeFadeMs;
-    d.update(1000, 7.5, 0, true, false);                     // Ride: to the held look
-    const half = [...d.update(1000 + ms / 2, 7.5, 0, true, false)];
-    expect(half.filter((s) => s === LookState.Held).length).toBe(8);
-    expect([...d.update(1000 + ms, 7.5, 0, true, false)].every((s) => s === LookState.Held)).toBe(true);
-    expect([...d.update(5000, 7.5, 0.5, true, false)].every((s) => s === LookState.Held)).toBe(true);   // Trot holds too (Phase 1b)
+    d.update(1000, 7.5, 'held', true, false);                     // Ride: to the held look
+    const half = [...d.update(1000 + ms / 2, 7.5, 'held', true, false)];
+    expect(half.filter((s) => s === LookState.Held).length).toBe(KEYS / 2);
+    expect([...d.update(1000 + ms, 7.5, 'held', true, false)].every((s) => s === LookState.Held)).toBe(true);
+    expect([...d.update(5000, 7.5, 'held', true, false)].every((s) => s === LookState.Held)).toBe(true);   // Trot holds too (S4)
   });
 
   it('a dev pin freezes a season or a front', () => {
-    expect([...parsePin('winter')!].every((s) => s === LookState.Winter)).toBe(true);
-    const f = [...parsePin('front:spring:0.5')!];
-    expect(f.filter((s) => s === LookState.Spring).length).toBe(8);
-    expect(f.filter((s) => s === LookState.Winter).length).toBe(8);
+    expect([...parsePin('winter')!.states].every((s) => s === LookState.Winter)).toBe(true);
+    const f = [...parsePin('front:spring:0.5')!.states];
+    expect(f.filter((s) => s === LookState.Spring).length).toBe(KEYS / 2);
+    expect(f.filter((s) => s === LookState.Winter).length).toBe(KEYS / 2);
+    expect(parsePin('front:snow:0.25')!.kind).toBe(FrontKind.Cold);
     expect(parsePin('nonsense')).toBeNull();
     const d = new SeasonDriver(parsePin('autumn'));
-    expect([...d.update(0, 0, 0, false, false)].every((s) => s === LookState.Autumn)).toBe(true);
+    expect([...d.update(0, 0, 'held', false, false)].every((s) => s === LookState.Autumn)).toBe(true);
   });
 });
 
@@ -523,10 +538,10 @@ describe('seasons Phase 1b: the terrain layer shows the season', () => {
     l.setRain(m.rain);
     l.flush();
     expect(fnv(imageOf(l))).toBe(GOLDEN.A![0]);              // painted: the look of today
-    const winter = new Array<number>(16).fill(LookState.Winter);
+    const winter = new Array<number>(KEYS).fill(LookState.Winter);
     l.setLook(winter); l.flush();
     expect(fnv(imageOf(l))).toBe(reference(m, m.rain, winter));
-    const front = winter.map((s, r) => (r < 5 ? LookState.Spring : s));
+    const front = winter.map((s, r) => (r < 80 ? LookState.Spring : s));
     l.setLook(front); l.flush();
     expect(fnv(imageOf(l))).toBe(reference(m, m.rain, front));
     expect(fnv(imageOf(l))).not.toBe(reference(m, m.rain, winter));
@@ -536,7 +551,7 @@ describe('seasons Phase 1b: the terrain layer shows the season', () => {
     const m = scenarioA().map;
     clock = 0;
     const l = new TerrainLayer(m, true);
-    const summer = new Array<number>(16).fill(LookState.Summer);
+    const summer = new Array<number>(KEYS).fill(LookState.Summer);
     l.setRain(m.rain); l.setLook(summer); l.flush();
     const before = fnv(imageOf(l));
     const wet = m.rain.map((v) => Math.min(100, v + 25));
@@ -651,7 +666,7 @@ describe('seasons Phase 2a: evergreen and deciduous trees', () => {
             const p = y * mat.w + x;
             if (!isCrown(mat.role[p]!)) continue;
             expect(crownPixelAt(x, y, c)).toBe(true);
-            expect(mat.rank[p]).toBe(bayerRank(c.x, c.y));
+            expect(mat.rank[p]).toBe(bayerKey(c.x, c.y));   // the centre's key (no front here: its Bayer key)
             checked++;
           }
         }
@@ -803,12 +818,22 @@ describe('seasons Phase 2b: fields through the year', () => {
     }
   });
 
-  it('the held look and setup show the fields gold', () => {
-    const m = plantMap(Plant.Farmland, 0);
-    for (const state of [LookState.Held, LookState.Painted]) {
-      const crop = new Set(RAMP_HEX[Mat.Crop]!);
-      expect(fieldsIn(m, new Uint8Array(m.width * m.height), state).hex.every((h) => crop.has(h))).toBe(true);
+  it('setup shows the fields gold; the held look half gold and half green (Phase 4, mockup D)', () => {
+    const m = plantMap(Plant.Farmland, 0, 30, 30);
+    const crop = new Set<string>(RAMP_HEX[Mat.Crop]!), green = new Set<string>(SEASON_HEX.cropGreen);
+    expect(fieldsIn(m, new Uint8Array(m.width * m.height), LookState.Painted).hex.every((h) => crop.has(h))).toBe(true);
+    const held = fieldsIn(m, new Uint8Array(m.width * m.height), LookState.Held).hex;
+    // Each tile is one stage: its centre row's ridge pixel (odd row) tells which.
+    let gold = 0, greens = 0;
+    for (let ty = 0; ty < m.height; ty++) {
+      for (let tx = 0; tx < m.width; tx++) {
+        const h = held[(ty * TILE + 3) * m.width * TILE + tx * TILE + 3]!;
+        if (green.has(h)) greens++; else if (crop.has(h)) gold++;
+      }
     }
+    expect(gold + greens).toBe(m.width * m.height);
+    expect(gold / (gold + greens)).toBeGreaterThan(0.3);
+    expect(gold / (gold + greens)).toBeLessThan(0.7);
   });
 });
 
@@ -1045,7 +1070,7 @@ describe('seasons Phase 2c: ice', () => {
     clock = 0;
     const l = new TerrainLayer(m, true);
     l.setRain(m.rain);
-    l.setLook(new Array<number>(16).fill(LookState.Winter));
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter));
     l.flush();
     const inner = l as unknown as { mat: MatBuf; look: Parameters<typeof resolveTile>[1] };
     for (const [s, i] of [[40, 30], [90, 80], [160, 170], [255, 255], [120, 60], [0, 0], [70, 200]] as const) {
@@ -1061,7 +1086,7 @@ describe('seasons Phase 2c: ice', () => {
     clock = 0;
     const l = new TerrainLayer(m, true);
     l.setRain(m.rain);
-    l.setLook(new Array<number>(16).fill(LookState.Winter));
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter));
     l.setCover(255, 255);
     l.flush();
     expect(l.frozenTile(5 * 20 + 4)).toBe(true);
@@ -1172,5 +1197,650 @@ describe('seasons Phase 2d: the ground through the year', () => {
     };
     expect(dryShare(0)).toBeLessThan(0.1);
     expect(dryShare(CONFIG.editor.maxElevation)).toBeGreaterThan(0.8);
+  });
+});
+
+// ---------- Phase 3a: the season front ----------
+
+const FCF = CONFIG.render.seasons.front;
+
+/** A W × H grass map, flat or rising from west (0) to east (9). */
+function frontMap(w: number, h: number, slope: boolean): MapData {
+  const m = createMap(w, h);
+  if (slope) for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) m.elevation[y * w + x] = Math.round((x / (w - 1)) * 9);
+  return m;
+}
+
+function keysOf(m: MapData, kind: number, year = 0): { f: FrontFields; k: Uint8Array } {
+  const f = new FrontFields(m.width, m.height);
+  f.ensure(m);
+  const k = new Uint8Array(f.pw * f.ph);
+  f.keys(kind, year, k);
+  return { f, k };
+}
+
+/** Separate 4-connected patches of pixels with key below `level`, of at least `min` pixels. */
+function patches(k: Uint8Array, w: number, level: number, min: number): number {
+  const seen = new Uint8Array(k.length);
+  let n = 0;
+  const stack: number[] = [];
+  for (let p0 = 0; p0 < k.length; p0++) {
+    if (seen[p0] || k[p0]! >= level) continue;
+    let size = 0;
+    seen[p0] = 1; stack.push(p0);
+    while (stack.length > 0) {
+      const p = stack.pop()!; size++;
+      const x = p % w;
+      for (const q of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w]) {
+        if (q < 0 || q >= k.length || seen[q] || k[q]! >= level) continue;
+        seen[q] = 1; stack.push(q);
+      }
+    }
+    if (size >= min) n++;
+  }
+  return n;
+}
+
+describe('seasons Phase 3a: the season front', () => {
+  it('the front moves evenly over the land', () => {
+    const { k } = keysOf(frontMap(64, 40, false), FrontKind.Warm);
+    const share = (level: number): number => k.reduce((n, v) => n + (v < level ? 1 : 0), 0) / k.length;
+    expect(share(64)).toBeCloseTo(0.25, 1);
+    expect(share(128)).toBeCloseTo(0.5, 1);
+    expect(share(192)).toBeCloseTo(0.75, 1);
+    expect(share(256)).toBe(1);
+  });
+
+  it('on a flat map the front starts in several separate patches, not one band', () => {
+    const m = frontMap(80, 45, false);
+    for (const kind of [FrontKind.Warm, FrontKind.Autumn, FrontKind.Cold]) {
+      const { f, k } = keysOf(m, kind);
+      expect(patches(k, f.pw, Math.round(0.05 * 255), 20), `kind ${kind}`).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it('the edge is never a straight line or a tile grid', () => {
+    const { f, k } = keysOf(frontMap(64, 40, false), FrontKind.Warm);
+    let longest = 0;
+    for (let y = 0; y < f.ph - 1; y++) {
+      let run = 0;
+      for (let x = 0; x < f.pw; x++) {
+        const p = y * f.pw + x;
+        run = (k[p]! < 128) !== (k[p + f.pw]! < 128) ? run + 1 : 0;
+        longest = Math.max(longest, run);
+      }
+    }
+    for (let x = 0; x < f.pw - 1; x++) {
+      let run = 0;
+      for (let y = 0; y < f.ph; y++) {
+        const p = y * f.pw + x;
+        run = (k[p]! < 128) !== (k[p + 1]! < 128) ? run + 1 : 0;
+        longest = Math.max(longest, run);
+      }
+    }
+    expect(longest).toBeLessThan(2 * TILE);   // short runs where the dither lines up, never a line along the map
+  });
+
+  it('spring reaches low ground first; autumn and snow the heights first', () => {
+    const m = frontMap(64, 40, true);
+    const lowHigh = (kind: number): [number, number] => {
+      const { f, k } = keysOf(m, kind);
+      let lo = 0, hi = 0, nl = 0, nh = 0;
+      for (let p = 0; p < k.length; p++) { if (p % f.pw < f.pw / 2) { lo += k[p]!; nl++; } else { hi += k[p]!; nh++; } }
+      return [lo / nl, hi / nh];
+    };
+    const [wl, wh] = lowHigh(FrontKind.Warm);
+    expect(wl).toBeLessThan(wh - 40);
+    for (const kind of [FrontKind.Autumn, FrontKind.Cold]) {
+      const [l, h] = lowHigh(kind);
+      expect(h, `kind ${kind}`).toBeLessThan(l - 40);
+    }
+  });
+
+  it('each year the front shifts a little in patches, never more than the configured jitter', () => {
+    const m = frontMap(48, 30, false);
+    const f = new FrontFields(m.width, m.height);
+    f.ensure(m);
+    const a = new Uint8Array(f.pw * f.ph), b = new Uint8Array(f.pw * f.ph);
+    f.keys(FrontKind.Warm, 1, a);
+    f.keys(FrontKind.Warm, 2, b);
+    let differ = 0, most = 0;
+    for (let p = 0; p < a.length; p++) { const d = Math.abs(a[p]! - b[p]!); if (d > 0) differ++; most = Math.max(most, d); }
+    expect(differ / a.length).toBeGreaterThan(0.5);
+    expect(most).toBeLessThanOrEqual(Math.ceil(FCF.yearJitter * 255) + 1);
+  });
+});
+
+describe('seasons Phase 3a: the front on the terrain layer', () => {
+  const states = (level: number, from: number, to: number): number[] => Array.from({ length: KEYS }, (_, r) => (r < level ? to : from));
+
+  it('a front recolours each pixel once, and in place matches a fresh resolve', () => {
+    const m = scenarioF().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(states(0, LookState.Winter, LookState.Spring), FrontKind.Warm, 0);
+    l.flush();
+    let prev = new Uint32Array(imageOf(l).slice().buffer);
+    const changes = new Uint8Array(prev.length);
+    for (let level = 16; level <= KEYS; level += 16) {
+      l.setLook(states(level, LookState.Winter, LookState.Spring), FrontKind.Warm, 0);
+      l.flush();
+      const now = new Uint32Array(imageOf(l).slice().buffer);
+      for (let p = 0; p < now.length; p++) if (now[p] !== prev[p]) changes[p]!++;
+      prev = now;
+    }
+    expect(changes.reduce((a, c) => Math.max(a, c), 0)).toBe(1);
+    expect(changes.reduce((n, c) => n + c, 0)).toBeGreaterThan(changes.length / 2);
+    // A new field at the start of the next front (every key one state) recolours nothing.
+    l.setLook(states(0, LookState.Spring, LookState.Summer), FrontKind.Autumn, 0);
+    l.flush();
+    expect(fnv(imageOf(l))).toBe(fnv(new Uint8Array(prev.buffer)));
+    // Mid-front, the image equals a resolve of every tile from the buffer.
+    l.setLook(states(100, LookState.Spring, LookState.Summer), FrontKind.Autumn, 0);
+    l.flush();
+    const inner = l as unknown as { mat: MatBuf; look: Parameters<typeof resolveTile>[1] };
+    const ref = new Uint32Array(inner.mat.w * inner.mat.h);
+    for (let ty = 0; ty < m.height; ty++) for (let tx = 0; tx < m.width; tx++) resolveTile(inner.mat, inner.look, ref, tx, ty);
+    expect(fnv(imageOf(l))).toBe(fnv(new Uint8ClampedArray(ref.buffer)));
+  });
+
+  it('a tree turns as one at the arrival of its centre, a field tile at that of its centre', () => {
+    const m = scenarioA().map;
+    for (let y = 40; y < 46; y++) for (let x = 100; x < 110; x++) { m.plantType[y * m.width + x] = Plant.Farmland; m.plantDensity[y * m.width + x] = 255; }
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.fields = new Uint8Array(m.width * m.height);
+    l.setLook(states(0, LookState.Winter, LookState.Spring), FrontKind.Warm, 0);
+    l.flush();
+    const { mat, keys } = l as unknown as { mat: MatBuf; keys: Uint8Array };
+    const c = { x: 0, y: 0, r: 0, dx: 0, dy: 0, branch: 0 };
+    let trees = 0, fields = 0;
+    for (let ty = 0; ty < m.height; ty++) {
+      for (let tx = 0; tx < m.width; tx++) {
+        const i = ty * m.width + tx;
+        if (m.plantType[i] === Plant.Forest && trees < 400) {
+          buildCrowns(m, tx, ty);
+          for (let y = ty * TILE; y < ty * TILE + TILE; y++) for (let x = tx * TILE; x < tx * TILE + TILE; x++) {
+            const p = y * mat.w + x;
+            if (!isCrown(mat.role[p]!) || !crownPixelAt(x, y, c)) continue;
+            expect(mat.rank[p]).toBe(keys[c.y * mat.w + c.x]);
+            trees++;
+          }
+        }
+        if (m.plantType[i] === Plant.Farmland) {
+          const centre = keys[(ty * TILE + TILE / 2) * mat.w + tx * TILE + TILE / 2];
+          for (let y = ty * TILE; y < ty * TILE + TILE; y++) for (let x = tx * TILE; x < tx * TILE + TILE; x++) {
+            const p = y * mat.w + x;
+            if (!fieldRoleParts(mat.role[p]!)) continue;
+            expect(mat.rank[p]).toBe(centre);
+            fields++;
+          }
+        }
+      }
+    }
+    expect(trees).toBeGreaterThan(100);
+    expect(fields).toBeGreaterThan(50);
+  });
+
+  it('snow lies first where the cold front came first', () => {
+    const m = frontMap(64, 40, true);
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    const inner = l as unknown as { winter: WinterField; fronts: FrontFields };
+    expect(inner.fronts.isReady).toBe(false);   // setup never waits for the fields
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter), FrontKind.Cold, 0);
+    expect(inner.fronts.isReady).toBe(true);
+    let diff = 0, n = 0;
+    for (let p = 0; p < inner.winter.cold.length; p++) {
+      if (inner.winter.cold[p] === NEVER) continue;
+      diff += Math.abs(inner.winter.cold[p]! / 255 - inner.fronts.coldShare[p]!); n++;
+    }
+    expect(diff / n).toBeLessThan(0.01);
+  });
+});
+
+// ---------- Phase 3b: a speed for watching the seasons ----------
+
+describe('seasons Phase 3b: a speed for watching the seasons', () => {
+  it('at Watch a spring front takes 3 s and a year 24 s of real time (S1)', () => {
+    const fr = CONFIG.render.seasons.fronts;
+    expect(fr[0]!.months / ticksPerSecondAt(-1)).toBeCloseTo(3, 9);
+    expect(CONFIG.time.ticksPerYear / ticksPerSecondAt(-1)).toBeCloseTo(24, 9);
+  });
+
+  it('at Walk two looks a year: green from the spring front, winter from the winter front (S3)', () => {
+    const fr = CONFIG.render.seasons.fronts;
+    expect(twoLooksAt(fr[0]!.start)).toEqual({ from: LookState.Winter, to: LookState.Summer, level: 0, kind: FrontKind.Warm });
+    expect(twoLooksAt(6.5)).toEqual({ from: LookState.Winter, to: LookState.Summer, level: KEYS, kind: FrontKind.Warm });
+    expect(twoLooksAt(fr[3]!.start)).toEqual({ from: LookState.Summer, to: LookState.Winter, level: 0, kind: FrontKind.Cold });
+    expect(twoLooksAt(11.99).level).toBe(KEYS);
+    const d = new SeasonDriver(null);
+    const changes = new Array<number>(KEYS).fill(0);
+    const seen = new Set<number>();
+    let prev = Array.from(d.update(0, 0, 'two', true, true));
+    for (let t = 0.01; t < 24; t += 0.01) {
+      const now = Array.from(d.update(t * 1000, t % 12, 'two', true, false));
+      now.forEach((s, r) => { seen.add(s); if (s !== prev[r]) changes[r]!++; });
+      prev = now;
+    }
+    expect([...seen].sort()).toEqual([LookState.Summer, LookState.Winter].sort());
+    expect(changes).toEqual(new Array(KEYS).fill(4));   // two changes a year, each key once per front
+  });
+
+  it('at Watch the day stops in daylight, and a night ends quickly instead of popping (S2)', () => {
+    const L = CONFIG.render.f8.light;
+    const dn = new DayNight();
+    dn.update(0, true);
+    expect(dn.darkness).toBe(0);                       // it starts in the morning
+    dn.hold = true;
+    for (let k = 0; k < 600; k++) dn.update(100, true);
+    expect(dn.darkness).toBe(0);                       // a minute of Watch: still day
+    // Into the night at a normal speed, then Watch: dark at first, light within a night ÷ holdCatchUp.
+    dn.hold = false;
+    let ms = 0;
+    while (dn.darkness < 1 && ms < L.dayMs) { dn.update(100, true); ms += 100; }
+    expect(dn.darkness).toBe(1);
+    dn.hold = true;
+    let steps = 0, biggest = 0, before = dn.darkness;
+    while (dn.darkness > 0 && steps < 1000) { dn.update(1000 / 60, true); biggest = Math.max(biggest, Math.abs(dn.darkness - before)); before = dn.darkness; steps++; }
+    expect(dn.darkness).toBe(0);
+    expect((steps * 1000) / 60).toBeLessThan(((L.nightShare + 2 * L.dusk) * L.dayMs) / L.holdCatchUp + 100);
+    expect(biggest).toBeLessThan(0.1);                 // a gradual dawn, not a pop
+  });
+});
+
+// ---------- Phase 4: the fast-forward look ----------
+
+describe('seasons Phase 4: the held fast-forward look', () => {
+  /** Plays `years` of screen time at Fly (8 years a second, 60 frames a second) through a HeldRain; returns the lowest rain shown. */
+  function playFly(h: HeldRain, rain: (year: number) => number, years: number, t0: number): { low: number; t: number } {
+    const n = h.shown.length, now = new Uint8Array(n);
+    let low = 255, t = t0, ms = 0;
+    const perFrame = (ticksPerSecondAt(8) / 60);
+    while (t < t0 + years * 12) {
+      t += perFrame; ms += 1000 / 60;
+      now.fill(rain(Math.floor(t / 12)));
+      h.update(now, t, ms);
+      low = Math.min(low, h.shown[0]!);
+    }
+    return { low, t };
+  }
+
+  it('a single dry year at Fly does not reach the screen; a drought of three years does', () => {
+    const wet = 60, dry = 24;   // a strong drought: 40% of the usual rain
+    const one = new HeldRain(new Uint8Array(4).fill(wet));
+    const a = playFly(one, (y) => (y === 5 ? dry : wet), 12, 0);
+    expect(a.low).toBeGreaterThan(wet * CONFIG.render.f8.weather.droughtBelow + 4);   // no cracks, the grass about normal
+    const three = new HeldRain(new Uint8Array(4).fill(wet));
+    const b = playFly(three, (y) => (y >= 5 && y < 8 ? dry : wet), 12, 0);
+    expect(b.low).toBeLessThan(wet * CONFIG.render.f8.weather.droughtBelow);          // cracks and dry ramps show
+    expect(three.shown[0]).toBeGreaterThan(50);              // and the land recovers after it
+  });
+
+  it('the year note: drought or wet when enough of the land is, on the average', () => {
+    const base = new Uint8Array(10).fill(50);
+    const land = (): boolean => true;
+    const h = new HeldRain(base);
+    expect(h.note(base, land)).toBeNull();
+    h.snap(Array.from({ length: 10 }, (_, i) => (i < 3 ? 20 : 50)), 0);   // 30% far drier than painted
+    expect(h.note(base, land)).toBe('drought');
+    h.snap(Array.from({ length: 10 }, (_, i) => (i < 2 ? 20 : 50)), 0);   // 20%: below the share
+    expect(h.note(base, land)).toBeNull();
+    h.snap(new Uint8Array(10).fill(80), 0);
+    expect(h.note(base, land)).toBe('wet');
+  });
+
+  it('the held look keeps the grass moisture: summer ramps by class (mockup D: dry grass breaks through)', () => {
+    for (let s = 0; s < 5; s++) {
+      expect(rgbOf(lookColour(LookState.Held, Moist.Dry, Role.Grass, stepTag(Mat.Grass, s)))).toBe(SEASON_HEX.grassSuDry[s]);
+      expect(rgbOf(lookColour(LookState.Held, Moist.Lush, Role.Grass, stepTag(Mat.Grass, s)))).toBe(SEASON_HEX.grassSuLush[s]);
+      expect(rgbOf(lookColour(LookState.Held, Moist.Normal, Role.Grass, stepTag(Mat.Grass, s)))).toBe(RAMP_HEX[Mat.Grass]![s]);
+    }
+  });
+
+  it('the bar names the held season, summer', () => {
+    expect(yearLabel(1240, 10, true)).toBe('Year 1,240 · Summer');
+    expect(yearLabel(1240, 10)).toBe('Year 1,240 · Winter');
+  });
+});
+
+// ---------- Phase 5: clouds ----------
+
+describe('seasons Phase 5: pixel clouds', () => {
+  it('a cloud is a cluster of discs: a core inside its rim; the body lit top-left, dark underneath (mockup)', () => {
+    const c = makeCloud(12, 1, false);
+    let core = 0, rim = 0;
+    for (let k = 0; k < c.mask.length; k++) { const m = c.mask[k]!; if (m & Mask.Core) core++; else if (m & Mask.In) rim++; }
+    expect(core).toBeGreaterThan(300);
+    expect(rim).toBeGreaterThan(100);
+    // The top row of the cloud is its lit rim (step 4); the bottom row its underside (step 1).
+    const rows: number[][] = [];
+    for (let ly = 0; ly < c.h; ly++) for (let lx = 0; lx < c.w; lx++) {
+      const s = bodyStep(c, lx, ly, false);
+      if (s >= 0) (rows[ly] ??= []).push(s);
+    }
+    const filled = rows.map((r, y) => [y, r] as const).filter(([, r]) => r && r.length > 0);
+    expect(filled[0]![1].every((s) => s === 4)).toBe(true);
+    expect(filled[filled.length - 1]![1].every((s) => s === 1 || s === 4)).toBe(true);
+    expect(makeCloud(12, 1, false).mask).toEqual(c.mask);   // the same seed, the same cloud
+  });
+
+  it('wetter land carries more and bigger clouds', () => {
+    expect(cloudiness(10).share).toBeLessThan(cloudiness(50).share);
+    expect(cloudiness(50).share).toBeLessThan(cloudiness(90).share);
+    expect(cloudiness(10).size).toBeLessThan(cloudiness(90).size);
+    const count = (rain: number): number => {
+      let n = 0;
+      for (let pass = 0; pass < 20; pass++) {
+        const s = new Clouds(1280, 720, null);
+        s.update(pass * 1000, () => rain);
+        n += s.now.length;
+      }
+      return n;
+    };
+    expect(count(90)).toBeGreaterThan(count(10) * 2);
+  });
+
+  it('clouds drift with the wind in whole pixels and keep their shape while they cross', () => {
+    const s = new Clouds(1280, 720, 'clouds');
+    s.update(0, () => 50);
+    const first = s.now.map((c) => ({ ...c }));
+    s.update(1, () => 50);
+    for (const c of s.now) {
+      expect(Number.isInteger(c.x) && Number.isInteger(c.y)).toBe(true);
+      const was = first.find((f) => f.shape === c.shape);
+      if (was) { expect(c.y).toBe(was.y); expect(c.x - was.x).toBeGreaterThanOrEqual(CONFIG.render.f8.weather.windPxPerS - 1); }
+    }
+    expect(s.now.some((c) => first.some((f) => f.shape === c.shape))).toBe(true);
+  });
+
+  it('a shadow steps colours down their own ramp; the darkest step and accents stay', () => {
+    const word = (hex: string): number => { const [r, g, b] = hexRgb(hex); return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0; };
+    const grass = RAMP_HEX[Mat.Grass]!;
+    expect(shadeWord(word(grass[3]!), 1)).toBe(word(grass[2]!));
+    expect(shadeWord(word(grass[3]!), 2)).toBe(word(grass[1]!));
+    expect(shadeWord(word(grass[0]!), 2)).toBe(word(grass[0]!));
+    expect(shadeWord(word(SEASON_HEX.grassSpLush[4]), 1)).toBe(word(SEASON_HEX.grassSpLush[3]));
+    expect(shadeWord(word(PALETTE.flowerWhite), 2)).toBe(word(PALETTE.flowerWhite));
+  });
+
+  it('as a cloud crosses, each ground pixel changes only as an edge passes, and the image equals a fresh resolve', () => {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(LookState.Summer));
+    l.flush();
+    const shape = makeCloud(5, 1, false);
+    const [ox, oy] = CONFIG.render.seasons.clouds.shadowOffsetPx;
+    const w = m.width * TILE, y0 = 300;
+    /** The shadow's ramp-step drop at (x, y) with the cloud at cx (the mockup's rim and core on the world checker). */
+    const level = (cx: number, x: number, y: number): number => {
+      const lx = x - (cx + shape.ox + ox!), ly = y - (y0 + shape.oy + oy!);
+      if (lx < 0 || ly < 0 || lx >= shape.w || ly >= shape.h) return 0;
+      const mk = shape.mask[ly * shape.w + lx], odd = (x + y) & 1;
+      return mk! & Mask.Core ? 1 + odd : mk! & Mask.In ? odd : 0;
+    };
+    let prev = new Uint32Array(imageOf(l).slice().buffer);
+    let changed = 0;
+    for (let x = 200; x < 200 + shape.w + 4; x++) {
+      l.setClouds([{ shape, x, y: y0 }], false);
+      l.flush();
+      const now = new Uint32Array(imageOf(l).slice().buffer);
+      for (let p = 0; p < now.length; p++) {
+        const px = p % w, py = (p - px) / w;
+        const moved = x > 200 ? level(x - 1, px, py) !== level(x, px, py) : level(x, px, py) !== 0;
+        // A pixel changes only where its drop changed (an edge passed it); never inside a shadow or outside one.
+        if (now[p] !== prev[p]) { expect(moved, `pixel ${px},${py} at step ${x}`).toBe(true); changed++; }
+      }
+      prev = now;
+    }
+    expect(changed).toBeGreaterThan(shape.w);
+    const inner = l as unknown as { mat: MatBuf; look: Parameters<typeof resolveTile>[1] };
+    const ref = new Uint32Array(inner.mat.w * inner.mat.h);
+    for (let ty = 0; ty < m.height; ty++) for (let tx = 0; tx < m.width; tx++) resolveTile(inner.mat, inner.look, ref, tx, ty);
+    expect(fnv(imageOf(l))).toBe(fnv(new Uint8ClampedArray(ref.buffer)));
+    // Gone again: the ground as before the cloud came.
+    l.setClouds([], false); l.flush();
+    l.setLook(new Array<number>(KEYS).fill(LookState.Summer)); l.flush();
+    const clear = new TerrainLayer(m, true);
+    clear.setRain(m.rain); clear.setLook(new Array<number>(KEYS).fill(LookState.Summer)); clear.flush();
+    expect(fnv(imageOf(l))).toBe(fnv(imageOf(clear)));
+  });
+
+  it('a storm lays a world-fixed checker one step down over the land', () => {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(LookState.Summer));
+    l.flush();
+    const before = new Uint32Array(imageOf(l).slice().buffer);
+    l.setClouds([], true); l.flush();
+    const after = new Uint32Array(imageOf(l).slice().buffer);
+    const w = m.width * TILE;
+    let evenChanged = 0, oddChanged = 0;
+    for (let p = 0; p < after.length; p++) {
+      if (after[p] === before[p]) continue;
+      if ((((p % w) + Math.floor(p / w)) & 1) === 1) oddChanged++; else evenChanged++;
+    }
+    expect(evenChanged).toBe(0);
+    expect(oddChanged).toBeGreaterThan(after.length / 4);
+  });
+});
+
+// ---------- Phase 6: rain and snowfall ----------
+
+describe('seasons Phase 6: rain and snowfall', () => {
+  const RNC = CONFIG.render.seasons.rain;
+  /** A weather with a forced sky, its clouds placed. */
+  function forcedWeather(kind: 'rain' | 'snowfall' | 'storm'): Weather {
+    const m = createMap(160, 90);
+    const w = new Weather(m);
+    (w as unknown as { sky: Clouds }).sky = new Clouds(160 * TILE, 90 * TILE, kind);
+    w.update(0, 16, { x: 0, y: 0, w: 1280, h: 720 }, 0, true);
+    return w;
+  }
+  const view = { x: 0, y: 0, w: 1280, h: 720 };
+  const lit = (out: number[][]): Set<number> => {
+    const s = new Set<number>();
+    for (const pts of out) for (let k = 0; k < pts.length; k += 2) s.add(pts[k + 1]! * 10000 + pts[k]!);
+    return s;
+  };
+
+  it('rain plays in frames: the same three frames over and over, no pixel flashing more than three times a second', () => {
+    const w = forcedWeather('rain');
+    const n = Math.round(1000 / RNC.frameMs);   // the frames in a second
+    const frames = Array.from({ length: n }, (_, f) => lit(w.precipPixels(view, f, () => Fall.Rain)));
+    expect(frames[0]!.size).toBeGreaterThan(200);
+    expect([...frames[3]!].sort()).toEqual([...frames[0]!].sort());   // a 3-frame cycle
+    // A flash: lit, then unlit the next frame (a pixel two drops keep lit is steady, not flashing).
+    const all = new Set<number>(frames.flatMap((f) => [...f]));
+    let most = 0;
+    for (const p of all) {
+      let flashes = 0;
+      for (let f = 0; f < n; f++) if (frames[f]!.has(p) && !frames[(f + 1) % n]!.has(p)) flashes++;
+      most = Math.max(most, flashes);
+    }
+    expect(most).toBeLessThanOrEqual(3);
+    // Rain on the two rain steps only; flakes on the two light steps only.
+    const raw = w.precipPixels(view, 0, () => Fall.Rain);
+    expect(raw[3]!.length + raw[4]!.length).toBe(0);
+    const snow = forcedWeather('snowfall').precipPixels(view, 0, () => Fall.Snow);
+    expect(snow[0]!.length + snow[1]!.length).toBe(0);
+    expect(snow[4]!.length).toBeGreaterThan(100);
+  });
+
+  it('a flake steps down two pixels a frame; nothing falls on frozen water', () => {
+    const w = forcedWeather('rain');
+    const a = w.precipPixels(view, 0, () => Fall.Snow)[4]!, b = w.precipPixels(view, 3, () => Fall.Snow)[4]!;
+    expect(a).toEqual(b);
+    expect(w.precipPixels(view, 0, () => Fall.None).every((pts) => pts.length === 0)).toBe(true);
+  });
+
+  it('a storm rains everywhere, thinned evenly when zoomed out, never under a cloud body', () => {
+    const w = forcedWeather('storm');
+    const out = w.precipPixels(view, 0, () => Fall.Rain);
+    const sky = (w as unknown as { sky: Clouds }).sky;
+    let top = 0, bottom = 0;
+    for (let k = 0; k < out[1]!.length; k += 2) { if (out[1]![k + 1]! < 360) top++; else bottom++; }
+    expect(bottom).toBeGreaterThan(top / 2);                 // not cut off part of the way down
+    expect(top + bottom).toBeLessThanOrEqual(RNC.maxParticles * 3);
+    // The spots: each streak's lead pixel (step 1 in frames 0 and 1 of its cycle) is never under a body.
+    expect(sky.now.length).toBeGreaterThan(0);
+    const leads = w.precipPixels(view, 0, () => Fall.Rain)[1]!;
+    let under = 0;
+    for (let k = 0; k < leads.length; k += 2) if (sky.covers(leads[k]!, leads[k + 1]!)) under++;
+    expect(under).toBeLessThan(leads.length / 2 / 10);   // splash pixels sit beside their spot and may touch a body's edge
+  });
+
+  it('at the held speeds nothing falls', () => {
+    const w = forcedWeather('rain');
+    w.falling = false;
+    let drawn = 0;
+    const ctx = { drawImage: () => { drawn++; } } as unknown as CanvasRenderingContext2D;
+    w.drawPrecip(ctx, view, 0, 0, () => Fall.Rain);
+    expect(drawn).toBe(0);
+  });
+
+  it('a raining cloud wets the land a step darker and puddles stand in it; not at the held speeds, not in winter', () => {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(LookState.Summer));
+    l.flush();
+    const shade = (): Uint8Array => (l as unknown as { shade: Uint8Array }).shade;
+    const shape = makeCloud(9, 1.2, false, true);
+    const cloud = [{ shape, x: 900, y: 300 }];
+    l.setClouds(cloud, false, true); l.flush();
+    const s = shade();
+    const puddles = s.reduce((n, v) => n + (v === PUDDLE_LIGHT || v === PUDDLE_DARK ? 1 : 0), 0);
+    const dry = makeCloud(9, 1.2, false, false);
+    const l2 = new TerrainLayer(m, true);
+    l2.setRain(m.rain); l2.setLook(new Array<number>(KEYS).fill(LookState.Summer)); l2.flush();
+    l2.setClouds([{ shape: dry, x: 900, y: 300 }], false, true); l2.flush();
+    const s2 = (l2 as unknown as { shade: Uint8Array }).shade;
+    const darker = (a: Uint8Array): number => a.reduce((n, v) => n + (v > 0 && v < 16 ? v : 0), 0);
+    expect(puddles).toBeGreaterThan(10);
+    expect(darker(s)).toBeGreaterThan(darker(s2));           // wet ground: more steps down than the shadow alone
+    l.setClouds(cloud, false, false); l.flush();              // held: rain stops wetting
+    expect(shade().some((v) => v >= 16)).toBe(false);
+    expect(darker(shade())).toBe(darker(s2));
+    l.setClouds(cloud, false, true); l.flush();
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter)); l.flush();
+    l.setClouds([{ shape, x: 901, y: 300 }], false, true); l.flush();
+    expect(shade().some((v) => v >= 16)).toBe(false);         // winter: no puddles
+  });
+});
+
+// ---------- Phase 7: weather over years ----------
+
+describe('seasons Phase 7: drought, wet years, mist, storms, paths through snow', () => {
+  /** A layer on Scenario A in `state`, every tile given ground state `ground` (0 none, 1 drought, 2 wet). */
+  function grounded(state: number, ground: number): { l: TerrainLayer; m: MapData; marks: Uint8Array } {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(state));
+    l.flush();
+    l.setGround(new Uint8Array(m.width * m.height).fill(ground));
+    l.flush();
+    return { l, m, marks: (l as unknown as { groundMarks: Uint8Array }).groundMarks };
+  }
+
+  it('water stays water: no mark on a water pixel, nor on woods, rock, paths or fields', () => {
+    for (const g of [1, 2]) {
+      const { l, marks } = grounded(LookState.Summer, g);
+      const mat = (l as unknown as { mat: MatBuf }).mat;
+      let n = 0;
+      for (let p = 0; p < marks.length; p++) {
+        if (marks[p] === GroundMark.None) continue;
+        n++;
+        const r = mat.role[p]!;
+        expect(r === Role.Grass || r === Role.Desert || isGroundRole(r), `role ${r}`).toBe(true);
+      }
+      expect(n, `ground ${g}`).toBeGreaterThan(100);
+    }
+  });
+
+  it('a drought cracks open land in patches (sand body, crack lines); a wet year leaves puddles; neither otherwise', () => {
+    const dry = grounded(LookState.Summer, 1).marks, wet = grounded(LookState.Summer, 2).marks, none = grounded(LookState.Summer, 0).marks;
+    const count = (a: Uint8Array, ...k: number[]): number => a.reduce((n, v) => n + (k.includes(v) ? 1 : 0), 0);
+    expect(count(dry, GroundMark.CrackLine)).toBeGreaterThan(50);
+    expect(count(dry, GroundMark.CrackBody, GroundMark.CrackLight)).toBeGreaterThan(count(dry, GroundMark.CrackLine) * 3);
+    expect(count(dry, GroundMark.PuddleLight, GroundMark.PuddleDark)).toBe(0);
+    expect(count(wet, GroundMark.PuddleLight, GroundMark.PuddleDark)).toBeGreaterThan(50);
+    expect(count(wet, GroundMark.CrackLine, GroundMark.CrackBody, GroundMark.CrackLight)).toBe(0);
+    expect(count(none, 1, 2, 3, 4, 5)).toBe(0);
+    // Patches: far less than all the open land cracks.
+    expect(count(dry, 1, 2, 3)).toBeLessThan(dry.length * 0.6);
+  });
+
+  it('cracks take the season\'s sand and puddles the water ramp; none in setup or in winter', () => {
+    const sand = new Set<string>(RAMP_HEX[Mat.Sand]!), water = new Set<string>(RAMP_HEX[Mat.Water]!);
+    const hexAt = (l: TerrainLayer, p: number): string => { const d = imageOf(l); return '#' + [d[p * 4]!, d[p * 4 + 1]!, d[p * 4 + 2]!].map((v) => v.toString(16).padStart(2, '0')).join(''); };
+    const dry = grounded(LookState.Summer, 1), wet = grounded(LookState.Summer, 2);
+    for (let p = 0; p < dry.marks.length; p++) if (dry.marks[p] !== GroundMark.None) expect(sand.has(hexAt(dry.l, p))).toBe(true);
+    for (let p = 0; p < wet.marks.length; p++) if (wet.marks[p] !== GroundMark.None) expect(water.has(hexAt(wet.l, p))).toBe(true);
+    for (const state of [LookState.Painted, LookState.Winter]) {
+      const g = grounded(state, 1);
+      const plain = grounded(state, 0);
+      expect(fnv(imageOf(g.l)), `state ${state}`).toBe(fnv(imageOf(plain.l)));
+    }
+  });
+
+  it('trampled ground round homes is only dusted under deep snow', () => {
+    const m = scenarioA().map;
+    clock = 0;
+    const l = new TerrainLayer(m, true);
+    l.setRain(m.rain);
+    l.setLook(new Array<number>(KEYS).fill(LookState.Winter));
+    l.setCover(255, 0);
+    l.flush();
+    const w = m.width * TILE, x0 = 1000, y0 = 300;
+    const mask = new Uint8Array(w * m.height * TILE);
+    for (let y = y0; y < y0 + 10; y++) for (let x = x0; x < x0 + 10; x++) mask[y * w + x] = 1;
+    l.setTrample(mask);
+    l.flush();
+    const dust = new Set<string>(SEASON_HEX.snowDust), full = new Set<string>(SEASON_HEX.snowFull);
+    const d = imageOf(l);
+    let dusted = 0;
+    for (let y = y0; y < y0 + 10; y++) for (let x = x0; x < x0 + 10; x++) {
+      const p = y * w + x, h = '#' + [d[p * 4]!, d[p * 4 + 1]!, d[p * 4 + 2]!].map((v) => v.toString(16).padStart(2, '0')).join('');
+      if (dust.has(h)) dusted++;
+      expect(full.has(h)).toBe(false);
+    }
+    expect(dusted).toBeGreaterThan(50);
+  });
+
+  it('dawn mist thickens late in the night and clears with the dawn; none by day', () => {
+    const L = CONFIG.render.f8.light;
+    expect(mistAt(0.2)).toBe(0);                               // day
+    expect(mistAt(1 - L.dusk - 0.001)).toBeGreaterThan(0.9);    // just before dawn
+    expect(mistAt(1 - L.dusk / 2)).toBeCloseTo(0.5, 1);         // half way through dawn
+    expect(mistAt(1 - L.nightShare - L.dusk + 0.01)).toBe(0);   // early night
+    const m = scenarioG().map;
+    const mist = new Mist(m);
+    mist.update(0, m.rain, 0);
+    expect(mist.showing).toBe(false);
+    mist.update(1, m.rain, 0);
+    expect(mist.showing).toBe(true);
+  });
+
+  it('a storm blows when the lanes are told so (S9), and a dev sky overrides it', () => {
+    const s = new Clouds(1280, 720, null);
+    expect(s.storm).toBe(false);
+    s.stormy = true;
+    expect(s.storm).toBe(true);
+    s.update(0, () => 50);
+    expect(s.now.length).toBeGreaterThan(8);                   // every lane carries a storm cloud
+    expect(s.now.every((c) => c.shape.storm && c.shape.rainy)).toBe(true);
+    const clear = new Clouds(1280, 720, 'mist');
+    clear.stormy = true;
+    clear.update(0, () => 50);
+    expect(clear.now.length).toBe(0);
   });
 });

@@ -10,10 +10,10 @@
 import { CONFIG } from '../config';
 import { bayer } from './dither';
 import {
-  Mat, rampTag, rampsOn, seasonRampRgb, styleOff, tagCount, tagRgb, tagValid, type SeasonRampName,
+  Mat, RAMP_HEX, SEASON_HEX, hexRgb, rampTag, rampsOn, seasonRampRgb, styleOff, tagCount, tagRgb, tagValid, type SeasonRampName,
 } from './ramps';
 import { RGBS, type RGB } from './palette';
-import { FIELD_CLASSES, Stage, stageOf } from './fields';
+import { FIELD_CLASSES, Stage, heldStageOf, stageOf } from './fields';
 
 const TILE = CONFIG.map.tilePx;
 const TILE_PX = TILE * TILE;
@@ -68,6 +68,23 @@ export type Role = (typeof Role)[keyof typeof Role];
 
 /** Phase 2b switch: fields go through their stages, and the farmers' harvest shows. */
 export const fieldsOn: boolean = seasonRampsOn && SC.fields.on && !styleOff('fields');
+
+/** Phase 3a switch: a season arrives as the seeded front (seasonFront.ts), not the plain Bayer dissolve. */
+export const frontOn: boolean = seasonRampsOn && SC.front.on && !styleOff('front');
+
+/**
+ * Phase 4 switches: the held fast-forward look of mockup D (fields half green and half gold, the grass
+ * moisture following years-long rain, no falling rain or snow), and the caption under the year.
+ */
+export const heldOn: boolean = seasonRampsOn && SC.held.on && !styleOff('held');
+export const seasonNoteOn: boolean = heldOn && SC.held.note.on && !styleOff('seasonNote');
+
+/** Phase 7 switches: drought cracks and wet-year puddles in the land, dawn mist, storms, paths through snow. */
+export const droughtOn: boolean = seasonRampsOn && SC.drought.on && !styleOff('drought');
+export const wetYearOn: boolean = seasonRampsOn && SC.wetYear.on && !styleOff('wetYear');
+export const mistOn: boolean = seasonRampsOn && SC.mist.on && !styleOff('mist');
+export const stormOn: boolean = seasonRampsOn && SC.storm.on && !styleOff('storm');
+export const snowPathsOn: boolean = seasonRampsOn && SC.snow.on && !styleOff('snow') && SC.snowPaths.on && !styleOff('snowPaths');
 
 /** Phase 2d switch: dry grass on high ground, spring flowers, autumn leaf litter. */
 export const groundOn: boolean = seasonRampsOn && SC.ground.on && !styleOff('groundDetail');
@@ -138,9 +155,12 @@ export interface MatBuf {
   readonly tag: Uint16Array;
   readonly role: Uint8Array;
   readonly moist: Uint8Array;   // Phase 1b: the pixel's grass moisture class (rain, not the tile's drawing)
-  // Phase 2a: the Bayer rank whose state the pixel shows (its own, or its tree's centre, so a tree
-  // turns as one), and for a deciduous crown what shows when it is bare: a branch, or the ground under it.
+  // Phase 2a: the key (0–255) whose state the pixel shows: Phase 3a: the front's arrival at its anchor,
+  // without the front its Bayer key (bayerKey). The anchor: the pixel itself, or its tree's centre (a tree
+  // turns as one), or its field tile's centre (Phase 3a), as an offset (anchorCode).
   readonly rank: Uint8Array;
+  readonly anchor: Uint8Array;
+  // For a deciduous crown, what shows when it is bare: a branch, or the ground under it.
   readonly alt: Uint16Array;
   readonly altRole: Uint8Array;
 }
@@ -152,12 +172,26 @@ export function createMatBuf(w: number, h: number): MatBuf {
   const n = w * h;
   return {
     w, h, tag: new Uint16Array(n).fill(NO_TAG), role: new Uint8Array(n), moist: new Uint8Array(n).fill(Moist.Normal),
-    rank: new Uint8Array(n), alt: new Uint16Array(n).fill(NO_TAG), altRole: new Uint8Array(n),
+    rank: new Uint8Array(n), anchor: new Uint8Array(n).fill(SELF), alt: new Uint16Array(n).fill(NO_TAG), altRole: new Uint8Array(n),
   };
 }
 
+/** A pixel's anchor: the offset (−8…7 each way) to the pixel whose arrival it takes. */
+export const anchorCode = (dx: number, dy: number): number => ((Math.max(-8, Math.min(7, dy)) + 8) << 4) | (Math.max(-8, Math.min(7, dx)) + 8);
+/** The anchor of a pixel that takes its own arrival. */
+export const SELF = 0x88;
+/** Buffer index offset for each anchor code, in a buffer `w` pixels wide. */
+export function anchorOffsets(w: number): Int32Array {
+  const o = new Int32Array(256);
+  for (let c = 0; c < 256; c++) o[c] = ((c >> 4) - 8) * w + ((c & 15) - 8);
+  return o;
+}
+
+/** The key of a pixel without the front: its Bayer rank, spread over the 256 keys (rank × 16 + 15 turns at the same level as Phase 1b's 16 ranks did). */
+export const bayerKey = (x: number, y: number): number => bayerRank(x, y) * 16 + 15;
+
 /** A tile's entries, copied out (for a tile dissolving from its old look). */
-export interface MatTile { tag: Uint16Array; role: Uint8Array; rank: Uint8Array; alt: Uint16Array; altRole: Uint8Array }
+export interface MatTile { tag: Uint16Array; role: Uint8Array; rank: Uint8Array; anchor: Uint8Array; alt: Uint16Array; altRole: Uint8Array }
 
 // Bayer rank (0–15) of each 4×4 cell, the same matrix as dither.ts.
 const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
@@ -255,9 +289,10 @@ export function lookColour(state: LookState, cls: number, role: number, tag: num
   if (isGroundRole(role)) return groundColour(state, role, tag);
   if (state === LookState.Painted) return tagRgb(tag);
   const held = state === LookState.Held;
-  // The held fast-forward look (seasons brief D): summer, normal moisture, gold fields.
+  // The held fast-forward look (seasons brief D): summer, gold fields, normal moisture; Phase 4: the
+  // moisture of years-long rain, and fields half green and half gold.
   const season = held ? 1 : state - 1;
-  const c = held ? Moist.Normal : cls;
+  const c = held && !heldOn ? Moist.Normal : cls;
   const winter = season === 3;
   // Phase 2a: trees and bushes.
   if (isDeciduous(role) && g === Mat.Forest && winter) return ALT;
@@ -269,6 +304,7 @@ export function lookColour(state: LookState, cls: number, role: number, tag: num
   // Phase 2b: fields through their stages; a harvested part is stubble in autumn, its sheaves gold.
   const field = fieldRoleParts(role);
   if (field && g === Mat.Crop) {
+    if (held && heldOn) return stageColour(field.sheaf ? Stage.Gold : heldStageOf(field.cls), field.pos, step);
     if (held) return tagRgb(tag);
     const stage = field.sheaf ? (season === 2 ? Stage.Gold : stageOf(field.cls, season))
       : field.cut && season === 2 ? Stage.Stubble : stageOf(field.cls, season);
@@ -385,21 +421,27 @@ function coverTables(): Uint32Array[] {
 
 // ---------- the look: which state each Bayer rank shows ----------
 
-const RANKS = 16;
+/** How many keys a front has: a pixel shows the state of its key (Phase 1b: 16 Bayer ranks). */
+export const KEYS = 256;
 
 /**
- * What the image shows now: the state of each of the 16 Bayer ranks. A season arrives as a
- * dissolve, rank by rank, so each pixel changes once (Phase 3 replaces the ranks with the front).
- * A pixel shows the state of its own rank, or (Phase 2a) of its tree's centre.
+ * What the image shows now: the state of each key. A season arrives as a front, key by key, so each
+ * pixel changes once: Phase 3a's keys are each pixel's arrival in the front (seasonFront.ts), and
+ * without it the Bayer keys (bayerKey). A pixel shows the state of its anchor's key (a tree its centre's).
  */
 export interface Look {
   readonly tables: Uint32Array[];
   readonly span: number;
-  readonly shown: Int8Array;   // state per rank
+  readonly shown: Int8Array;   // state per key
   // Phase 2c: winter's snow and ice. Per pixel, the order snow and ice reach it (winter.ts; null: none),
   // and the lines (0–255) the winter has reached; a pixel showing winter is covered below them.
   readonly cover: Uint32Array[];
   cold: Uint8Array | null;
+  // Phase 5: how many ramp steps each pixel drops under a cloud's shadow (or a storm's gloom), 0–3; null without clouds.
+  shade: Uint8Array | null;
+  // Phase 7: what years-long weather left on each pixel (GroundMark), and trampled ground (1) that snow only dusts.
+  ground: Uint8Array | null;
+  trample: Uint8Array | null;
   ice: Uint8Array | null;
   snowLine: number;
   iceLine: number;
@@ -407,7 +449,7 @@ export interface Look {
 
 export function createLook(state: LookState = LookState.Painted): Look {
   const t = lookTables();
-  return { tables: t, span, shown: new Int8Array(RANKS).fill(state), cover: coverTables(), cold: null, ice: null, snowLine: 0, iceLine: 0 };
+  return { tables: t, span, shown: new Int8Array(KEYS).fill(state), cover: coverTables(), cold: null, ice: null, snowLine: 0, iceLine: 0, shade: null, ground: null, trample: null };
 }
 
 const SN = CONFIG.render.seasons.snow;
@@ -425,9 +467,11 @@ function coverAt(buf: MatBuf, look: Look, role: number, p: number, x: number, y:
   }
   const cold = look.cold;
   if (!cold || look.snowLine <= 0 || cold[p] === 255) return Cover.None;
-  if (look.snowLine >= 255) return Cover.Snow;   // a full line covers all the land, its dithered edge too
   const v = cold[p]! + (bayer(x, y) - 0.5) * EDGE;
-  return v < look.snowLine ? Cover.Snow : v < look.snowLine + DUST ? Cover.Dust : Cover.None;
+  // A full line covers all the land, its dithered edge too.
+  const k = look.snowLine >= 255 || v < look.snowLine ? Cover.Snow : v < look.snowLine + DUST ? Cover.Dust : Cover.None;
+  // Phase 7: people tread the snow round their homes down to a dusting (paths and roads are dusted anyway).
+  return k === Cover.Snow && look.trample && look.trample[p] !== 0 ? Cover.Dust : k;
 }
 
 /** Is pixel q water that is not frozen? */
@@ -453,11 +497,11 @@ export function resolveBand(buf: MatBuf, look: Look, px: Uint32Array, order: Int
   }
 }
 
-/** The ranks (bit r) showing winter: the ones a moved snow or ice line recolours. */
-export function winterRanks(look: Look): number {
-  let m = 0;
-  for (let r = 0; r < RANKS; r++) if (look.shown[r] === LookState.Winter) m |= 1 << r;
-  return m;
+/** Flags in `out` the keys showing winter (the ones a moved snow or ice line recolours); true if any. */
+export function winterKeys(look: Look, out: Uint8Array): boolean {
+  let any = false;
+  for (let k = 0; k < KEYS; k++) { const w = look.shown[k] === LookState.Winter; out[k] = w ? 1 : 0; any ||= w; }
+  return any;
 }
 
 /** Is pixel `p` at (x, y) under snow now (a building there wears it on its roof)? */
@@ -481,14 +525,87 @@ function colourOf(buf: MatBuf, look: Look, tag: number, role: number, rank: numb
     role = altRole; tag = alt;
     c = t[role * look.span + tag]!;
   }
+  if (look.ground) { const gm = look.ground[p]!; if (gm !== 0) { const o = groundWords()[st * 8 + gm]!; if (o !== 0) c = o; } }
   if (st === LookState.Winter) {
     const k = coverAt(buf, look, role, p, x, y);
     if (k !== Cover.None) { const cc = look.cover[k]![role * look.span + tag]!; if (cc !== 0) c = cc; }
   }
+  if (look.shade) { const d = look.shade[p]!; if (d !== 0) c = shadeWord(c, d); }
   return c;
 }
 
-const colourAt = (buf: MatBuf, look: Look, p: number, x: number, y: number): number =>
+// ---------- Phase 7: what years-long weather leaves on the land ----------
+
+/** A pixel's mark from a drought (cracked sand: body light, body, crack line) or a wet year (puddle: light, dark). */
+export const GroundMark = { None: 0, CrackLight: 1, CrackBody: 2, CrackLine: 3, PuddleLight: 4, PuddleDark: 5 } as const;
+
+let gwords: Uint32Array | null = null;
+
+/**
+ * The colour word of each mark in each state (index state × 8 + mark), 0 where it leaves the pixel as
+ * it is: drought cracks in the season's sand (the mockup's SAND[season]: body steps 2 and 1, crack
+ * lines step 0); wet-year puddles on the water ramp (steps 4 and 3). Not in setup (the painted map)
+ * nor in winter (the snow and the cold decide then).
+ */
+function groundWords(): Uint32Array {
+  if (gwords) return gwords;
+  gwords = new Uint32Array(STATES * 8);
+  for (let st = 0; st < STATES; st++) {
+    if (st === LookState.Painted || st === LookState.Winter) continue;
+    const season = st === LookState.Held ? 1 : st - 1;
+    const sand = SAND[season]!;
+    gwords[st * 8 + GroundMark.CrackLight] = packRgba(rampColour(sand, 2));
+    gwords[st * 8 + GroundMark.CrackBody] = packRgba(rampColour(sand, 1));
+    gwords[st * 8 + GroundMark.CrackLine] = packRgba(rampColour(sand, 0));
+    gwords[st * 8 + GroundMark.PuddleLight] = packRgba(tagRgb(Mat.Water * 8 + 4));
+    gwords[st * 8 + GroundMark.PuddleDark] = packRgba(tagRgb(Mat.Water * 8 + 3));
+  }
+  return gwords;
+}
+
+/** Phase 6: shade values past the ramp-step drops: a puddle there, on the water ramp's step 4 or 3. */
+export const PUDDLE_LIGHT = 16;
+export const PUDDLE_DARK = 32;
+
+// ---------- Phase 5: cloud shadows, as ramp steps ----------
+
+let rampOf: Map<number, { ramp: number[]; step: number }> | null = null;
+const shaded: Map<number, number>[] = [new Map(), new Map(), new Map(), new Map()];
+const FAST_BITS = 12;
+const fastIn = new Uint32Array(4 << FAST_BITS), fastOut = new Uint32Array(4 << FAST_BITS);
+
+/**
+ * Colour word `c` `d` ramp steps darker (a cloud's shadow, mockup E: the buffer's step moves down,
+ * then the colour is picked; step 0 stays, so the darkest ground shows no shadow). Every system and
+ * seasonal ramp is known; accents and anything else stay as they are. Cached per colour.
+ */
+export function shadeWord(c: number, d: number): number {
+  if (c === 0 || c === ALT) return c;
+  if (d >= PUDDLE_LIGHT) return packRgba(tagRgb(Mat.Water * 8 + (d === PUDDLE_LIGHT ? 4 : 3)));   // mockup: puddles are opaque water
+  // A small direct-mapped cache in front of the map: a storm shades every pixel, and a season step
+  // then looks up a million colours (a Map lookup each was ~7% of a frame, measured).
+  const slot = (Math.min(3, d) << FAST_BITS) | (Math.imul(c, 0x9e3779b1) >>> (32 - FAST_BITS));
+  if (fastIn[slot] === c) return fastOut[slot]!;
+  const cache = shaded[Math.min(3, d)]!;
+  const hit = cache.get(c);
+  if (hit !== undefined) { fastIn[slot] = c; fastOut[slot] = hit; return hit; }
+  if (!rampOf) {
+    rampOf = new Map();
+    const ramps = [...RAMP_HEX.slice(0, RAMP_GROUPS), ...Object.values(SEASON_HEX)];
+    for (const hexes of ramps) {
+      const words = hexes.map((h) => packRgba(hexRgb(h)));
+      // A colour in two ramps keeps the first (the system ramp): its shade is then the same everywhere.
+      words.forEach((w, step) => { if (!rampOf!.has(w)) rampOf!.set(w, { ramp: words, step }); });
+    }
+  }
+  const r = rampOf.get(c);
+  const out = r ? r.ramp[Math.max(0, r.step - d)]! : c;
+  cache.set(c, out);
+  fastIn[slot] = c; fastOut[slot] = out;
+  return out;
+}
+
+export const colourAt = (buf: MatBuf, look: Look, p: number, x: number, y: number): number =>
   colourOf(buf, look, buf.tag[p]!, buf.role[p]!, buf.rank[p]!, buf.alt[p]!, buf.altRole[p]!, p, x, y);
 
 /** Writes tile (tx, ty)'s colours from the buffer into the image (`px` = its pixels as words). */
@@ -500,30 +617,32 @@ export function resolveTile(buf: MatBuf, look: Look, px: Uint32Array, tx: number
 }
 
 /**
- * Writes the colours of every pixel whose rank is in `mask` (bit r = rank r). One pass over the
- * map: a tree's pixels share its centre's rank, so a rank is no longer a 4 × 4 lattice.
+ * Writes the colours of every pixel whose key is flagged in `dirty` (1 = recolour). One pass over the
+ * map: keys follow the front and the trees, not a lattice.
  */
-export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, mask: number): void {
-  const { tag, role, rank, moist, alt, altRole } = buf, n = buf.w * buf.h, span = look.span;
-  // The three moisture tables each rank shows, picked once (a late-game map changes ranks often:
+export function resolveRanks(buf: MatBuf, look: Look, px: Uint32Array, dirty: Uint8Array): void {
+  const { tag, role, rank, moist, alt, altRole } = buf, n = buf.w * buf.h, span = look.span, shade = look.shade, ground = look.ground, gw = groundWords();
+  // The three moisture tables each key shows, picked once (a late-game map changes keys often:
   // a function call per pixel here was 9% of a frame, measured).
   const byRank: Uint32Array[] = [];
-  for (let r = 0; r < RANKS; r++) for (let c = 0; c < CLASSES; c++) byRank.push(look.tables[look.shown[r]! * CLASSES + c]!);
+  for (let r = 0; r < KEYS; r++) for (let c = 0; c < CLASSES; c++) byRank.push(look.tables[look.shown[r]! * CLASSES + c]!);
   for (let p = 0; p < n; p++) {
     const r = rank[p]!;
-    if (((mask >> r) & 1) === 0) continue;
+    if (dirty[r] === 0) continue;
     const g = tag[p]!;
     if (g === NO_TAG) continue;
     // Winter pixels may lie under snow or ice: the full path.
     if (look.shown[r] === LookState.Winter) { const x = p % buf.w; px[p] = colourAt(buf, look, p, x, (p - x) / buf.w); continue; }
     const t = byRank[r * CLASSES + moist[p]!]!;
     const c = t[role[p]! * span + g]!;
-    px[p] = c !== ALT ? c : alt[p] === NO_TAG ? 0 : t[altRole[p]! * span + alt[p]!]!;
+    let col = c !== ALT ? c : alt[p] === NO_TAG ? 0 : t[altRole[p]! * span + alt[p]!]!;
+    if (ground) { const gm = ground[p]!; if (gm !== 0) { const o = gw[look.shown[r]! * 8 + gm]!; if (o !== 0) col = o; } }
+    px[p] = shade && shade[p] !== 0 ? shadeWord(col, shade[p]!) : col;
   }
 }
 
 const newMatTile = (): MatTile => ({
-  tag: new Uint16Array(TILE_PX), role: new Uint8Array(TILE_PX), rank: new Uint8Array(TILE_PX), alt: new Uint16Array(TILE_PX), altRole: new Uint8Array(TILE_PX),
+  tag: new Uint16Array(TILE_PX), role: new Uint8Array(TILE_PX), rank: new Uint8Array(TILE_PX), anchor: new Uint8Array(TILE_PX), alt: new Uint16Array(TILE_PX), altRole: new Uint8Array(TILE_PX),
 });
 
 /** Copies tile (tx, ty)'s entries out of the buffer. */
@@ -533,6 +652,7 @@ export function readMatTile(buf: MatBuf, tx: number, ty: number, out: MatTile = 
     out.tag.set(buf.tag.subarray(o, o + TILE), d);
     out.role.set(buf.role.subarray(o, o + TILE), d);
     out.rank.set(buf.rank.subarray(o, o + TILE), d);
+    out.anchor.set(buf.anchor.subarray(o, o + TILE), d);
     out.alt.set(buf.alt.subarray(o, o + TILE), d);
     out.altRole.set(buf.altRole.subarray(o, o + TILE), d);
   }
@@ -564,7 +684,7 @@ export function dissolveMat(buf: MatBuf, tx: number, ty: number, old: MatTile, n
     const o = py * buf.w + tx * TILE;
     for (let x = 0; x < TILE; x++) {
       const src = bayer(tx * TILE + x, py) < share ? neu : old, k = y * TILE + x;
-      buf.tag[o + x] = src.tag[k]!; buf.role[o + x] = src.role[k]!; buf.rank[o + x] = src.rank[k]!;
+      buf.tag[o + x] = src.tag[k]!; buf.role[o + x] = src.role[k]!; buf.rank[o + x] = src.rank[k]!; buf.anchor[o + x] = src.anchor[k]!;
       buf.alt[o + x] = src.alt[k]!; buf.altRole[o + x] = src.altRole[k]!;
     }
   }

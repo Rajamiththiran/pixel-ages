@@ -211,6 +211,10 @@ input[type='number'] { width: 64px; }
 }
 .bottombar .sep { width: 1px; height: 36px; background: var(--line); }
 .bottombar .yearbox { min-width: 160px; font-size: 15px; font-weight: 600; }
+/* Seasons Phase 4: the caption under the year (the tray look restyles it in tray.css). */
+.bottombar .yearwrap { display: inline-flex; flex-direction: column; justify-content: center; }
+.bottombar .yearnote { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.bottombar .yearnote.warn { color: var(--warn); }
 .bottombar .grow { flex: 1; }
 .bottombar input[type='range'] { width: 100%; }
 .bottombar .fps { color: var(--muted); font-size: 11px; min-width: 50px; text-align: right; }

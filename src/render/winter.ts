@@ -29,10 +29,10 @@ function cellNoise(x: number, y: number, cell: number, salt: number): number {
   return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
 }
 
-const mountainous = (map: MapData, i: number): boolean => map.ground[i] === Ground.Mountain || map.wall[i] === WallType.Mountain;
+export const mountainous = (map: MapData, i: number): boolean => map.ground[i] === Ground.Mountain || map.wall[i] === WallType.Mountain;
 
 /** Height 0–1 at a pixel, smoothed between tile centres; mountains count as the highest. */
-function heightAt(map: MapData, px: number, py: number): number {
+export function heightAt(map: MapData, px: number, py: number): number {
   const w = map.width, h = map.height;
   const fx = Math.min(w - 1, Math.max(0, (px + 0.5) / TILE - 0.5)), fy = Math.min(h - 1, Math.max(0, (py + 0.5) / TILE - 0.5));
   const x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
@@ -65,6 +65,8 @@ export class WinterField {
   iceStart: Int32Array = new Int32Array(257);
   private readonly water: Uint8Array;
   private ready = false;
+  /** Phase 3a: the cold front's share of the land per pixel (seasonFront.ts): snow lies first where winter came first. Null: the 2c order. */
+  arrival: Float32Array | null = null;
   readonly pw: number;
   readonly ph: number;
 
@@ -110,6 +112,13 @@ export class WinterField {
       for (let px = 0; px < pw; px++) {
         const p = py * pw + px;
         if (this.water[ty * this.w + Math.floor(px / TILE)]) { raw[p] = -1; continue; }
+        if (this.arrival) {
+          const v = Math.min(1, Math.max(0, this.arrival[p]!));
+          raw[p] = v;
+          hist[Math.min(BINS - 1, Math.floor(v * BINS))]!++;
+          land++;
+          continue;
+        }
         const n = 0.65 * cellNoise(px, py, SN.noiseCellPx, SN.noiseSalt) + 0.35 * cellNoise(px, py, SN.noiseCellPx / 3, SN.noiseSalt + 1);
         const v = (SN.heightWeight * (1 - heightAt(map, px, py)) + SN.latitudeWeight * (py / ph) + SN.noiseWeight * n)
           / (SN.heightWeight + SN.latitudeWeight + SN.noiseWeight);

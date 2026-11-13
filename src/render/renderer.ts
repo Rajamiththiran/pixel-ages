@@ -22,10 +22,15 @@ import { Camera } from './camera';
 import { SpriteLayer } from './blit';
 import { SeasonLayer } from './season';
 import { SeasonDriver } from './seasonLook';
-import { fieldsOn, iceOn, roofsOn, seasonRampsOn } from './materials';
+import type { SeasonMode } from './speedLook';
+import { fieldsOn, heldOn, iceOn, mistOn, roofsOn, seasonRampsOn, stormOn } from './materials';
 import { FieldState } from './fields';
 import { ScreenClock } from './screenClock';
 import { RainEase } from './rainEase';
+import { HeldRain } from './heldRain';
+import { Mist } from './mist';
+import { hash01 } from '../shared/hash';
+import { isWaterTile } from './terrainDetail';
 import { DayNight, NightPass, nightLevel, nightOn } from './light';
 import { Weather } from './weather';
 import { Effects, Particle, type View } from './effects';
@@ -97,6 +102,7 @@ export class Renderer {
   readonly season: SeasonLayer;
   /** Seasons Phase 1b: which season each Bayer rank of the terrain shows. */
   private readonly seasonDriver = new SeasonDriver();
+  private seasonLook: SeasonMode = 'full';
   private seasonJump = false;
   /** Seasons Phase 2b: the harvest the screen shows, moved on by the simulation's farmers. */
   private readonly fields: FieldState | null;
@@ -104,6 +110,19 @@ export class Renderer {
   readonly clock = new ScreenClock();
   /** Speeds plan Phase 5: the rain the screen draws, sliding over the year (run mode only). */
   private rainEase: RainEase | null = null;
+  // Seasons Phase 4: while the look is held, the land and the weather's cracks and puddles draw rain
+  // averaged over years (heldRain.ts), not the year's. `climateNote`: the year's caption (S11).
+  private heldRain: HeldRain | null = null;
+  private heldActive = false;
+  private baseRain: Uint8Array | null = null;
+  climateNote: 'drought' | 'wet' | null = null;
+  // Phase 7: dawn mist, a scheduled Wet period running (main.ts; storms come more often), and what the
+  // terrain was last given (the weather's dry and wet tiles, the trampled ground).
+  private readonly mist: Mist | null = null;
+  wetPeriod = false;
+  private groundSeen = -1;
+  private trampleSeen = -1;
+  private rainTick = 0;
   private gradualOn = false;
 
   /** The rain the screen draws in a run (dev checks), or null. */
@@ -163,6 +182,7 @@ export class Renderer {
     this.weather = new Weather(view.map);
     this.effects = new Effects(view.map);
     this.trample = new TrampleLayer(view.map.width, view.map.height);
+    this.mist = mistOn ? new Mist(view.map) : null;
     this.sprites = new SpriteLayer(canvas.width, canvas.height);
     // Flames are light, not things: no shadow (as in the mockup).
     for (const f of ['flame_1', 'flame_2']) this.sprites.noShadow.add(getSprite(f));
@@ -178,12 +198,14 @@ export class Renderer {
     this.terrain.setMap(map);
     this.season.setMap(map);
     this.effects.setMap(map);
+    this.mist?.setMap(map);
     this.people.setMap(map);
     if (this.rainEase) {
       this.rainEase.set(map.rain, this.clock.t, true);
       this.weather.rainSource = this.rainEase.shown;
     }
     this.terrain.setRain(this.rainEase?.shown ?? map.rain);
+    if (this.heldActive && this.heldRain) { this.heldRain.snap(map.rain, this.clock.t); this.pushRain(); }
     this.rain.invalidate();
     this.rebuildAnimals();
   }
@@ -214,6 +236,11 @@ export class Renderer {
     this.season.enabled = running;
     this.animals.lively = running;
     this.rainEase = running ? new RainEase(this.view.map.rain) : null;
+    this.heldRain = running && heldOn ? new HeldRain(this.view.map.rain) : null;
+    this.heldActive = false;
+    this.baseRain = base ? base.rain : null;
+    this.climateNote = null;
+    this.weather.falling = true;
     this.weather.rainSource = this.rainEase?.shown ?? null;
     this.weather.setMap(this.view.map, base ? base.rain : null);
     this.effects.clear();
@@ -234,9 +261,22 @@ export class Renderer {
    * A frame's time (speeds plan Phase 3). `monthsPerSecond`: the speed while time runs at it, else
    * 0 (paused, time-lapse). `jump` after a jump in time: the clock and the season snap.
    * `seasonShow` (Phase 4): how much of the turning year shows at this speed (0 = the held look).
+   * Seasons Phase 3b: `look`, how the seasons show in the materials (every season, two looks a year,
+   * held); the season weights for weather and sound follow it. `holdDay`: the day stops in daylight (Watch).
    */
-  setTime(year: number, month: number, monthsPerSecond: number, jump: boolean, seasonShow = 1): void {
-    this.season.show = seasonShow;
+  setTime(year: number, month: number, monthsPerSecond: number, jump: boolean, seasonShow = 1, look: SeasonMode = 'full', holdDay = false): void {
+    this.seasonLook = look;
+    this.season.show = seasonRampsOn ? (look === 'held' ? 0 : 1) : seasonShow;
+    this.light.hold = holdDay;
+    // Phase 4: entering or leaving the held look switches the rain the land and the weather draw.
+    const held = look === 'held' && this.heldRain !== null;
+    if (held !== this.heldActive) {
+      this.heldActive = held;
+      this.weather.falling = !held;
+      if (held) this.heldRain!.snap(this.rainEase?.shown ?? this.view.map.rain, year * CONFIG.time.ticksPerYear + month);
+      else this.climateNote = null;
+      this.pushRain();
+    }
     this.clock.sync(year * CONFIG.time.ticksPerYear + month, monthsPerSecond, jump);
     if (jump) {
       this.season.setMonth(this.clock.monthOfYear, true);
@@ -245,8 +285,14 @@ export class Renderer {
     }
   }
 
+  /** Dev checks (seasons Phase 3b): the state each key of the terrain shows now. */
+  get shownSeasons(): readonly number[] { return this.terrain.shownStates; }
+
   /** Seasons Phase 2c: a planned Harsh winters event runs this year (deeper, lower snow). */
   set harshWinter(on: boolean) { this.seasonDriver.harsh = on; }
+
+  /** Seasons Phase 6: what falls at map pixel (x, y): rain, snow or nothing (weather.ts Fall). */
+  private readonly fallAt = (x: number, y: number): number => this.terrain.fallAt(x, y);
 
   /** Seasons Phase 2c: does snow lie at map pixel (x, y)? (A building there wears it.) */
   private readonly snowOnRoof = (x: number, y: number): boolean => this.terrain.snowAt(Math.floor(x), Math.floor(y));
@@ -269,6 +315,12 @@ export class Renderer {
     if (this.rainEase) {
       const snap = jump || !this.gradualOn;
       this.rainEase.set(this.view.map.rain, this.clock.t, snap);
+      if (this.heldActive && this.heldRain) {
+        // Phase 4: the held look follows its years-long average (a jump in time starts it afresh).
+        if (jump) { this.heldRain.snap(this.view.map.rain, this.clock.t); this.pushRain(); }
+        this.rain.invalidate();
+        return;
+      }
       this.weather.rainSource = this.rainEase.shown;
       this.terrain.setRain(this.rainEase.shown);
       if (!snap) return;   // the slide redraws as it goes (drawFrame)
@@ -277,6 +329,31 @@ export class Renderer {
     this.weather.rainChanged();
   }
   invalidateElevation(): void { this.elevation.invalidate(); }
+
+  /**
+   * Phase 7 (owner decision S9): a storm blows for storm.months from a hashed month in some years: each
+   * year with a chance that grows with the map's mean shown rain past rainFrom, more in a Wet period.
+   * Not in the held look.
+   */
+  private updateStorm(): void {
+    const sky = this.weather.sky;
+    if (!sky || !stormOn) return;
+    const S = CONFIG.render.seasons.storm, M = CONFIG.time.ticksPerYear;
+    const year = Math.floor(this.clock.t / M), m = this.clock.monthOfYear;
+    const start = Math.floor(hash01(year, 1, S.salt) * M);
+    const inWindow = (((m - start) % M) + M) % M < S.months;
+    const chance = Math.max(0, Math.min(1, (this.weather.meanRain - S.rainFrom) / (S.rainFull - S.rainFrom))) * S.maxChance + (this.wetPeriod ? S.wetBonus : 0);
+    sky.stormy = this.weather.falling && inWindow && hash01(year, 0, S.salt) < chance;
+  }
+
+  /** Phase 4: gives the land and the weather the rain they draw now (the held average, or the year's). */
+  private pushRain(): void {
+    this.rainTick++;
+    const rain = this.heldActive && this.heldRain ? this.heldRain.shown : this.rainEase?.shown ?? this.view.map.rain;
+    this.weather.rainSource = this.rainEase || this.heldActive ? rain : null;
+    this.weather.rainChanged();
+    this.terrain.setRain(rain);
+  }
   setHeat(kind: HeatLayer, data: Uint8Array): void { this.heat.set(kind, data, this.view.map.width, this.view.map.height); }
   setTerritory(data: Uint8Array): void { this.territoryFill.set(data, this.view.map.width, this.view.map.height); }
 
@@ -305,6 +382,7 @@ export class Renderer {
     this.realms.update(m, groups, performance.now());
     this.markets.update(groups, this.buildings.stallSpots());
     this.trample.update(m, groups);
+    if (this.trample.version !== this.trampleSeen) { this.trampleSeen = this.trample.version; this.terrain.setTrample(this.trample.mask); }
     this.effects.setGroups(groups);
     this.effects.chimneys = this.buildings.chimneys;
     this.effects.fires = this.camps.fires;
@@ -325,6 +403,8 @@ export class Renderer {
     this.markets.clear();
     this.effects.clear();
     this.trample.clear();
+    this.trampleSeen = this.trample.version;
+    this.terrain.setTrample(null);
   }
 
   /** The visible map rectangle in map px. */
@@ -376,17 +456,41 @@ export class Renderer {
     this.terrain.animate(now);
     if (v.running) {
       this.clock.advance(dt);
-      if (this.rainEase?.update(this.clock.t, now)) { this.rain.invalidate(); this.weather.rainChanged(); this.terrain.setRain(this.rainEase.shown); }
+      if (this.rainEase?.update(this.clock.t, now)) {
+        this.rainTick++;
+        this.rain.invalidate();
+        if (!this.heldActive) { this.weather.rainChanged(); this.terrain.setRain(this.rainEase.shown); }
+      }
+      if (this.heldActive && this.heldRain?.update(this.view.map.rain, this.clock.t, now)) {
+        this.pushRain();
+        const m = this.view.map;
+        this.climateNote = this.baseRain ? this.heldRain.note(this.baseRain, (i) => !isWaterTile(m, i)) : null;
+      }
       this.season.setMonth(this.clock.monthOfYear);
       this.season.update(dt);
       this.light.update(dt, v.playing);
       this.weather.update(now, dt, vr, this.season.weights[3]!, v.playing);
+      // Seasons Phase 7: years-long weather. A storm blows some years (S9); the dry and wet tiles go into
+      // the land; dawn mist in spring and autumn (S10).
+      this.updateStorm();
+      if (this.weather.groundVersion !== this.groundSeen) { this.groundSeen = this.weather.groundVersion; this.terrain.setGround(this.weather.groundStates); }
+      if (this.mist) {
+        const forced = this.weather.sky?.forced === 'mist';
+        const season = CONFIG.seasonOfMonth[Math.floor(this.clock.monthOfYear)]!;
+        const strength = forced ? 1 : this.weather.falling && (season === 0 || season === 2) ? this.light.mist : 0;
+        this.mist.update(strength, this.rainEase?.shown ?? v.map.rain, this.rainTick);
+      }
+      // Seasons Phase 5: cloud shadows step the ground down where the clouds are now.
+      this.terrain.setClouds(this.weather.cloudsNow, this.weather.storm, this.weather.falling);
       this.effects.update(now, dt, vr, CONFIG.render.f8.weather.windPxPerS);
       this.people.setNight(this.light.darkness, this.camps.fireGroup);
-    }
-    // Seasons Phase 1b: the season each rank shows (painted in setup, held at the fast speeds).
+    } else this.terrain.setClouds([], false);   // setup: no clouds
+    // Seasons Phase 1b: the season each key shows (painted in setup, held at the fast speeds); Phase 3a:
+    // the front field the keys follow, and the year (each year's front differs a little).
     if (seasonRampsOn) {
-      this.terrain.setLook(this.seasonDriver.update(now, this.clock.monthOfYear, this.season.show, v.running, this.seasonJump));
+      const d = this.seasonDriver;
+      const shown = d.update(now, this.clock.monthOfYear, this.seasonLook, v.running, this.seasonJump, Math.floor(this.clock.t / CONFIG.time.ticksPerYear));
+      this.terrain.setLook(shown, d.kind, d.year);
       this.terrain.setCover(this.seasonDriver.snowLine, this.seasonDriver.iceLine);
       this.seasonJump = false;
     }
@@ -401,6 +505,7 @@ export class Renderer {
       this.drawBridges(ctx);
       if (!this.trample.empty) ctx.drawImage(this.trample.canvas, 0, 0);
       this.weather.drawGround(ctx);
+      this.mist?.draw(ctx);   // Phase 7 (S10): ground fog, under the people
       this.season.draw(ctx);
     }
 
@@ -466,7 +571,10 @@ export class Renderer {
         this.effects.drawSky(ctx, now, 'plain');
         this.drawDioramaNight(ctx, nightQ, layer.glowCanvas);
         this.effects.drawSky(ctx, now, 'glow');
+        // Seasons Phase 6 (owner decision S13): rain and snow after the night pass, at half its strength.
+        this.weather.drawPrecip(ctx, vr, now, nightQ, this.fallAt);
       } else {
+        this.weather.drawPrecip(ctx, vr, now, 0, this.fallAt);
         this.effects.drawSky(ctx, now);
         if (!nightOn) this.drawNight(ctx, vr);
       }

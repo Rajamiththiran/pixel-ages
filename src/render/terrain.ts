@@ -12,10 +12,12 @@ import type { MapData } from '../shared/types';
 import { RGBS, type RGB } from './palette';
 import { Mat, rampRgb, rampShift, rampTag, rampsOn } from './ramps';
 import {
-  FieldPos, GroundRole, LookState, NO_TAG, Role, groundOn, bayerRank, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterRanks, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, type Look as SeasonLook, type MatBuf, type MatTile,
+  FieldPos, GroundMark, GroundRole, KEYS, droughtOn, heldOn, snowPathsOn, wetYearOn, PUDDLE_DARK, PUDDLE_LIGHT, isGroundRole, isWaterRole, LookState, NO_TAG, Role, SELF, anchorCode, anchorOffsets, bayerKey, fieldRoleParts, frontOn, groundOn, fieldRole, iceAt, iceOn, resolveBand, sheafRole, snowAt, snowOn, winterKeys, createLook, createMatBuf, isCrown, isDeciduous, treesOn, dissolveMat, matbufOn, readMatTile, resolveRanks, resolveTile, sameMatLook, colourAt, type Look as SeasonLook, type MatBuf, type MatTile,
 } from './materials';
 import { MoistureField, cellNoise } from './moisture';
 import { WinterField } from './winter';
+import { FrontFields } from './seasonFront';
+import { Mask, cloudDitherOn, puddlesOn, wetGroundOn, type CloudAt } from './clouds';
 import { fieldClass, rowCut } from './fields';
 import { applyTexture, bayer, ditherOn, ditherPixel } from './dither';
 import { buildCrowns, canopyDistance, crownColourAt, crownPixelAt, inTreeShadow, type CrownPixel } from './crowns';
@@ -69,6 +71,7 @@ export interface TileExtras {
   mat?: MatBuf | null;           // Seasons Phase 1a: each pixel's ramp step and role, same layout as the image
   fields?: Uint8Array | null;    // Seasons Phase 2b: harvest per tile (0–255); given, farmland is drawn on the mockup's rows
   ponds?: Uint8Array | null;     // Seasons Phase 2c: still water small enough to freeze through (per tile, 1)
+  keys?: Uint8Array | null;      // Seasons Phase 3a: each pixel's key in the current front (null: its Bayer key)
 }
 
 // What the pixel being drawn turned out to be, for shadows and occlusion (phase 3).
@@ -252,7 +255,11 @@ export function drawTilePixels(map: MapData, i: number, data: Uint8ClampedArray,
         if (mat) {
           const p = py * imgW + px;
           mat.tag[p] = tag; mat.role[p] = role;
-          mat.rank[p] = tree ? bayerRank(cp.x, cp.y) : bayerRank(px, py);
+          // The pixel whose arrival it takes: a tree's centre, a field tile's centre (Phase 3a: field by field), or itself.
+          const ax = tree ? cp.x : frontOn && fieldRoleParts(role) ? tx * TILE + TILE / 2 : px;
+          const ay = tree ? cp.y : frontOn && fieldRoleParts(role) ? ty * TILE + TILE / 2 : py;
+          mat.anchor[p] = ax === px && ay === py ? SELF : anchorCode(ax - px, ay - py);
+          mat.rank[p] = ex.keys ? ex.keys[ay * imgW + ax]! : bayerKey(ax, ay);
           mat.alt[p] = NO_TAG;
           // Seasons Phase 2d: a flower or leaf litter, which keeps the ground under it in alt.
           if (details && (role === Role.Grass || role === Role.Forest || role === Role.FloorBare)) {
@@ -339,6 +346,52 @@ function crownRole(map: MapData, c: CrownPixel, px: number, py: number): Role {
 // ---------- seasons Phase 2b: fields and the harvest ----------
 
 const FC = CONFIG.render.seasons.fields;
+const CC = CONFIG.render.seasons.clouds;
+const RNC = CONFIG.render.seasons.rain;
+
+/** Phase 6: a puddle oval at (x, y) (mockup: a few small ovals per cell of puddleCellPx). */
+function puddleShape(x: number, y: number): boolean {
+  const [cw, ch] = RNC.puddleCellPx, [rx, ry] = RNC.puddleRadiusPx;
+  const cx = Math.floor(x / cw!), cy = Math.floor(y / ch!);
+  if (hash01(cx, cy, RNC.salt + 6) >= RNC.puddleShare) return false;
+  const dx = (x - (cx * cw! + (cw! - 1) / 2)) / rx!, dy = (y - (cy * ch! + (ch! - 1) / 2)) / ry!;
+  return dx * dx + dy * dy <= 1;
+}
+
+/** Phase 6: puddles stand in hollows (a tile lower than a neighbour), and on flat land in some tiles. */
+function puddlyTile(map: MapData, tx: number, ty: number): boolean {
+  const mw = map.width, e = map.elevation[ty * mw + tx]!;
+  let higher = false, lower = false;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    const nx = tx + dx, ny = ty + dy;
+    if (nx < 0 || ny < 0 || nx >= mw || ny >= map.height) continue;
+    const f = map.elevation[ny * mw + nx]!;
+    if (f > e) higher = true; else if (f < e) lower = true;
+  }
+  return higher || (!lower && hash01(tx, ty, RNC.salt + 5) < RNC.puddleFlatShare);
+}
+
+const DRC = CONFIG.render.seasons.drought;
+
+/** Phase 7: drought patches (the mockup's clustered noise above patchAbove). */
+function droughtPatch(x: number, y: number): boolean {
+  const [c0, c1] = DRC.patchCellPx, [w0, w1] = DRC.patchWeights;
+  return w0! * cellNoise(x, y, c0!, DRC.salt) + w1! * cellNoise(x, y, c1!, DRC.salt + 1) > DRC.patchAbove;
+}
+
+/** Phase 7: the mockup's crack pattern: two sets of broken diagonal lines. */
+function crackLine(x: number, y: number): boolean {
+  const [e0, e1] = DRC.crackEvery, [s0, s1] = DRC.crackShare;
+  const a = (((x + 2 * y) % e0!) + e0!) % e0! === 0 && hash01(x >> 2, y >> 1, DRC.salt + 2) < s0!;
+  const b = (((2 * x - y) % e1!) + e1!) % e1! === 0 && hash01(x >> 1, y >> 2, DRC.salt + 3) < s1!;
+  return a || b;
+}
+
+/** Phase 6: ground a puddle can stand on (open ground, paths, fields; not woods, bushes, rock or fire). */
+function puddleRole(role: number): boolean {
+  return role === Role.Grass || role === Role.Desert || role === Role.Mark || role === Role.Bank || role === Role.Beach
+    || fieldRoleParts(role) !== null || isGroundRole(role);
+}
 // Phase 2c: how far past the snow line a moved line can change a pixel (dusting, dithered edge), 0–255.
 const SNOW_EDGE = CONFIG.render.seasons.snow.edgeShare * 255;
 const SNOW_DUST = CONFIG.render.seasons.snow.dustShare * 255;
@@ -840,8 +893,26 @@ export class TerrainLayer {
   private drawnIce = 0;
   private rain: ArrayLike<number> | null = null;
   private moistureDirty = false;
-  private ranksDirty = 0;          // bit r: rank r shows a new state
+  private readonly keysDirty = new Uint8Array(KEYS);   // 1: key k shows a new state
+  private anyKeysDirty = false;
+  private readonly winterMask = new Uint8Array(KEYS);
+  // Phase 3a: the front fields, and each pixel's key in the field shown now (−1: the Bayer keys).
+  private readonly fronts: FrontFields | null = null;
+  private readonly keys: Uint8Array | null = null;
+  private keysKind = -1;
+  private keysYear = 0;
   private wholeImage = false;      // the next upload covers every tile
+  // Phase 5: cloud shadows as ramp steps per pixel (look.shade), the clouds last stamped, and the storm's gloom.
+  private shade: Uint8Array | null = null;
+  private stamped: CloudAt[] = [];
+  private gloom = false;
+  private raining = true;          // Phase 6: rain clouds wet the ground (off at the held speeds)
+  private cloudsStale = false;     // Phase 6: winter came or went: the next move recomputes whole cloud boxes
+  // Phase 7: the marks years-long weather leaves per pixel (materials.ts GroundMark), and the per-tile state they come from.
+  private groundMarks: Uint8Array | null = null;
+  private groundStates: Uint8Array | null = null;
+  private rects: number[] = [];                       // x, y, w, h of each rectangle to upload
+  private readonly rectImgs = new Map<number, ImageData>();   // small images for those uploads, by size
 
   /** `useMat`: draw through the material buffer (the switch; tests compare both ways). */
   constructor(private map: MapData, useMat = matbufOn) {
@@ -869,9 +940,12 @@ export class TerrainLayer {
       this.look = createLook();
       this.moisture = new MoistureField(map.width, map.height);
       if (snowOn || iceOn) this.winter = new WinterField(map.width, map.height);
+      this.keys = new Uint8Array(this.canvas.width * this.canvas.height);
+      this.bayerKeys(this.keys);
+      if (frontOn) this.fronts = new FrontFields(map.width, map.height);
     }
     this.store = this.mat && this.look ? matStore(this.mat, this.look, this.px) : rgbaStore(this.img.data, this.canvas.width);
-    this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null, shadow: this.shadowImg?.data ?? null, mat: this.mat };
+    this.extras = { depth: this.depth, crossing: null, marks: null, hazards: null, look: null, base: null, shadow: this.shadowImg?.data ?? null, mat: this.mat, keys: this.keys };
     this.winterNow();
     this.markAll();
   }
@@ -895,6 +969,9 @@ export class TerrainLayer {
 
   setMap(map: MapData): void {
     this.map = map;
+    // Phase 3a: the front fields only change with the land's height (setMap also runs at a run's
+    // start and end, and they take ~250 ms on a full map).
+    if (this.fronts?.heightsChanged(map)) this.keysKind = -2;
     computeDepth(map, this.depth);
     this.moisture?.landChanged();
     this.moistureDirty = true;
@@ -910,6 +987,8 @@ export class TerrainLayer {
   private winterNow(): void {
     const w = this.winter, look = this.look;
     if (!w || !look) return;
+    // Phase 3a: snow lies in the cold front's order once the front fields are worked out (rekey).
+    w.arrival = this.fronts?.isReady ? this.fronts.coldShare : null;
     const before = w.ponds.slice();
     w.invalidate();
     w.ensure(this.map);
@@ -921,17 +1000,62 @@ export class TerrainLayer {
   }
 
   /**
-   * Phase 1b: the state each of the 16 Bayer ranks shows (materials.ts LookState). Ranks that
-   * change are recoloured on the next flush, without redrawing a tile.
+   * Phase 1b: the state each key shows (materials.ts LookState). Keys that change are recoloured on
+   * the next flush, without redrawing a tile. Phase 3a: `kind` is the front field the keys follow
+   * (seasonFront.ts FrontKind; −1 the Bayer keys) in `year`.
    */
-  setLook(states: ArrayLike<number>): void {
+  setLook(states: ArrayLike<number>, kind = -1, year = 0): void {
     const look = this.look;
     if (!look) return;
+    const k = this.fronts ? kind : -1;
+    const y = k >= 0 ? year : 0;
+    // The painted map (setup) needs no keys: the fields are worked out when a season first shows,
+    // so painting in setup never waits for them.
+    let painted = true;
+    for (let r = 0; r < look.shown.length && painted; r++) painted = states[r] === LookState.Painted && look.shown[r] === LookState.Painted;
+    if (!painted && (k !== this.keysKind || y !== this.keysYear)) this.rekey(k, y);
     for (let r = 0; r < look.shown.length; r++) {
       if (look.shown[r] === states[r]) continue;
+      if (look.shown[r] === LookState.Winter || states[r] === LookState.Winter) this.cloudsStale = true;
       look.shown[r] = states[r]!;
-      this.ranksDirty |= 1 << r;
+      this.keysDirty[r] = 1;
+      this.anyKeysDirty = true;
     }
+  }
+
+  /** The keys without the front: each pixel's Bayer key (Phase 1b's dissolve). */
+  private bayerKeys(out: Uint8Array): void {
+    const w = this.canvas.width, h = this.canvas.height;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = bayerKey(x, y);
+  }
+
+  /**
+   * Phase 3a: the keys follow another field (a new front, a new year). Each pixel takes the key of
+   * its anchor; snapshots of fading tiles too. A front starts with every key showing one state, so
+   * this recolours nothing; if they differ (a jump, a fast speed skipping a front's end) every key is.
+   */
+  private rekey(kind: number, year: number): void {
+    const mat = this.mat, look = this.look, keys = this.keys;
+    if (!mat || !look || !keys) return;
+    if (kind >= 0) {
+      if (this.fronts!.ensure(this.map)) this.winterNow();
+      this.fronts!.keys(kind, year, keys);
+    } else this.bayerKeys(keys);
+    this.keysKind = kind; this.keysYear = year;
+    const off = anchorOffsets(mat.w), n = keys.length, last = n - 1;
+    const keyOf = (p: number, a: number): number => keys[Math.min(last, Math.max(0, p + off[a]!))]!;
+    for (let p = 0; p < n; p++) mat.rank[p] = keyOf(p, mat.anchor[p]!);
+    const w = this.map.width;
+    const snap = (i: number, t: MatTile): void => {
+      const tx = i % w, ty = (i - tx) / w;
+      for (let y = 0; y < TILE; y++) {
+        const o = (ty * TILE + y) * mat.w + tx * TILE;
+        for (let x = 0; x < TILE; x++) t.rank[y * TILE + x] = keyOf(o + x, t.anchor[y * TILE + x]!);
+      }
+    };
+    for (const [i, f] of this.fades) { snap(i, f.old as MatTile); snap(i, f.neu as MatTile); }
+    const s0 = look.shown[0];
+    if (!look.shown.every((s) => s === s0)) { this.keysDirty.fill(1); this.anyKeysDirty = true; }
   }
 
   /** Phase 1b: the rain per tile the screen shows (its contents may change later; call again then). */
@@ -946,6 +1070,206 @@ export class TerrainLayer {
     if (s === look.snowLine && i === look.iceLine) return;
     look.snowLine = s; look.iceLine = i;
     this.coverDirty = true;
+  }
+
+  /**
+   * Phase 5 (mockup E, owner decision S12): the clouds now, at whole-pixel positions, and whether a
+   * storm's gloom lies over the land. Their shadows (offset down-right) drop the ground one or two ramp
+   * steps on a world-fixed checker; only pixels whose drop changed are recoloured, so a ground pixel
+   * changes only as a shadow's edge passes it.
+   */
+  setClouds(clouds: readonly CloudAt[], gloom: boolean, rain = true): void {
+    const mat = this.mat, look = this.look;
+    if (!mat || !look || !cloudDitherOn) return;
+    const same = gloom === this.gloom && rain === this.raining && clouds.length === this.stamped.length
+      && clouds.every((c, k) => c.shape === this.stamped[k]!.shape && c.x === this.stamped[k]!.x && c.y === this.stamped[k]!.y);
+    if (same) return;
+    const w = mat.w, h = mat.h;
+    if (!this.shade) { this.shade = new Uint8Array(w * h); look.shade = this.shade; }
+    const shade = this.shade;
+    const [sx, sy] = CC.shadowOffsetPx;
+    const box = (c: CloudAt): [number, number, number, number] => {
+      const x0 = c.x + c.shape.ox + sx!, y0 = c.y + c.shape.oy + sy!;
+      return [x0, y0, x0 + c.shape.w, y0 + c.shape.h];
+    };
+    const boxes = clouds.map(box);
+    const g = gloom ? 1 : 0;
+    // Winter came or went somewhere: rain's wet ground and puddles inside a zone may change, not only at its edges.
+    const full = this.cloudsStale;
+    this.cloudsStale = false;
+    const map = this.map;
+    const puddly = (tx: number, ty: number): boolean => puddlyTile(map, tx, ty);
+    const nearOf = (x0: number, y0: number, x1: number, y1: number): number[] => {
+      const near: number[] = [];
+      boxes.forEach((b, k) => { if (b[0] < x1 && b[2] > x0 && b[1] < y1 && b[3] > y0) near.push(k); });
+      return near;
+    };
+    /** Recomputes pixel (x, y)'s shade from the clouds in `near`; true if it changed (and is recoloured). */
+    const one = (x: number, y: number, near: number[]): boolean => {
+      const odd = (x + y) & 1;
+      let d = 0, wet = 0, pud = 0;
+      for (let j = 0; j < near.length; j++) {
+        const k = near[j]!, b = boxes[k]!;
+        if (x < b[0] || y < b[1] || x >= b[2] || y >= b[3]) continue;
+        const s = clouds[k]!.shape, m = s.mask[(y - b[1]) * s.w + (x - b[0])]!;
+        const v = m & Mask.Core ? 1 + odd : m & Mask.In ? odd : 0;
+        if (v > d) d = v;
+        if (rain && s.rainy) { if (m & Mask.Wet) wet = 1; if (m & Mask.Puddle) pud = 1; }
+      }
+      const p = y * w + x;
+      let v = Math.min(3, d + g * odd);
+      if (wet || pud) {
+        // Phase 6 (mockup E): rain wets open land a step darker, and puddles stand; not where winter shows.
+        const role = mat.role[p]!;
+        if (!isWaterRole(role) && look.shown[mat.rank[p]!] !== LookState.Winter) {
+          if (pud && puddlesOn && puddleRole(role) && puddleShape(x, y) && puddly(Math.floor(x / TILE), Math.floor(y / TILE))) {
+            v = puddleShape(x - 1, y - 1) ? PUDDLE_DARK : PUDDLE_LIGHT;
+          } else if (wet && wetGroundOn) v = Math.min(3, v + 1);
+        }
+      }
+      if (v === shade[p]) return false;
+      shade[p] = v;
+      if (mat.tag[p] !== NO_TAG) this.px[p] = colourAt(mat, look, p, x, y);
+      return true;
+    };
+    /** Recomputes the shade in a rectangle; true if a pixel changed. */
+    const redo = (x0: number, y0: number, x1: number, y1: number): boolean => {
+      x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(w, x1); y1 = Math.min(h, y1);
+      if (x0 >= x1 || y0 >= y1) return false;
+      const near = nearOf(x0, y0, x1, y1);
+      let any = false;
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (one(x, y, near)) any = true;
+      return any;
+    };
+    if (gloom !== this.gloom || rain !== this.raining) {
+      // The storm came or went (or rain stopped wetting): every pixel.
+      this.gloom = gloom;
+      redo(0, 0, w, h);
+      this.wholeImage = true;
+    } else {
+      // Each cloud once, over where it was and where it is now (clouds keep their shape while crossing);
+      // a cloud that came or went, over its one box. Only those boxes are uploaded.
+      const before = new Map(this.stamped.map((c) => [c.shape, c] as const));
+      const todo: [number, number, number, number][] = [];
+      clouds.forEach((c, k) => {
+        const b = boxes[k]!, was = before.get(c.shape);
+        before.delete(c.shape);
+        if (!was) { todo.push(b); return; }
+        if (was.x === c.x && was.y === c.y) return;
+        const o = box(was);
+        const u: [number, number, number, number] = [Math.min(b[0], o[0]), Math.min(b[1], o[1]), Math.max(b[2], o[2]), Math.max(b[3], o[3])];
+        if (full || c.x !== was.x + 1 || c.y !== was.y) { todo.push(u); return; }
+        // One pixel with the wind: inside the shape nothing changes (the checker is fixed to the world),
+        // so only its outlines can: a pixel whose mask value differs from the one to its right (the cloud
+        // moved that one onto it). A whole box each move was ~20% of a frame with rain's wider zones (measured).
+        const near = nearOf(u[0], u[1], u[2], u[3]), e = c.shape.edges;
+        let any = false;
+        for (let j = 0; j < e.length; j += 2) {
+          const x = b[0] + e[j]! - 1, y = b[1] + e[j + 1]!;   // the pixel left of each mask edge: it saw the edge's right side before
+          if (x >= 0 && y >= 0 && x < w && y < h && one(x, y, near)) any = true;
+        }
+        if (any) {
+          const x0 = Math.max(0, u[0]), y0 = Math.max(0, u[1]);
+          this.rects.push(x0, y0, Math.min(w, u[2]) - x0, Math.min(h, u[3]) - y0);
+        }
+      });
+      for (const o of before.values()) todo.push(box(o));
+      for (const r of todo) {
+        if (!redo(r[0], r[1], r[2], r[3])) continue;
+        const x0 = Math.max(0, r[0]), y0 = Math.max(0, r[1]);
+        this.rects.push(x0, y0, Math.min(w, r[2]) - x0, Math.min(h, r[3]) - y0);
+      }
+    }
+    this.stamped = clouds.slice();
+    this.raining = rain;
+  }
+
+  /**
+   * Phase 5: uploads the rectangles cloud shadows changed, each through a small image of its own (a
+   * dirty-rect putImageData of the whole image copies all of it in Chrome; measured: ~10 ms a move).
+   */
+  private uploadRects(): void {
+    const r = this.rects, w = this.canvas.width;
+    for (let k = 0; k < r.length; k += 4) {
+      const x = r[k]!, y = r[k + 1]!, rw = r[k + 2]!, rh = r[k + 3]!;
+      if (rw <= 0 || rh <= 0) continue;
+      const key = rw * 100000 + rh;
+      let img = this.rectImgs.get(key);
+      if (!img) { img = this.ctx.createImageData(rw, rh); this.rectImgs.set(key, img); }
+      const dst = new Uint32Array(img.data.buffer);
+      for (let row = 0; row < rh; row++) dst.set(this.px.subarray((y + row) * w + x, (y + row) * w + x + rw), row * rw);
+      this.ctx.putImageData(img, x, y);
+    }
+    this.rects.length = 0;
+    if (this.rectImgs.size > 64) this.rectImgs.clear();
+  }
+
+  /**
+   * Phase 7: the years-long weather per tile (weather.ts: 0 none, 1 drought, 2 wet year, by the shown
+   * rain against the painted rain). Tiles whose state changed get their marks (cracked sand, puddles)
+   * and are recoloured in place.
+   */
+  setGround(states: Uint8Array): void {
+    const look = this.look, mat = this.mat;
+    if (!look || !mat || (!droughtOn && !wetYearOn)) return;
+    if (!this.groundMarks) {
+      this.groundMarks = new Uint8Array(mat.w * mat.h);
+      this.groundStates = new Uint8Array(states.length);
+      look.ground = this.groundMarks;
+    }
+    const w = this.map.width;
+    let any = false;
+    for (let i = 0; i < states.length; i++) {
+      if (states[i] === this.groundStates![i]) continue;
+      this.groundStates![i] = states[i]!;
+      this.groundTile(i);
+      this.store.commit(i % w, Math.floor(i / w));
+      any = true;
+    }
+    if (any) this.wholeImage = true;
+  }
+
+  /** Phase 7: the marks of tile i's pixels: cracks on open dry land in patches, puddles on open wet land. */
+  private groundTile(i: number): void {
+    const mat = this.mat!, marks = this.groundMarks!, st = this.groundStates![i]!;
+    const w = this.map.width, tx = i % w, ty = (i - tx) / w;
+    const puddly = st === 2 && puddlyTile(this.map, tx, ty);
+    for (let oy = 0; oy < TILE; oy++) {
+      const y = ty * TILE + oy;
+      for (let ox = 0; ox < TILE; ox++) {
+        const x = tx * TILE + ox, p = y * mat.w + x, role = mat.role[p]!;
+        let m: number = GroundMark.None;
+        // Open ground only (mockup: not paths, banks, rock or woods).
+        if (st !== 0 && (role === Role.Grass || role === Role.Desert || isGroundRole(role))) {
+          if (st === 1 && droughtOn && droughtPatch(x, y)) {
+            m = crackLine(x, y) ? GroundMark.CrackLine : hash01(x, y, DRC.salt + 4) < DRC.bodyLightShare ? GroundMark.CrackLight : GroundMark.CrackBody;
+          } else if (st === 2 && wetYearOn && puddly && puddleShape(x, y)) {
+            m = puddleShape(x - 1, y - 1) ? GroundMark.PuddleDark : GroundMark.PuddleLight;
+          }
+        }
+        marks[p] = m;
+      }
+    }
+  }
+
+  /** Phase 7: trampled ground round homes (1 per pixel), which snow only dusts; null for none. */
+  setTrample(mask: Uint8Array | null): void {
+    const look = this.look;
+    if (!look || !snowPathsOn) return;
+    look.trample = mask;
+    this.coverFull = true;
+  }
+
+  /**
+   * Phase 6: what falls at map pixel (px, py) (weather.ts Fall): snow where the land shows winter (where
+   * snow can lie), nothing on water showing winter, rain anywhere else.
+   */
+  fallAt(px: number, py: number): number {
+    const mat = this.mat, look = this.look;
+    if (!mat || !look || px < 0 || py < 0 || px >= mat.w || py >= mat.h) return 0;
+    const p = py * mat.w + px;
+    if (look.shown[mat.rank[p]!] !== LookState.Winter) return 0;
+    return isWaterRole(mat.role[p]!) ? 2 : 1;
   }
 
   /** Phase 2c: is map pixel (px, py) under snow now? (A building there wears it on its roof.) */
@@ -966,7 +1290,7 @@ export class TerrainLayer {
     this.moistureDirty = true;
   }
 
-  /** What each Bayer rank shows now (tests and the dev hooks). */
+  /** What each key shows now (tests and the dev hooks). */
   get shownStates(): readonly number[] { return this.look ? Array.from(this.look.shown) : []; }
 
   markDirty(i: number): void {
@@ -987,6 +1311,9 @@ export class TerrainLayer {
     if (this.moisture?.tilesChanged(this.map, list)) this.moistureDirty = true;
     // Water came or went: the snow and ice orders (and which water is a pond) are worked out again.
     if (this.winter?.tilesChanged(this.map, list)) this.winterNow();
+    // Phase 3a: the height changed: the front fields (and the snow order with them) are worked out
+    // again when a season next shows.
+    if (this.fronts?.tilesChanged(this.map, list)) this.keysKind = -2;
   }
 
   private markWithNeighbours(i: number, fade = false): void {
@@ -1062,17 +1389,19 @@ export class TerrainLayer {
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     };
-    // Phase 1b: grass moisture follows the rain (only while a season shows; painted and held ignore it),
-    // and ranks that show a new state are recoloured, one pixel in 16 per rank, without redrawing.
+    // Phase 1b: grass moisture follows the rain (only while a season shows; painted ignores it, and held
+    // until Phase 4, whose held look follows years-long rain),
+    // and keys that show a new state are recoloured without redrawing.
     if (this.look && this.mat && this.moisture) {
-      if (this.moistureDirty && this.rain && this.look.shown.some((s) => s !== LookState.Painted && s !== LookState.Held)) {
+      if (this.moistureDirty && this.rain && this.look.shown.some((s) => s !== LookState.Painted && (heldOn || s !== LookState.Held))) {
         this.moistureDirty = false;
         // Colours only (no shadow changes): recolour in place, then the whole image goes up.
         this.moisture.update(this.map, this.rain, this.mat, (i) => { store.commit(i % w, Math.floor(i / w)); this.wholeImage = true; });
       }
-      if (this.ranksDirty !== 0) {
-        resolveRanks(this.mat, this.look, this.px, this.ranksDirty);
-        this.ranksDirty = 0;
+      if (this.anyKeysDirty) {
+        resolveRanks(this.mat, this.look, this.px, this.keysDirty);
+        this.keysDirty.fill(0);
+        this.anyKeysDirty = false;
         this.wholeImage = true;
       }
       const L = this.look, wf = this.winter;
@@ -1080,8 +1409,7 @@ export class TerrainLayer {
         // New orders: every pixel showing winter.
         this.coverFull = false;
         this.coverDirty = false;
-        const mask = winterRanks(L);
-        if (mask !== 0) { resolveRanks(this.mat, L, this.px, mask); this.wholeImage = true; }
+        if (winterKeys(L, this.winterMask)) { resolveRanks(this.mat, L, this.px, this.winterMask); this.wholeImage = true; }
         this.drawnSnow = L.snowLine; this.drawnIce = L.iceLine;
       } else if (this.coverDirty && wf) {
         // A moved line: only the pixels it crossed (and the dusting and dithered edge beyond it; the
@@ -1101,7 +1429,7 @@ export class TerrainLayer {
         this.wholeImage = true;
       }
     }
-    if (this.dirtyList.length === 0 && this.fades.size === 0 && maxX < 0 && !this.wholeImage) return;
+    if (this.dirtyList.length === 0 && this.fades.size === 0 && maxX < 0 && !this.wholeImage && this.rects.length === 0) return;
     const t0 = performance.now();
 
     // Speeds plan Phase 5: fading tiles move on a step (75%, 50%, 25% old, then new).
@@ -1125,6 +1453,7 @@ export class TerrainLayer {
       const old = !fade && this.fadeWanted[i] === 1 && this.fades.size < GR.fadeMaxTiles ? store.read(tx, ty) : null;
       this.fadeWanted[i] = 0;
       drawTilePixels(this.map, i, data, imgW, this.time, this.extras);
+      if (this.groundMarks) this.groundTile(i);   // Phase 7: its roles may have changed
       this.dirty[i] = 0;
       if (fade) {
         // Redrawn while fading (a neighbour changed, water moved): the newest look is the new one.
@@ -1144,8 +1473,9 @@ export class TerrainLayer {
     const whole = this.wholeImage;
     if (whole) {
       this.wholeImage = false;
+      this.rects.length = 0;
       this.ctx.putImageData(this.img, 0, 0);
-    }
+    } else if (this.rects.length > 0) this.uploadRects();
     if (maxX < 0) return;
     if (!whole) {
       this.ctx.putImageData(

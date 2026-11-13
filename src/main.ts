@@ -12,7 +12,8 @@ import {
 } from './shared/ids';
 import type { FounderGroup, Intervention, LogEntry, MapData, PlannedEvent, RunSetup, YearStats } from './shared/types';
 import type { Frame, GroupView, HeatLayer, Speed } from './shared/protocol';
-import { DEFAULT_SPEED, speedForKey, stepSpeed } from './shared/speeds';
+import { DEFAULT_SPEED, speedForKey, speedRow, stepSpeed } from './shared/speeds';
+import { heldOn, seasonNoteOn } from './render/materials';
 import { ERA_NAMES } from './shared/discoveries';
 import { logCsv, statsCsv } from './shared/csv';
 import type { MapLine } from './render/overlays';
@@ -26,7 +27,7 @@ import { Editor } from './editor/editor';
 import { Layer, cloneMap, createMap } from './editor/mapState';
 import { RegionsPreview } from './editor/regionsPreview';
 import { Renderer, type SetupView } from './render/renderer';
-import { clockPace, gradualLand, seasonShow, walkerPace } from './render/speedLook';
+import { clockPace, gradualLand, holdsDay, seasonLook, seasonShow, walkerPace } from './render/speedLook';
 import { GROUP_COLORS, usePalette } from './render/palette';
 import { AgeClass, carrySprite, clearComposites, personSprite } from './render/sprites';
 import type { WalkerSprite } from './render/decor';
@@ -211,6 +212,21 @@ function setMoving(id: number | null): void {
   const g = setup.founders.find((f) => f.id === id);
   setBanner(g ? `Click the map to move ${g.name} (Esc to cancel)` : null);
   syncView();
+}
+
+/**
+ * Seasons Phase 4: the caption under the year while the look is held (owner decision S11): "drought
+ * year" / "wet year" while a scheduled Drought or Wet period of some years runs or enough of the land
+ * is that dry or wet on the years-long average; otherwise which speed holds the season.
+ */
+function heldNote(f: { year: number; speed: number; timelapse: boolean }): { text: string; warn: boolean } {
+  const min = CONFIG.render.seasons.held.note.minEventYears;
+  const ev = runSetup?.events.find((e) => (e.kind === 'drought' || e.kind === 'wetPeriod') && e.lengthYears >= min
+    && f.year >= e.startYear && f.year < e.startYear + e.lengthYears);
+  const climate = ev ? (ev.kind === 'drought' ? 'drought' : 'wet') : renderer.climateNote;
+  if (climate === 'drought') return { text: 'drought year', warn: true };
+  if (climate === 'wet') return { text: 'wet year', warn: false };
+  return { text: f.timelapse ? 'season held in the time-lapse' : `season held at ${speedRow(f.speed).label}`, warn: false };
 }
 
 // ---------- maps / files ----------
@@ -742,7 +758,7 @@ function startRun(): void {
       // Speeds plan Phases 3–4: the screen clock runs on at the speed between frames, so seasons flow;
       // a jump in time (full tiles) snaps it. Paused and time-lapse frames only set the month. How
       // much of the year shows follows the speed (the fast speeds hold one calm look).
-      renderer.setTime(f.year, f.month, clockPace(f), f.fullTiles !== undefined, seasonShow(f));
+      renderer.setTime(f.year, f.month, clockPace(f), f.fullTiles !== undefined, seasonShow(f), seasonLook(f), holdsDay(f));
       // Phase 5: land changes dissolve and the yearly rain slides while a season can be read.
       renderer.gradual = gradualLand(f);
       view.playing = f.playing;
@@ -753,6 +769,12 @@ function startRun(): void {
       renderer.updateFields(f.people, f.year, f.month, seasonShow(f) >= 1 && !f.timelapse);
       // Seasons Phase 2c: a planned Harsh winters event lays deeper snow (owner decision S5).
       renderer.harshWinter = runSetup0.events.some((e) => e.kind === 'harshWinters' && f.year >= e.startYear && f.year < e.startYear + e.lengthYears);
+      // Seasons Phase 7 (S9): storms come more often while a scheduled Wet period runs.
+      renderer.wetPeriod = runSetup0.events.some((e) => e.kind === 'wetPeriod' && f.year >= e.startYear && f.year < e.startYear + e.lengthYears);
+      // Seasons Phase 4 (mockup D): the held look names its season, Summer, with a caption under the year.
+      const held = heldOn && seasonLook(f) === 'held';
+      const note = held && seasonNoteOn ? heldNote(f) : null;
+      bottom.setSeason(held, note?.text ?? '', note?.warn ?? false);
       renderer.setGroups(f.groups, f.relations, walkerSprite);
       view.runGroups = f.groups.map((g) => ({
         name: g.name, x: g.homeX, y: g.homeY, colorIndex: g.colourIndex, selected: g.id === selectedGroup,
@@ -1150,6 +1172,8 @@ if (import.meta.env.DEV) {
     clock: () => renderer.clock.t,
     simMonth: () => { const f = session?.lastFrame; return f ? f.year * CONFIG.time.ticksPerYear + f.month : null; },
     seasonWeights: () => Array.from(renderer.season.weights),
+    // Seasons Phase 3b: how many keys show each look state (materials.ts LookState), and the day's darkness.
+    seasonStates: () => { const n: Record<number, number> = {}; for (const s of renderer.shownSeasons) n[s] = (n[s] ?? 0) + 1; return n; },
     tilesChanged: () => devTilesChanged,
     frameMs: () => renderer.frameMs,
     rainArrays: () => { const r = renderer.rainShown; return r ? { shown: Array.from(r), sim: Array.from(view.map.rain) } : null; },
@@ -1208,7 +1232,7 @@ window.addEventListener('keydown', (e) => {
     if (!session || e.ctrlKey || e.metaKey || e.altKey) return;
     const f = session.lastFrame;
     if (e.key === ' ') { e.preventDefault(); session.send({ type: f?.playing ? 'pause' : 'play' }); }
-    // Speeds plan Phase 2: keys 1 2 4 6 8 pick a speed; − and + step one speed down or up.
+    // Speeds plan Phase 2: the speed keys (` 0 1 2 4 6 8) pick a speed; − and + step one speed down or up.
     else if (speedForKey(e.key) !== null) setSpeed(speedForKey(e.key)!);
     else if (e.key === '-' || e.key === '_') setSpeed(stepSpeed(askedSpeed ?? f?.speed ?? DEFAULT_SPEED, -1));
     else if (e.key === '+' || e.key === '=') setSpeed(stepSpeed(askedSpeed ?? f?.speed ?? DEFAULT_SPEED, 1));
