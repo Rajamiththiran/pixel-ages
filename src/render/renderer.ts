@@ -36,6 +36,10 @@ import { Weather } from './weather';
 import { Effects, Particle, type View } from './effects';
 import { Traffic } from './traffic';
 import { ShadowPass } from './shadows';
+import { drawPixelCircle } from './pixelCircle';
+
+/** The territory ring's dots: pixels on, then off (visual fixes D). */
+const TERRITORY_DASH = [2, 3] as const;
 
 /** What is on screen now, for the ambient sound (0–1 shares unless said otherwise). */
 export interface SoundScene {
@@ -122,6 +126,7 @@ export class Renderer {
   wetPeriod = false;
   private groundSeen = -1;
   private trampleSeen = -1;
+  private clearedSeen = -1;          // visual fixes F: the buildings' cleared tiles last given to the terrain
   private rainTick = 0;
   private gradualOn = false;
 
@@ -375,6 +380,7 @@ export class Renderer {
   setGroups(groups: readonly GroupView[], relations: readonly RelationView[], walker: WalkerSprite): void {
     const m = this.view.map;
     this.buildings.update(m, groups);
+    if (this.buildings.clearedVersion !== this.clearedSeen) { this.clearedSeen = this.buildings.clearedVersion; this.terrain.setCleared(this.buildings.cleared); }
     this.camps.update(groups);
     this.life.update(m, groups, walker);
     this.traffic.update(m, groups);
@@ -404,6 +410,8 @@ export class Renderer {
     this.effects.clear();
     this.trample.clear();
     this.trampleSeen = this.trample.version;
+    this.terrain.setCleared([]);
+    this.clearedSeen = this.buildings.clearedVersion;
     this.terrain.setTrample(null);
   }
 
@@ -596,12 +604,14 @@ export class Renderer {
     const scale = c.zoom >= CONFIG.render.f8.camera.labelScaleFromZoom ? 2 : 1;
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     const project = (mx: number, my: number): [number, number] => [((mx - c.ox) * c.zoom) / scale, ((my - c.oy) * c.zoom) / scale];
+    // Visual fixes A: zoomed out, labels give way to each other; the hovered group's always shows.
+    const labelOpts = { full: c.zoom >= CONFIG.render.fixes.labels.fullFromZoom, hover: v.hover };
     if (v.running) {
-      if (!v.photo) drawGroupLabels(ctx, v.runGroups, project);
+      if (!v.photo) drawGroupLabels(ctx, v.runGroups, project, labelOpts);
       // Phase 6: moment icons above the labels (on top of them, and readable at every zoom).
       this.effects.drawMomentIcons(ctx, now, labelAnchor, project, v.photo ? 0 : groupLabelHeight());
     } else {
-      drawGroupLabels(ctx, v.founders.map((f) => ({ name: f.name, x: f.x, y: f.y, colorIndex: f.colorIndex })), project);
+      drawGroupLabels(ctx, v.founders.map((f) => ({ name: f.name, x: f.x, y: f.y, colorIndex: f.colorIndex })), project, labelOpts);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
@@ -623,7 +633,7 @@ export class Renderer {
     for (let k = 0; k < w.length; k += 2) add(w[k]!, w[k + 1]!, DN.window.r, DN.window.k);
     n = this.effects.addFlameLights(out, n, DN.flame.r, DN.flame.k);
     this.nightPass.draw(ctx, level, out, n, this.canvas.width, this.canvas.height, (c) => this.camera.apply(c));
-    if (glow) ctx.drawImage(glow, 0, 0);
+    if (glow) { this.weather.maskBodies(glow); ctx.drawImage(glow, 0, 0); }
   }
 
   /** Night: the world darkens, then campfires, wildfires and lit windows glow. */
@@ -733,14 +743,6 @@ function countIn(points: ArrayLike<number>, v: View): number {
 /** Dotted circle of radius R around each home (§18.7 Territory). */
 function drawTerritory(ctx: CanvasRenderingContext2D, circles: SetupView['territory']): void {
   if (circles.length === 0) return;
-  ctx.save();
-  ctx.lineWidth = 1;
-  ctx.setLineDash([2, 3]);
-  for (const c of circles) {
-    ctx.strokeStyle = c.colour;
-    ctx.beginPath();
-    ctx.arc((c.x + 0.5) * TILE, (c.y + 0.5) * TILE, c.r * TILE, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.restore();
+  // Visual fixes D: a dotted pixel circle (2 on, 3 off, as the old dashed arc).
+  for (const c of circles) drawPixelCircle(ctx, (c.x + 0.5) * TILE, (c.y + 0.5) * TILE, c.r * TILE, c.colour, 1, TERRITORY_DASH);
 }

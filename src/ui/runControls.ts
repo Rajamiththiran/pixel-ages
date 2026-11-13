@@ -6,7 +6,7 @@ import { CONFIG } from '../config';
 import type { Frame, Speed } from '../shared/protocol';
 import { inMonths, SPEEDS, speedKey, speedRow, speedTitle } from '../shared/speeds';
 import { h } from './layout';
-import { trayOn } from './theme';
+import { fpsShown, trayOn } from './theme';
 
 export interface BottomBarHandlers {
   /** ▶ in setup mode: same as the Run tab's Run ▶ button. */
@@ -61,6 +61,8 @@ export function buildBottomBar(root: HTMLElement, hd: BottomBarHandlers): Bottom
   const slider = h('input', { type: 'range', min: 0, max: 0, value: 0, step: 1, title: 'Timeline: drag to view any past year' });
   const back = h('button', { class: 'primary', text: 'Back to now' });
   const fps = h('span', { class: 'fps' });
+  // Visual fixes E: players don't see the frame timing; ?fps shows it.
+  if (!fpsShown) fps.style.display = 'none';
   const mode = h('span', { class: 'mode' });
 
   play.addEventListener('click', () => {

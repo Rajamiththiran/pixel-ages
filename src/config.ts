@@ -1057,6 +1057,40 @@ export const CONFIG = {
     // behind than that same room, it snaps. Frames further apart than `maxGapMs` are hitches
     // (a busy moment), not the pace, and do not widen the room.
     screenClock: { leadMonths: 1.5, leadSteps: 1.5, catchUp: 2, maxGapMs: 250 },
+    // Visual fixes (docs/pixel-ages-visual-fixes-plan.md, DECISIONS §43). Render and UI only; each
+    // phase has an off switch in the URL (?off=declutter,ruins,bushes,fit,clearings,hutVariety,edges).
+    fixes: {
+      // A: group labels placed by priority, none overlapping (a gap of `gapPx` label px); the group
+      // whose home is within `hoverTiles` of the mouse always shows. Below `fullFromZoom` only towns,
+      // cities, realm capitals and the selected or hovered group show their second part (the era).
+      labels: { on: true, gapPx: 2, hoverTiles: 1, fullFromZoom: 2 },
+      // B: ruins as trodden ground (the pixels where noise in cells of `cellPx` is above `darkAbove`
+      // one ramp step down; `darkMult` in the classic look), and on `stubShare` of the tiles a broken
+      // wall stub of `stubPx`, with `rubbleShare` of the pixels within `rubblePx` of it as fallen
+      // stones (`rubbleLight` of them stone-light).
+      ruins: { on: true, cellPx: 3, darkAbove: 0.45, darkMult: 0.85, stubShare: 0.35, stubPx: 3, rubblePx: 2, rubbleShare: 0.3, rubbleLight: 0.35, salt: 431 },
+      // B: a path tile with paths or roads on at least `minLinks` sides is a walked area: worn patches
+      // where the noise (cells of `cellPx`) is above `above`, instead of lines to every side.
+      paths: { on: true, minLinks: 3, cellPx: 3, above: 0.5, salt: 461 },
+      // B: fruit bushes as clumps: one bush may stand in each `cellPx` cell, with chance
+      // `base` + (1 − base) × density, radius `rMin`…`rMax` px; berries (and blossom, twigs) only
+      // on bush pixels: `berryShare` of a bush's pixels past `berryAbove` of the way from its top-left.
+      bushes: { on: true, cellPx: 5, base: 0.15, rMin: 1.6, rMax: 2.4, berryShare: 0.15, berryAbove: -0.2, shadeMult: 0.8, salt: 437 }, // shadeMult: classic look only
+      // C: lineage and skin colours keep their day colour at night (the seasons mockup's exceptions).
+      nightPeople: { on: true },
+      // E: the right panel shrinks to `panelMinPx`, so the app fits a window 72 + 1280 + 240 = 1592 px wide.
+      layout: { on: true, panelMinPx: 240 },
+      // F: building tiles are cleared (no crowns, trampled earth with a ragged `edgePx` edge);
+      // 1-tile buildings nudged by up to `nudgePx` sideways and `liftPx` up, hut variant by hash.
+      clearings: { on: true, edgePx: 2, mudCellPx: 3, mudAbove: 0.62, grainShare: 0.08, salt: 443 }, // earth: sand-1, mud-1 patches above mudAbove, sand-2 grains
+      huts: { on: true, nudgePx: 1, liftPx: 1, salt: 449 },
+      // G: soft land edges: pixels within `reachPx` of a border between natural land tiles take the
+      // tile under a noise offset (noise in cells of `cellPx` scaled to ± `ampPx`, plus ± `jitterPx` of
+      // grain, held within ± `reachPx`). Lakes and ponds (not rivers, streams or the sea) draw their shore
+      // where the tile water field, bilinear between tile centres, crosses one half, wobbled by
+      // ± `shoreNoise` / 2 (noise in cells of `shoreCellPx`).
+      edges: { on: true, reachPx: 3, ampPx: 5, cellPx: 5, jitterPx: 1, shoreNoise: 0.2, shoreCellPx: 4, salt: 457 },
+    },
     // F8 graphics and sound (future blueprint §14). Visual only: nothing here reaches the simulation,
     // except `look`, which the worker uses to pack the look byte it sends with each tile.
     f8: {
@@ -1104,7 +1138,8 @@ export const CONFIG = {
       // Day and night (§14.2): a real-time cycle that runs while the world plays.
       // holdCatchUp (seasons Phase 3b, S2): at a speed that holds the day (Watch) the day stops in full
       // daylight; at dusk, night or dawn it runs this many times faster until daylight (at most ~4 s, no pop).
-      light: { dayMs: 48000, nightShare: 0.3, dusk: 0.12, maxDark: 0.5, glowRadiusPx: 7, fireGlowRadiusPx: 12, holdCatchUp: 6 }, // glows: lit windows, fires
+      light: { dayMs: 48000, nightShare: 0.2, dusk: 0.1, maxDark: 0.5, // visual fixes C: night 0.3 → 0.2, dusk 0.12 → 0.1 (dark 54% → 40% of the day)
+        glowRadiusPx: 7, fireGlowRadiusPx: 12, holdCatchUp: 6 }, // glows: lit windows, fires
       // People and animals (§14.3).
       people: {
         poseFrameMs: 380,        // work poses (bending, hoeing, chopping) alternate this often

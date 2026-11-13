@@ -7,7 +7,7 @@ import './ui/tray.css';
 import { trayOn } from './ui/theme';
 import { CONFIG } from './config';
 import {
-  Ground, WallType, Plant, Resource,
+  Ground, WallType, Plant, Resource, Mode,
   GROUND_NAMES, PLANT_NAMES, RESOURCE_NAMES, WALL_NAMES, SPECIES_NAMES,
 } from './shared/ids';
 import type { FounderGroup, Intervention, LogEntry, MapData, PlannedEvent, RunSetup, YearStats } from './shared/types';
@@ -784,6 +784,9 @@ function startRun(): void {
           : g.sizeClass >= 2 ? `${g.sizeClass === 3 ? 'City' : g.market ? 'Market town' : 'Town'} · ${g.population.toLocaleString('en-US')}`
           : ERA_NAMES[g.era],
         subColour: g.subjects > 0 && g.realmRank === 2 ? KINGDOM_GOLD : undefined,
+        // Visual fixes A: kingdoms, then chiefdoms, cities, towns, villages, then by people, win a place.
+        rank: (g.subjects > 0 ? g.realmRank : 0) * 1e8 + g.sizeClass * 1e6 + (g.mode === Mode.Village ? 1e5 : 0) + Math.min(99999, g.population),
+        keepSub: g.subjects > 0 || g.sizeClass >= 2,
       }));
       if (f.selectedKnown) renderer.fog.setKnown(f.selectedKnown);
       updateTerritory();
@@ -1176,6 +1179,8 @@ if (import.meta.env.DEV) {
     seasonStates: () => { const n: Record<number, number> = {}; for (const s of renderer.shownSeasons) n[s] = (n[s] ?? 0) + 1; return n; },
     tilesChanged: () => devTilesChanged,
     frameMs: () => renderer.frameMs,
+    // Visual fixes: browser checks zoom straight onto a map point (tile x, y) at 1, 2 or 4.
+    zoomTo: (z: number, tx: number, ty: number) => { renderer.camera.setZoom(z, (tx + 0.5) * CONFIG.map.tilePx, (ty + 0.5) * CONFIG.map.tilePx, false); refreshPresent(); },
     rainArrays: () => { const r = renderer.rainShown; return r ? { shown: Array.from(r), sim: Array.from(view.map.rain) } : null; },
     rainMean: () => { const r = renderer.rainShown; const avg = (x: ArrayLike<number>): number => { let t = 0; for (let i = 0; i < x.length; i++) t += x[i]!; return t / x.length; }; return r ? { shown: avg(r), sim: avg(view.map.rain) } : null; },
   };

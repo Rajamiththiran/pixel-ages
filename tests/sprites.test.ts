@@ -8,6 +8,7 @@ const EXPECTED: Record<string, [number, number]> = {
   deer_1: [6, 5], deer_2: [6, 5], wolf_1: [6, 4], wolf_2: [6, 4],
   goat_1: [5, 4], goat_2: [5, 4], horse_1: [7, 5], horse_2: [7, 5],
   hut: [8, 8], house: [16, 16], city: [16, 24],
+  hut_b: [8, 8], hut_c: [8, 8],   // visual fixes F: hut variants
   campfire_1: [3, 3], campfire_2: [3, 3], raft: [6, 3], boat: [8, 3], cart: [7, 4], bridge: [8, 8],
   // F8 (future blueprint §14): poses, carried items, buildings by era, special buildings,
   // fortifications, effects and icons.

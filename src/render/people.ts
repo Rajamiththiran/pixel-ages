@@ -56,7 +56,14 @@ export function collectFounders(
   }
 }
 
-export interface GroupLabel { name: string; x: number; y: number; colorIndex: number; selected?: boolean; sub?: string; subColour?: string }
+/**
+ * A label above a group's home. `rank` (visual fixes A): higher wins a place when labels would
+ * overlap; `keepSub`: the second part (era, town size, realm) shows at every zoom.
+ */
+export interface GroupLabel {
+  name: string; x: number; y: number; colorIndex: number; selected?: boolean; sub?: string; subColour?: string;
+  rank?: number; keepSub?: boolean;
+}
 
 // Diorama phase 5: in the tray UI a label is the design system's MapLabel plate (tokens/colors.css):
 // tray-600 with a 3 px tray-900 edge underneath, a lineage swatch, the name in cream, the era in
@@ -77,12 +84,16 @@ export function labelAnchor(homeX: number, homeY: number): [number, number] {
   return [(homeX + 0.5) * TILE, homeY * TILE - R.founderSpreadPx - 2];
 }
 
+/** A plate's size in label px: its ground (w × h) and the edge under it. */
+function plateSize(g: GroupLabel): [number, number] {
+  const era = g.sub ?? '';
+  return [PL.padX * 2 + PL.swatch + PL.gap + textWidth(g.name) + (era ? PL.gap + 1 + textWidth(era) : 0), PL.padY * 2 + GLYPH_H];
+}
+
 function drawPlate(ctx: CanvasRenderingContext2D, g: GroupLabel, x: number, y: number): void {
   const nameW = textWidth(g.name);
   const era = g.sub ?? '';
-  const eraW = era ? textWidth(era) : 0;
-  const w = PL.padX * 2 + PL.swatch + PL.gap + nameW + (era ? PL.gap + 1 + eraW : 0);
-  const h = PL.padY * 2 + GLYPH_H;
+  const [w, h] = plateSize(g);
   const left = Math.round(x - w / 2), top = Math.round(y - h - PL.edge);
   if (g.selected) {
     ctx.fillStyle = PLATE.selected;
@@ -99,21 +110,88 @@ function drawPlate(ctx: CanvasRenderingContext2D, g: GroupLabel, x: number, y: n
   if (era) ctx.drawImage(textCanvas(era, g.subColour ?? PLATE.era, NO_SHADOW), tx + nameW + PL.gap + 1, top + PL.padY);
 }
 
+function drawLabel(ctx: CanvasRenderingContext2D, g: GroupLabel, x: number, y: number): void {
+  if (trayLabels) { drawPlate(ctx, g, x, y); return; }
+  const colour = g.selected ? '#ffffff' : GROUP_COLORS[g.colorIndex % GROUP_COLORS.length]!;
+  drawPixelText(ctx, g.name, x, y, colour, 'center', 'bottom');
+  if (g.sub) drawPixelText(ctx, g.sub, x, y - 9, g.subColour ?? '#e8e2d4', 'center', 'bottom');
+}
+
+/** Visual fixes A: the label box (left, top, right, bottom) in label px, anchored at (x, y). */
+export function labelBox(g: GroupLabel, x: number, y: number): [number, number, number, number] {
+  if (trayLabels) {
+    const [w, h] = plateSize(g);
+    const left = Math.round(x - w / 2), top = Math.round(y - h - PL.edge);
+    return [left - (g.selected ? PL.outline : 0), top - (g.selected ? PL.outline : 0), left + w + (g.selected ? PL.outline : 0), top + h + PL.edge];
+  }
+  // Classic: the name (1 px text shadow) and, 9 px above it, the second line.
+  const w = Math.max(textWidth(g.name), g.sub ? textWidth(g.sub) : 0) + 1;
+  const h = g.sub ? GLYPH_H + 1 + 9 : GLYPH_H + 1;
+  const left = Math.round(x - w / 2);
+  return [left, Math.round(y - h), left + w, Math.round(y)];
+}
+
+const LB = CONFIG.render.fixes.labels;
+/** Visual fixes A switch. */
+export const declutterOn: boolean = LB.on && !styleOff('declutter');
+
+export interface LabelOptions {
+  /** Zoomed in far enough that every label shows in full. */
+  full: boolean;
+  /** The tile under the mouse, or null. */
+  hover: { x: number; y: number } | null;
+}
+
+/** The labels to draw, each with its anchor, in drawing order (the last on top). */
+export function placeLabels(
+  groups: readonly GroupLabel[], project: (mx: number, my: number) => [number, number], opts: LabelOptions,
+): Array<{ g: GroupLabel; x: number; y: number }> {
+  const at = (g: GroupLabel): [number, number] => project((g.x + 0.5) * TILE, g.y * TILE - R.founderSpreadPx - 2);
+  if (!declutterOn) return groups.map((g) => { const [x, y] = at(g); return { g, x, y }; });
+  // Near the home, or one tile further up, where its label stands.
+  const near = (g: GroupLabel): boolean => opts.hover !== null
+    && Math.abs(g.x - opts.hover.x) <= LB.hoverTiles && opts.hover.y - g.y <= LB.hoverTiles && g.y - opts.hover.y <= LB.hoverTiles + 1;
+  // The hovered group: the one nearest the mouse among those in reach (ties: the higher rank).
+  let hovered: GroupLabel | null = null;
+  let best = Infinity;
+  for (const g of groups) {
+    if (!near(g)) continue;
+    const d = (g.x - opts.hover!.x) ** 2 + (g.y - opts.hover!.y) ** 2;
+    if (d < best || (d === best && (g.rank ?? 0) > (hovered!.rank ?? 0))) { best = d; hovered = g; }
+  }
+  const order = groups.map((g, k) => ({ g, k, p: g.selected ? 2 : g === hovered ? 1 : 0 }));
+  order.sort((a, b) => b.p - a.p || (b.g.rank ?? 0) - (a.g.rank ?? 0) || a.k - b.k);
+  const placed: Array<{ g: GroupLabel; x: number; y: number }> = [];
+  const boxes: number[] = [];
+  const gap = LB.gapPx;
+  for (const { g, p } of order) {
+    // Zoomed out, a plain group shows its name only; towns, realms and the chosen one keep the rest.
+    const shown = opts.full || p > 0 || g.keepSub || !g.sub ? g : { ...g, sub: undefined };
+    const [x, y] = at(g);
+    const [l, t, r, b] = labelBox(shown, x, y);
+    let free = true;
+    for (let k = 0; k < boxes.length && free; k += 4) {
+      free = l - gap >= boxes[k + 2]! || r + gap <= boxes[k]! || t - gap >= boxes[k + 3]! || b + gap <= boxes[k + 1]!;
+    }
+    if (!free && p === 0) continue;
+    boxes.push(l, t, r, b);
+    placed.push({ g: shown, x, y });
+  }
+  // The first placed (selected, hovered, then the most important) are drawn last, on top.
+  return placed.reverse();
+}
+
 /**
  * Group names above their homes, with a small second line (the era) above the name. F8: in the
  * pixel font; `project` turns a map point into the drawing space (labels are drawn in screen space).
+ * Visual fixes A: placed by rank so none overlaps another (placeLabels).
  */
 export function drawGroupLabels(
   ctx: CanvasRenderingContext2D, groups: readonly GroupLabel[],
   project: (mx: number, my: number) => [number, number] = (mx, my) => [mx, my],
+  opts: LabelOptions = { full: true, hover: null },
 ): void {
-  for (const g of groups) {
-    const [x, y] = project((g.x + 0.5) * TILE, g.y * TILE - R.founderSpreadPx - 2);
-    if (trayLabels) { drawPlate(ctx, g, x, y); continue; }
-    const colour = g.selected ? '#ffffff' : GROUP_COLORS[g.colorIndex % GROUP_COLORS.length]!;
-    drawPixelText(ctx, g.name, x, y, colour, 'center', 'bottom');
-    if (g.sub) drawPixelText(ctx, g.sub, x, y - 9, g.subColour ?? '#e8e2d4', 'center', 'bottom');
-  }
+  for (const { g, x, y } of placeLabels(groups, project, opts)) drawLabel(ctx, g, x, y);
 }
 
 /** The pose a person shows while working at their tile (F8). */

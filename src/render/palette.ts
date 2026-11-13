@@ -58,6 +58,8 @@ const SAFE_NAMES = ['Orange', 'Sky blue', 'Green', 'Yellow', 'Blue', 'Vermilion'
  * current set; colour indices (what runs store) stay the same.
  */
 export const GROUP_COLORS: string[] = [...DEFAULT_LINEAGE];
+/** Every lineage colour of both sets (night exceptions, blit.ts). */
+export const ALL_LINEAGE: readonly string[] = [...new Set([...DEFAULT_LINEAGE, ...SAFE_LINEAGE])];
 export const GROUP_COLOR_NAMES: string[] = [...DEFAULT_NAMES];
 
 export type LineagePalette = 'default' | 'colourBlind';

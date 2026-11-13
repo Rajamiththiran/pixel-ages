@@ -1,6 +1,7 @@
 // Screen layout (§20.1) and a tiny DOM helper.
 
 import { CONFIG } from '../config';
+import { fitOn } from './theme';
 
 type Attrs = Record<string, string | number | boolean | ((e: Event) => void) | undefined>;
 
@@ -41,6 +42,12 @@ export function buildLayout(root: HTMLElement): Layout {
   root.style.setProperty('--toolbar', `${CONFIG.ui.toolbarPx}px`);
   root.style.setProperty('--panel', `${CONFIG.ui.rightPanelPx}px`);
   root.style.setProperty('--bottom', `${CONFIG.ui.bottomBarPx}px`);
+  if (fitOn) {
+    // Visual fixes E: styles.css (:root[data-fit]) lets the panel shrink to --panel-min and centres the app.
+    const L = CONFIG.render.fixes.layout;
+    document.documentElement.dataset.fit = '';
+    document.documentElement.style.setProperty('--panel-min', `${L.panelMinPx}px`);
+  }
   const toolbar = h('aside', { class: 'toolbar' });
   const canvas = h('canvas', { id: 'map' });
   const tooltip = h('div', { class: 'tooltip' });
@@ -53,6 +60,13 @@ export function buildLayout(root: HTMLElement): Layout {
   const bottom = h('footer', { class: 'bottombar' });
   root.className = 'app';
   root.append(toolbar, stage, panel, bottom);
+  // Visual fixes E: a panel narrower than it was made for (a window under 1680 px) marks the page, so
+  // the tabs take the smaller caption type (CSS in tray.css; no media queries, tests/tray.test.ts).
+  if (fitOn && typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => {
+      document.documentElement.toggleAttribute('data-narrow', panel.getBoundingClientRect().width < CONFIG.ui.rightPanelPx - 1);
+    }).observe(panel);
+  }
   return { toolbar, stage, canvas, tooltip, toast, banner, tabs, tabBody, bottom };
 }
 

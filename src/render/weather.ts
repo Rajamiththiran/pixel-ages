@@ -311,6 +311,23 @@ export class Weather {
   }
 
   /**
+   * Visual fixes C: clears the cloud bodies out of the night's glow image, so lit people and flames
+   * under a cloud stay hidden by it (the bodies are drawn before the night pass, the glow after).
+   */
+  maskBodies(glow: HTMLCanvasElement): void {
+    const sky = this.sky;
+    if (!this.enabled || !sky || sky.now.length === 0) return;
+    const g = glow.getContext('2d')!;
+    g.save();
+    g.globalCompositeOperation = 'destination-out';
+    for (const c of sky.now) {
+      const x = c.x + c.shape.ox, y = c.y + c.shape.oy;
+      g.drawImage(bodySprite(c.shape, (x + y) & 1), x, y);
+    }
+    g.restore();
+  }
+
+  /**
    * Phase 6 (mockup E): rain and snow from the raining clouds (everywhere in a storm), each spot playing
    * 3 frames of frameMs: a streak stepping down then a splash, or a flake stepping down. `fall(x, y)`
    * says what falls at a pixel. `nightQ`: drawn after the night pass, at nightMix of the night
